@@ -7,16 +7,19 @@ namespace CitusManager.Services;
 public interface ICitusConnectionFactory
 {
     NpgsqlConnection Create(ClusterProfile profile);
+    NpgsqlConnection Create(ClusterProfile profile, string host, int port);
 }
 
 public sealed class CitusConnectionFactory(IClusterSecretProtector secrets) : ICitusConnectionFactory
 {
-    public NpgsqlConnection Create(ClusterProfile profile)
+    public NpgsqlConnection Create(ClusterProfile profile) => Create(profile, profile.Host, profile.Port);
+
+    public NpgsqlConnection Create(ClusterProfile profile, string host, int port)
     {
         var builder = new NpgsqlConnectionStringBuilder
         {
-            Host = profile.Host,
-            Port = profile.Port,
+            Host = host,
+            Port = port,
             Database = profile.Database,
             ApplicationName = "CitusManager",
             Timeout = 10,

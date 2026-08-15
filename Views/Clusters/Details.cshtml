@@ -2,7 +2,7 @@
 @{ ViewData["Title"] = Model.Cluster.Name; var inventory = Model.Inventory; }
 <div class="page-heading">
     <div><p class="eyebrow">@Model.Cluster.Host:@Model.Cluster.Port / @Model.Cluster.Database</p><h1>@Model.Cluster.Name</h1><p>Citus @Model.Cluster.CitusVersion · TLS @Model.Cluster.SslMode</p></div>
-    <div class="heading-actions"><a class="btn btn-secondary" asp-controller="Activity" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Activity</a><a class="btn btn-secondary" asp-controller="Metrics" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Metrics</a><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Cluster.Id">Refresh inventory</a></div>
+    <div class="heading-actions"><a class="btn btn-primary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Dữ liệu bảng</a><a class="btn btn-secondary" asp-controller="Activity" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Activity</a><a class="btn btn-secondary" asp-controller="Metrics" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Metrics</a><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Cluster.Id">Refresh inventory</a></div>
 </div>
 @if (Model.SafeError is not null) { <div class="notice danger" role="alert">@Model.SafeError</div> }
 @if (inventory is not null)
@@ -22,6 +22,8 @@
                 <div class="node-card-head"><span class="status-dot @(node.IsActive ? "ok" : "bad")"></span><strong>@node.Host:@node.Port</strong></div>
                 <code>@node.Role · group @node.GroupId</code>
                 <dl class="compact-dl"><div><dt>Node ID</dt><dd>@node.NodeId</dd></div><div><dt>Placements</dt><dd>@node.PlacementCount</dd></div><div><dt>Shard bytes</dt><dd>@FormatBytes(node.ShardBytes)</dd></div><div><dt>Metadata</dt><dd>@(node.HasMetadata ? (node.MetadataSynced ? "synced" : "unsynced") : "worker")</dd></div></dl>
+                @if (node.IsActive) { <a class="btn btn-secondary mt-4 w-full" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id" asp-route-nodeId="@node.NodeId">Dữ liệu node</a> }
+                else { <button class="btn btn-secondary mt-4 w-full" type="button" disabled title="Node đang inactive">Dữ liệu node</button> }
             </article>
         }
         </div>

@@ -1,0 +1,14 @@
+@model SqlExecutionResponse
+<div class="notice success" role="status"><strong>SQL hoàn tất</strong> · @Model.Duration.TotalMilliseconds.ToString("N0") ms · affected @Model.RecordsAffected · @string.Join(", ", Model.CommandTags) · hash <code>@Model.QueryHash.Substring(0, 12)</code></div>
+@if (Model.ResultSetLimitReached) { <div class="warning-callout">Đã đạt giới hạn số result sets; phần còn lại không hiển thị.</div> }
+@if (Model.ResultSets.Count == 0) { <div class="empty-state compact">Câu lệnh không trả result set.</div> }
+@for (var resultIndex = 0; resultIndex < Model.ResultSets.Count; resultIndex++)
+{
+    var result = Model.ResultSets[resultIndex];
+    <section class="mb-6">
+        <div class="database-result-meta"><span><strong>Result @(resultIndex + 1)</strong> · @result.Rows.Count rows</span>@if (result.IsTruncated) { <span class="status-pill warning">Truncated</span> }</div>
+        <div class="table-wrap database-data-table"><table><thead><tr>@foreach (var column in result.Columns) { <th><span>@column.Name</span><small>@column.DataType</small></th> }</tr></thead><tbody>
+        @foreach (var row in result.Rows) { <tr>@foreach (var cell in row) { <td>@if (cell.IsNull) { <span class="database-null">NULL</span> } else { <span class="database-cell">@cell.Value</span>@if (cell.IsTruncated) { <small class="database-truncated">… truncated</small> } }</td> }</tr> }
+        </tbody></table></div>
+    </section>
+}

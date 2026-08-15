@@ -96,6 +96,143 @@
       });
     });
   }
+  const databaseExplorer = $("[data-database-explorer]");
+  if (databaseExplorer.length) {
+    const result = $("#database-result");
+    const feedback = $("#database-feedback");
+    const sqlConsole = $("#sql-console");
+    const token = $("#database-antiforgery input[name='__RequestVerificationToken']").val();
+    const nodeId = databaseExplorer.data("node-id") || null;
+    let selectedSchema = null;
+    let selectedTable = null;
+    let activeTab = "data";
+    let activeSqlRequest = null;
+
+    const problemText = xhr => {
+      const body = xhr.responseJSON;
+      if (body?.errors) return Object.values(body.errors).flat().join(" ");
+      const position = body?.position ? ` (vị trí ${body.position})` : "";
+      const state = body?.sqlState ? ` [${body.sqlState}]` : "";
+      return `${body?.detail || "Yêu cầu database thất bại."}${state}${position}`;
+    };
+    const showLoading = target => target.html(
+      '<div class="database-loading"><div><div class="database-spinner"></div><p>Đang truy vấn database…</p></div></div>');
+    const showError = xhr => feedback.removeClass("hidden").text(problemText(xhr)).trigger("focus");
+    const requestData = extra => ({
+      __RequestVerificationToken: token,
+      Schema: selectedSchema,
+      Table: selectedTable,
+      NodeId: nodeId,
+      ...extra
+    });
+
+    const loadBrowse = page => {
+      if (!selectedTable) return;
+      feedback.addClass("hidden").empty();
+      showLoading(result);
+      $.ajax({
+        url: databaseExplorer.data("browse-url"), method: "POST",
+        data: requestData({ Page: page || 1, PageSize: Number($("#database-page-size").val()) || 50 })
+      }).done(html => result.html(html)).fail(xhr => { result.empty(); showError(xhr); });
+    };
+    const loadStructure = () => {
+      if (!selectedTable) return;
+      feedback.addClass("hidden").empty();
+      showLoading(result);
+      $.ajax({
+        url: databaseExplorer.data("structure-url"), method: "POST", data: requestData({})
+      }).done(html => result.html(html)).fail(xhr => { result.empty(); showError(xhr); });
+    };
+    const activateTab = tab => {
+      activeTab = tab;
+      $("[data-database-tab]").removeClass("is-active").attr("aria-selected", "false")
+        .filter(`[data-database-tab='${tab}']`).addClass("is-active").attr("aria-selected", "true");
+      if (tab === "sql") {
+        result.addClass("hidden");
+        sqlConsole.removeClass("hidden");
+        $("#sql-editor").trigger("focus");
+      } else {
+        sqlConsole.addClass("hidden");
+        result.removeClass("hidden");
+        if (!selectedTable) {
+          result.html('<div class="empty-state"><h3>Chưa chọn object</h3><p>Chọn table, view hoặc sequence ở sidebar.</p></div>');
+        } else if (tab === "structure") loadStructure();
+        else loadBrowse(1);
+      }
+    };
+
+    $("[data-database-object]").on("click", function () {
+      const button = $(this);
+      selectedSchema = button.data("schema");
+      selectedTable = button.data("table");
+      $("[data-database-object]").removeClass("is-active");
+      button.addClass("is-active");
+      $("#selected-database-object").text(`${selectedSchema}.${selectedTable}`);
+      if (activeTab === "sql") activateTab("data");
+      else activateTab(activeTab);
+    });
+    $("[data-database-tab]").on("click", function () { activateTab($(this).data("database-tab")); });
+    result.on("click", "[data-database-page]", function () {
+      if (!this.disabled) loadBrowse(Number($(this).data("database-page")));
+    });
+    $("#database-page-size").on("change", () => { if (selectedTable && activeTab === "data") loadBrowse(1); });
+    $(".database-schema-toggle").on("click", function () {
+      const expanded = $(this).attr("aria-expanded") === "true";
+      $(this).attr("aria-expanded", String(!expanded)).next().toggleClass("hidden", expanded);
+    });
+    let searchTimer = null;
+    $("#database-object-search").on("input", function () {
+      const input = this;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        const query = String($(input).val()).trim().toLocaleLowerCase();
+        $("[data-database-object]").each(function () {
+          $(this).toggleClass("hidden", !String($(this).data("search-text")).toLocaleLowerCase().includes(query));
+        });
+        $("[data-object-kind]").each(function () {
+          $(this).toggleClass("hidden", $(this).find("[data-database-object]:not(.hidden)").length === 0);
+        });
+        $("[data-schema-group]").each(function () {
+          $(this).toggleClass("hidden", $(this).find("[data-database-object]:not(.hidden)").length === 0);
+        });
+      }, 120);
+    });
+
+    const modal = $("#sql-confirm-modal");
+    const closeModal = () => { modal.addClass("hidden"); $("#prepare-sql-button").trigger("focus"); };
+    $("#prepare-sql-button").on("click", () => {
+      if (!String($("#sql-editor").val()).trim()) {
+        feedback.removeClass("hidden").text("Nhập SQL trước khi thực thi.").trigger("focus");
+        return;
+      }
+      feedback.addClass("hidden");
+      modal.removeClass("hidden");
+      $("#confirm-sql-button").trigger("focus");
+    });
+    $("#close-sql-modal").on("click", closeModal);
+    modal.on("click", event => { if (event.target === modal[0]) closeModal(); });
+    $(document).on("keydown", event => { if (event.key === "Escape" && !modal.hasClass("hidden")) closeModal(); });
+    $("#confirm-sql-button").on("click", () => {
+      modal.addClass("hidden");
+      const sqlResult = $("#sql-result");
+      const runButton = $("#prepare-sql-button");
+      const cancelButton = $("#cancel-sql-button");
+      runButton.prop("disabled", true);
+      cancelButton.removeClass("hidden");
+      showLoading(sqlResult);
+      activeSqlRequest = $.ajax({
+        url: databaseExplorer.data("sql-url"), method: "POST",
+        data: { __RequestVerificationToken: token, Sql: $("#sql-editor").val(), Confirmed: true }
+      }).done(html => sqlResult.html(html)).fail(xhr => {
+        if (xhr.statusText !== "abort") sqlResult.html($("<div>").addClass("connection-result error").text(problemText(xhr)));
+      }).always(() => {
+        activeSqlRequest = null;
+        runButton.prop("disabled", false);
+        cancelButton.addClass("hidden");
+      });
+    });
+    $("#cancel-sql-button").on("click", () => activeSqlRequest?.abort());
+  }
   document.body.addEventListener("htmx:beforeRequest", event => {
     const button = event.detail.elt.querySelector?.("button[type=submit]");
     if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }

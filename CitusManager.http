@@ -37,6 +37,21 @@ __RequestVerificationToken=replace-from-form&Host=coordinator.internal&Port=5432
 ### Refresh inventory
 POST {{baseUrl}}/api/clusters/{{clusterId}}/refresh
 
+### Open database explorer (authenticated browser route)
+GET {{baseUrl}}/Clusters/{{clusterId}}/Database
+
+### Browse one table (requires Identity cookie + anti-forgery token from explorer page)
+POST {{baseUrl}}/Clusters/{{clusterId}}/Database/Browse
+Content-Type: application/x-www-form-urlencoded
+
+__RequestVerificationToken=replace-from-form&Schema=public&Table=events&Page=1&PageSize=50
+
+### Execute unrestricted coordinator SQL (requires Identity cookie + anti-forgery token)
+POST {{baseUrl}}/Clusters/{{clusterId}}/Database/ExecuteSql
+Content-Type: application/x-www-form-urlencoded
+
+__RequestVerificationToken=replace-from-form&Confirmed=true&Sql=SELECT%20version()%3B
+
 ### Read sanitized activity (no SQL text/parameters)
 GET {{baseUrl}}/api/clusters/{{clusterId}}/activity
 

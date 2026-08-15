@@ -41,9 +41,15 @@ Development có `Database:AutoCreateSchema=true`, app tự chạy migrations. Pr
 
 ## Roles
 
-- `Viewer`: dashboard, topology, tables, metrics, activity, alerts.
+- `Viewer`: dashboard, topology, database explorer/SQL, metrics, activity, alerts.
 - `Operator`: thêm profile, tạo operation plan, acknowledge alert, request cancel.
 - `Admin`: quản lý user/profile, approve operation của người khác, audit.
+
+## Database explorer
+
+Mở từ **Dữ liệu bảng** trong cluster Details. Coordinator browser đọc logical table nên thấy dữ liệu toàn cluster. Nút **Dữ liệu node** kết nối trực tiếp node topology bằng credential cluster và chỉ đọc physical shard placements trên node đó.
+
+SQL console chỉ chạy trên coordinator, cho mọi user đã đăng nhập và không giới hạn loại statement PostgreSQL. Mỗi lần chạy phải xác nhận; mặc định timeout 60 giây, tối đa 1.000 rows/result set và audit chỉ lưu SHA-256/metadata, không lưu SQL plaintext. Quyền thực tế vẫn do database role trong cluster profile quyết định.
 
 ## Safety invariants
 
@@ -74,4 +80,4 @@ dotnet list package --vulnerable --include-transitive
 
 ## Phạm vi tiếp theo
 
-Topology lifecycle + monitoring đã hoạt động. Schema/table wizard nâng cao (distributed/reference table, shard-count, colocation, tenant/schema move) phải dùng cùng operation engine và chỉ bật sau staging rehearsal theo Citus version/workload thực tế; không có arbitrary SQL console.
+Topology lifecycle, monitoring và database explorer đã hoạt động. Schema/table wizard nâng cao (distributed/reference table, shard-count, colocation, tenant/schema move) phải dùng cùng operation engine và chỉ bật sau staging rehearsal theo Citus version/workload thực tế.

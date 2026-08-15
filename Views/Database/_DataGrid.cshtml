@@ -1,0 +1,32 @@
+@model TableDataResponse
+<div class="database-result-meta">
+    <span><strong>@Model.Rows.Count</strong> rows · trang @Model.Page · @Model.Duration.TotalMilliseconds.ToString("N0") ms</span>
+    @if (!Model.HasStableOrder) { <span class="status-pill warning">Thứ tự không ổn định · thiếu primary key</span> }
+</div>
+@if (Model.Columns.Count == 0)
+{
+    <div class="empty-state compact"><h3>Không có result columns</h3></div>
+}
+else
+{
+    <div class="table-wrap database-data-table"><table><thead><tr>
+        @foreach (var column in Model.Columns) { <th><span>@column.Name</span><small>@column.DataType</small></th> }
+    </tr></thead><tbody>
+        @if (Model.Rows.Count == 0) { <tr><td colspan="@Model.Columns.Count" class="!py-12 !text-center">Bảng chưa có dữ liệu trong phạm vi target này.</td></tr> }
+        @foreach (var row in Model.Rows)
+        {
+            <tr>@foreach (var cell in row)
+            {
+                <td title="@(cell.IsTruncated ? "Giá trị đã bị cắt theo giới hạn hiển thị" : null)">
+                    @if (cell.IsNull) { <span class="database-null">NULL</span> }
+                    else { <span class="database-cell">@cell.Value</span>@if (cell.IsTruncated) { <small class="database-truncated">… truncated</small> } }
+                </td>
+            }</tr>
+        }
+    </tbody></table></div>
+}
+<div class="database-pager">
+    <button type="button" class="btn btn-secondary" data-database-page="@(Model.Page - 1)" disabled="@(!Model.HasPrevious)">Trang trước</button>
+    <span>Trang @Model.Page</span>
+    <button type="button" class="btn btn-secondary" data-database-page="@(Model.Page + 1)" disabled="@(!Model.HasNext)">Trang sau</button>
+</div>

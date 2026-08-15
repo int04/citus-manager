@@ -88,6 +88,8 @@ builder.Services.AddScoped<ICitusInspector, CitusInspector>();
 builder.Services.AddScoped<ICitusMutator, CitusMutator>();
 builder.Services.AddSingleton<IControlPlaneLeaseProvider, ControlPlaneLeaseProvider>();
 builder.Services.AddScoped<IClusterService, ClusterService>();
+builder.Services.Configure<DatabaseExplorerOptions>(builder.Configuration.GetSection("DatabaseExplorer"));
+builder.Services.AddScoped<IDatabaseExplorerService, DatabaseExplorerService>();
 builder.Services.AddScoped<IOperationService, OperationService>();
 builder.Services.AddScoped<IOperationExecutor, OperationExecutor>();
 builder.Services.AddScoped<IPrometheusCollector, PrometheusCollector>();

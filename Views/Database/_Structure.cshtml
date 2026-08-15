@@ -1,0 +1,16 @@
+@model TableStructureResponse
+@if (Model.LocalShardIds.Count > 0)
+{
+    <div class="callout"><strong>Worker-local shards:</strong> @string.Join(", ", Model.LocalShardIds)</div>
+}
+<div class="section-title"><div><h2>Columns</h2><p>@Model.Schema.@Model.Table</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Key</th></tr></thead><tbody>
+@foreach (var column in Model.Columns)
+{ <tr><td><code>@column.Name</code></td><td>@column.DataType</td><td>@(column.IsNullable ? "YES" : "NO")</td><td><code>@column.DefaultValue</code></td><td>@if (column.IsPrimaryKey) { <span class="status-pill success">PRIMARY</span> }</td></tr> }
+</tbody></table></div>
+<div class="section-title mt-6"><div><h2>Indexes</h2><p>@Model.Indexes.Count index definitions</p></div></div>
+@if (Model.Indexes.Count == 0) { <div class="empty-state compact">Không có index hiển thị.</div> }
+else
+{
+    <div class="grid gap-3">@foreach (var index in Model.Indexes) { <article class="panel !p-4"><strong class="text-xs">@index.Name</strong><pre class="json-block !mt-2 !max-h-none">@index.Definition</pre></article> }</div>
+}

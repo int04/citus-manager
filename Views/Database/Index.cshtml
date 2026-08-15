@@ -1,0 +1,148 @@
+@model DatabaseExplorerPageViewModel
+@{
+    ViewData["Title"] = $"Database · {Model.Cluster.Name}";
+    var groupedObjects = Model.Objects.GroupBy(x => x.Schema).OrderBy(x => x.Key);
+    var objectKinds = new[]
+    {
+        (Kind: "table", Label: "Tables"),
+        (Kind: "view", Label: "Views"),
+        (Kind: "sequence", Label: "Sequences")
+    };
+}
+
+<div class="database-page" data-database-explorer
+     data-browse-url="@Url.Action("Browse", "Database", new { clusterId = Model.Cluster.Id })"
+     data-structure-url="@Url.Action("Structure", "Database", new { clusterId = Model.Cluster.Id })"
+     data-sql-url="@Url.Action("ExecuteSql", "Database", new { clusterId = Model.Cluster.Id })"
+     data-node-id="@Model.NodeId">
+    <div class="page-heading">
+        <div>
+            <p class="eyebrow">DATABASE EXPLORER</p>
+            <h1>@Model.Cluster.Database</h1>
+            <p>@Model.TargetLabel · @Model.Cluster.Name</p>
+        </div>
+        <div class="heading-actions">
+            <a class="btn btn-ghost" asp-controller="Clusters" asp-action="Details" asp-route-id="@Model.Cluster.Id">Về cluster</a>
+            <a class="btn btn-secondary" asp-controller="Database" asp-action="Index"
+               asp-route-clusterId="@Model.Cluster.Id" asp-route-nodeId="@Model.NodeId"
+               asp-route-showSystem="@(!Model.ShowSystem)">
+                @(Model.ShowSystem ? "Ẩn system schema" : "Hiện system schema")
+            </a>
+        </div>
+    </div>
+
+    <div class="target-banner @(Model.IsCoordinator ? "coordinator" : "worker")">
+        <span class="status-dot ok" aria-hidden="true"></span>
+        <div><strong>@(Model.IsCoordinator ? "Coordinator / logical data" : "Worker / local shard data")</strong><p>@(Model.IsCoordinator ? "Truy vấn logical table sẽ đi qua Citus và tổng hợp dữ liệu toàn cluster." : "Chỉ physical shard placements hiện có trên node này được đọc.")</p></div>
+        <code>@Model.Cluster.Database</code>
+    </div>
+
+    <form id="database-antiforgery" class="hidden">@Html.AntiForgeryToken()</form>
+
+    <div class="database-workbench">
+        <aside class="database-tree" aria-label="Danh sách database objects">
+            <div class="database-tree-head">
+                <span>Database objects</span>
+                <span class="status-pill neutral">@Model.Objects.Count</span>
+            </div>
+            <label class="database-search">
+                <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+                <span class="sr-only">Tìm database object</span>
+                <input id="database-object-search" type="search" placeholder="Tìm table, view, sequence…" autocomplete="off" />
+            </label>
+            <div class="database-tree-scroll">
+                @if (Model.Objects.Count == 0)
+                {
+                    <p class="p-4 text-xs leading-5 text-slate-500 dark:text-slate-400">Không tìm thấy database object có thể đọc trên target này.</p>
+                }
+                @foreach (var schema in groupedObjects)
+                {
+                    <section class="database-schema" data-schema-group>
+                        <button type="button" class="database-schema-toggle" aria-expanded="true">
+                            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3V7Z"/><path d="M3 7V5h7l2 2"/></svg>
+                            <span>@schema.Key</span><small>@schema.Count()</small>
+                        </button>
+                        <div class="database-schema-items">
+                            @foreach (var objectKind in objectKinds)
+                            {
+                                var kindItems = schema.Where(x => x.Kind == objectKind.Kind).ToList();
+                                if (kindItems.Count == 0) continue;
+                                <div class="database-object-kind" data-object-kind>
+                                    <div class="database-object-kind-label"><span>@objectKind.Label</span><small>@kindItems.Count</small></div>
+                                    @foreach (var item in kindItems)
+                                    {
+                                        <button type="button" class="database-object" data-database-object
+                                                data-schema="@item.Schema" data-table="@item.Name" data-kind="@item.Kind"
+                                                data-search-text="@(item.Schema + "." + item.Name + " " + objectKind.Label)">
+                                            @if (item.Kind == "view")
+                                            { <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg> }
+                                            else if (item.Kind == "sequence")
+                                            { <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h4M4 12h7M4 18h10"/><path d="m16 8 4 4-4 4"/></svg> }
+                                            else
+                                            { <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg> }
+                                            <span><strong>@item.Name</strong><small>@item.TableType@(item.LocalShardCount > 0 ? $" · {item.LocalShardCount} shard" : string.Empty)</small></span>
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </section>
+                }
+            </div>
+        </aside>
+
+        <section class="database-content" aria-live="polite">
+            <header class="database-content-head">
+                <div><p class="eyebrow !mb-1">SELECTED OBJECT</p><h2 id="selected-database-object">Chọn một object</h2></div>
+                <nav class="database-tabs" aria-label="Database object views" role="tablist">
+                    <button type="button" class="is-active" data-database-tab="data" role="tab" aria-selected="true">Dữ liệu</button>
+                    <button type="button" data-database-tab="structure" role="tab" aria-selected="false">Cấu trúc</button>
+                    @if (Model.IsCoordinator) { <button type="button" data-database-tab="sql" role="tab" aria-selected="false">SQL</button> }
+                </nav>
+                <label class="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    <span class="whitespace-nowrap">Rows/trang</span>
+                    <select id="database-page-size" class="min-h-11 w-20 rounded-lg border border-slate-300 bg-white px-2 py-1 text-base text-slate-900 sm:text-xs dark:border-white/10 dark:bg-black/20 dark:text-white">
+                        @foreach (var size in Model.AllowedPageSizes) { <option value="@size" selected="@(size == 50)">@size</option> }
+                    </select>
+                </label>
+            </header>
+
+            <div id="database-feedback" class="connection-result error hidden" role="alert" tabindex="-1"></div>
+            <div id="database-result" class="database-result">
+                <div class="empty-state"><h3>Chưa chọn object</h3><p>Chọn table, view hoặc sequence ở sidebar để xem dữ liệu và cấu trúc.</p></div>
+            </div>
+
+            @if (Model.IsCoordinator)
+            {
+                <section id="sql-console" class="sql-console hidden" aria-labelledby="sql-console-title">
+                    <div class="warning-callout"><strong>Quyền lực đầy đủ:</strong> SQL chạy trực tiếp trên coordinator bằng credential đã lưu. DML, DDL và multi-statement đều được phép.</div>
+                    <label for="sql-editor" id="sql-console-title">SQL query</label>
+                    <textarea id="sql-editor" spellcheck="false" placeholder="SELECT * FROM public.my_table LIMIT 100;"></textarea>
+                    <div class="sql-actions">
+                        <span>Timeout @Model.CommandTimeoutSeconds s · tối đa @Model.MaxRowsPerResultSet.ToString("N0") rows/result set</span>
+                        <button type="button" class="btn btn-ghost hidden" id="cancel-sql-button">Dừng query</button>
+                        <button type="button" class="btn btn-primary" id="prepare-sql-button">
+                            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 5 8 7-8 7V5Z"/></svg>
+                            Chạy SQL
+                        </button>
+                    </div>
+                    <div id="sql-result" class="mt-4"></div>
+                </section>
+            }
+        </section>
+    </div>
+
+    @if (Model.IsCoordinator)
+    {
+        <div id="sql-confirm-modal" class="database-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sql-confirm-title">
+            <div class="database-modal-card">
+                <div class="mb-5 grid size-11 place-items-center rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300" aria-hidden="true">
+                    <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.8 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0Z"/></svg>
+                </div>
+                <p class="eyebrow">UNRESTRICTED SQL</p><h2 id="sql-confirm-title" class="!text-xl">Xác nhận thực thi</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">Target: <strong class="text-slate-900 dark:text-white">@Model.Cluster.Name / @Model.Cluster.Database</strong>. Câu lệnh có thể thay đổi hoặc xóa dữ liệu.</p>
+                <div class="form-actions"><button type="button" class="btn btn-ghost" id="close-sql-modal">Hủy</button><button type="button" class="btn btn-danger" id="confirm-sql-button">Tôi hiểu, chạy SQL</button></div>
+            </div>
+        </div>
+    }
+</div>
