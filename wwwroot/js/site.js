@@ -103,10 +103,27 @@
     const sqlConsole = $("#sql-console");
     const token = $("#database-antiforgery input[name='__RequestVerificationToken']").val();
     const nodeId = databaseExplorer.data("node-id") || null;
+    const navigation = $("#database-navigation");
+    const navigationToggle = $("#database-navigation-toggle");
+    const navigationScrim = $("#database-navigation-scrim");
+    const mobileNavigation = window.matchMedia("(max-width: 1023px)");
     let selectedSchema = null;
     let selectedTable = null;
     let activeTab = "data";
     let activeSqlRequest = null;
+
+    const setNavigationOpen = open => {
+      const isOpen = mobileNavigation.matches && open;
+      navigation.toggleClass("is-open", isOpen);
+      navigationScrim.toggleClass("hidden", !isOpen);
+      navigationToggle.attr("aria-expanded", String(isOpen));
+      if (mobileNavigation.matches) navigation.attr("aria-hidden", String(!isOpen)).prop("inert", !isOpen);
+      else navigation.removeAttr("aria-hidden").prop("inert", false);
+    };
+    navigationToggle.on("click", () => setNavigationOpen(!navigation.hasClass("is-open")));
+    $("#database-navigation-close, #database-navigation-scrim").on("click", () => setNavigationOpen(false));
+    mobileNavigation.addEventListener("change", () => setNavigationOpen(false));
+    setNavigationOpen(false);
 
     const problemText = xhr => {
       const body = xhr.responseJSON;
@@ -168,6 +185,7 @@
       $("[data-database-object]").removeClass("is-active");
       button.addClass("is-active");
       $("#selected-database-object").text(`${selectedSchema}.${selectedTable}`);
+      setNavigationOpen(false);
       if (activeTab === "sql") activateTab("data");
       else activateTab(activeTab);
     });
@@ -211,7 +229,14 @@
     });
     $("#close-sql-modal").on("click", closeModal);
     modal.on("click", event => { if (event.target === modal[0]) closeModal(); });
-    $(document).on("keydown", event => { if (event.key === "Escape" && !modal.hasClass("hidden")) closeModal(); });
+    $(document).on("keydown", event => {
+      if (event.key !== "Escape") return;
+      if (!modal.hasClass("hidden")) closeModal();
+      else if (navigation.hasClass("is-open")) {
+        setNavigationOpen(false);
+        navigationToggle.trigger("focus");
+      }
+    });
     $("#confirm-sql-button").on("click", () => {
       modal.addClass("hidden");
       const sqlResult = $("#sql-result");

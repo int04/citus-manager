@@ -1,16 +1,19 @@
 @model TableStructureResponse
 @if (Model.LocalShardIds.Count > 0)
 {
-    <div class="callout"><strong>Worker-local shards:</strong> @string.Join(", ", Model.LocalShardIds)</div>
+    <div class="callout pma-shard-message"><strong>Worker-local shards:</strong> @string.Join(", ", Model.LocalShardIds)</div>
 }
-<div class="section-title"><div><h2>Columns</h2><p>@Model.Schema.@Model.Table</p></div></div>
-<div class="table-wrap"><table><thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Key</th></tr></thead><tbody>
-@foreach (var column in Model.Columns)
-{ <tr><td><code>@column.Name</code></td><td>@column.DataType</td><td>@(column.IsNullable ? "YES" : "NO")</td><td><code>@column.DefaultValue</code></td><td>@if (column.IsPrimaryKey) { <span class="status-pill success">PRIMARY</span> }</td></tr> }
+<div class="section-title pma-section-title"><div><h2>Cấu trúc bảng</h2><p>Table: <strong>@Model.Schema.@Model.Table</strong></p></div></div>
+<div class="table-wrap pma-structure-table"><table><thead><tr><th>#</th><th>Tên cột</th><th>Kiểu dữ liệu</th><th>Cho phép NULL</th><th>Mặc định</th><th>Khóa</th></tr></thead><tbody>
+@for (var columnIndex = 0; columnIndex < Model.Columns.Count; columnIndex++)
+{
+    var column = Model.Columns[columnIndex];
+    <tr><td class="pma-row-number">@(columnIndex + 1)</td><td><code>@column.Name</code></td><td>@column.DataType</td><td>@(column.IsNullable ? "Có" : "Không")</td><td><code>@column.DefaultValue</code></td><td>@if (column.IsPrimaryKey) { <span class="status-pill success">PRIMARY</span> }</td></tr>
+}
 </tbody></table></div>
-<div class="section-title mt-6"><div><h2>Indexes</h2><p>@Model.Indexes.Count index definitions</p></div></div>
-@if (Model.Indexes.Count == 0) { <div class="empty-state compact">Không có index hiển thị.</div> }
+<div class="section-title pma-section-title pma-index-title"><div><h2>Chỉ mục</h2><p>@Model.Indexes.Count định nghĩa index</p></div></div>
+@if (Model.Indexes.Count == 0) { <div class="empty-state compact pma-empty-row">Không có index hiển thị.</div> }
 else
 {
-    <div class="grid gap-3">@foreach (var index in Model.Indexes) { <article class="panel !p-4"><strong class="text-xs">@index.Name</strong><pre class="json-block !mt-2 !max-h-none">@index.Definition</pre></article> }</div>
+    <div class="pma-index-list">@foreach (var index in Model.Indexes) { <article class="panel pma-index-card"><strong>@index.Name</strong><pre class="json-block">@index.Definition</pre></article> }</div>
 }

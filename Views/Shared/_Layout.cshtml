@@ -1,6 +1,7 @@
 @using System.Globalization
 @{
     var currentController = ViewContext.RouteData.Values["controller"]?.ToString();
+    var isDatabaseExplorer = currentController == "Database";
 }
 <!DOCTYPE html>
 <html lang="@CultureInfo.CurrentUICulture.TwoLetterISOLanguageName" data-theme="dark" class="scheme-light dark:scheme-dark">
@@ -125,49 +126,190 @@
             .target-banner code { @@apply self-start sm:self-center; }
             .target-banner.coordinator { @@apply border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-500/20 dark:bg-indigo-500/[.07] dark:text-indigo-200; }
             .target-banner.worker { @@apply border-cyan-200 bg-cyan-50 text-cyan-900 dark:border-cyan-500/20 dark:bg-cyan-500/[.07] dark:text-cyan-200; }
-            .database-workbench { @@apply grid min-h-[42rem] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[17rem_minmax(0,1fr)] dark:border-white/10 dark:bg-white/[.025] dark:shadow-none; }
-            .database-tree { @@apply flex min-h-72 flex-col border-b border-slate-200 bg-slate-50/80 lg:border-r lg:border-b-0 dark:border-white/10 dark:bg-black/15; }
-            .database-tree-head { @@apply flex min-h-12 items-center justify-between border-b border-slate-200 px-4 text-[11px] font-bold uppercase tracking-[.12em] text-slate-500 dark:border-white/10 dark:text-slate-400; }
-            .database-search { @@apply mx-3 mt-3 flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-slate-400 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20 dark:border-white/10 dark:bg-black/20; }
-            .database-search input { @@apply min-w-0 flex-1 border-0 bg-transparent p-0 text-base text-slate-950 outline-none placeholder:text-slate-400 focus:ring-0 sm:text-xs dark:text-white dark:placeholder:text-slate-600; }
-            .database-tree-scroll { @@apply max-h-80 flex-1 overflow-y-auto p-3 lg:max-h-[calc(100vh-18rem)]; }
-            .database-schema { @@apply mb-2; }
-            .database-schema-toggle { @@apply flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-white/[.06]; }
+            /* Database Explorer: dense, tool-first chrome inspired by phpMyAdmin's pmahomme layout. */
+            .main-content:has(> .database-page) { @@apply !max-w-none !p-0; }
+            .database-page { @@apply min-h-[calc(100dvh-3.5rem)] bg-[#f6f6f6] text-[#1e2a35] dark:bg-[#11161c] dark:text-slate-200; }
+            .database-page > .page-heading { @@apply mb-0 border-b border-[#aeb9c2] bg-gradient-to-b from-[#f8fafb] to-[#dfe5e9] px-4 py-2.5 shadow-sm dark:border-white/10 dark:from-[#202934] dark:to-[#151c24]; }
+            .database-page > .page-heading h1 { @@apply text-lg text-[#273b4a] dark:text-slate-100; }
+            .database-page > .page-heading p:not(.eyebrow) { @@apply text-[11px] leading-4 text-[#596b78] dark:text-slate-400; }
+            .database-page > .page-heading .eyebrow { @@apply !mb-0 text-[9px] tracking-[.11em] text-[#607d91] dark:text-slate-500; }
+            .database-page > .page-heading .heading-actions { @@apply gap-1.5; }
+            .database-page > .page-heading .btn { @@apply min-h-9 rounded border-[#a8b5bf] bg-gradient-to-b from-white to-[#e5eaee] px-2.5 py-1.5 text-[11px] text-[#334b5c] shadow-none hover:from-white hover:to-[#d7e1e7] dark:border-white/10 dark:from-white/[.08] dark:to-white/[.03] dark:text-slate-300; }
+            .database-page > .target-banner { @@apply m-0 min-h-9 rounded-none border-x-0 border-t-0 px-4 py-2 text-[11px] shadow-inner; }
+            .database-page > .target-banner strong { @@apply text-xs; }
+            .database-page > .target-banner p { @@apply text-[10px] leading-4; }
+            .database-page > .target-banner.coordinator { @@apply border-[#b7c6d1] bg-[#e8f1f7] text-[#294c64] dark:border-white/10 dark:bg-[#172937] dark:text-sky-200; }
+            .database-page > .target-banner.worker { @@apply border-[#bad0d3] bg-[#e8f3f3] text-[#28575b] dark:border-white/10 dark:bg-[#173034] dark:text-cyan-200; }
+            .database-workbench { @@apply grid min-h-[calc(100dvh-10.5rem)] overflow-hidden border-0 bg-white lg:grid-cols-[17.5rem_minmax(0,1fr)] dark:bg-[#11161c]; }
+            .database-tree { @@apply flex min-h-72 flex-col border-b border-[#aeb9c2] bg-gradient-to-r from-[#eef1f3] to-[#dfe5e8] lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:border-r lg:border-b-0 dark:border-white/10 dark:from-[#202832] dark:to-[#182029]; }
+            .database-tree-head { @@apply flex min-h-9 items-center justify-between border-b border-[#aeb9c2] bg-gradient-to-b from-[#f7f8f9] to-[#cfd7dd] px-3 text-[10px] font-bold uppercase tracking-[.08em] text-[#445c6c] shadow-sm dark:border-white/10 dark:from-white/[.08] dark:to-white/[.02] dark:text-slate-300; }
+            .database-tree-head .status-pill { @@apply border-[#aeb9c2] bg-[#f7f9fa] px-1.5 py-0 text-[9px] text-[#556b79] dark:border-white/10 dark:bg-white/[.06] dark:text-slate-400; }
+            .database-search { @@apply mx-2 mt-2 flex min-h-9 items-center gap-2 rounded border border-[#aeb9c2] bg-white px-2 text-[#718692] shadow-inner focus-within:border-[#5b90b3] focus-within:ring-1 focus-within:ring-[#5b90b3]/30 dark:border-white/10 dark:bg-black/25 dark:text-slate-500; }
+            .database-search input { @@apply min-w-0 flex-1 border-0 bg-transparent p-0 text-base text-[#263844] outline-none placeholder:text-[#7e8e98] focus:ring-0 sm:text-xs dark:text-slate-100 dark:placeholder:text-slate-600; }
+            .database-tree-scroll { @@apply max-h-80 flex-1 overflow-y-auto px-2 pb-3 pt-2 lg:max-h-none; scrollbar-color: #9baab4 transparent; scrollbar-width: thin; }
+            .database-schema { @@apply mb-1; }
+            .database-schema-toggle { @@apply flex min-h-9 w-full cursor-pointer items-center gap-2 rounded px-1.5 text-left text-xs font-semibold text-[#2d4657] transition-colors hover:bg-white/60 hover:text-[#123f5c] dark:text-slate-300 dark:hover:bg-white/[.06] dark:hover:text-white; }
             .database-schema-toggle span { @@apply min-w-0 flex-1 truncate; }
-            .database-schema-toggle small { @@apply text-[10px] font-medium text-slate-400; }
-            .database-schema-items { @@apply ml-4 border-l border-slate-200 pl-2 dark:border-white/10; }
-            .database-object-kind { @@apply mb-3; }
-            .database-object-kind-label { @@apply flex items-center justify-between px-2 py-1.5 text-[9px] font-black uppercase tracking-[.14em] text-slate-400 dark:text-slate-600; }
+            .database-schema-toggle small { @@apply text-[9px] font-semibold text-[#738794] dark:text-slate-500; }
+            .database-schema-items { @@apply ml-3 border-l border-[#bdc8cf] pl-1.5 dark:border-white/10; }
+            .database-object-kind { @@apply mb-1.5; }
+            .database-object-kind-label { @@apply flex items-center justify-between px-1.5 py-1 text-[9px] font-bold uppercase tracking-[.08em] text-[#677b88] dark:text-slate-500; }
             .database-object-kind-label small { @@apply font-mono text-[9px] font-semibold tracking-normal; }
-            .database-object { @@apply flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-slate-500 transition hover:bg-white hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/[.06] dark:hover:text-white; }
+            .database-object { @@apply flex min-h-8 w-full cursor-pointer items-center gap-1.5 rounded-sm px-1.5 text-left text-[#475d6b] transition-colors hover:bg-[#cbdbe5] hover:text-[#163e58] dark:text-slate-400 dark:hover:bg-white/[.07] dark:hover:text-white; }
             .database-object > span { @@apply min-w-0 flex-1; }
-            .database-object strong { @@apply block truncate text-xs font-medium; }
-            .database-object small { @@apply block truncate text-[10px] text-slate-400 dark:text-slate-500; }
-            .database-object.is-active { @@apply bg-indigo-100 text-indigo-800 ring-1 ring-inset ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-400/20; }
-            .database-content { @@apply min-w-0; }
-            .database-content-head { @@apply flex flex-col justify-between gap-4 border-b border-slate-200 p-4 sm:flex-row sm:items-end dark:border-white/10; }
-            .database-tabs { @@apply flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1 dark:bg-black/20; }
-            .database-tabs button { @@apply min-h-11 rounded-md px-3 text-xs font-semibold text-slate-500 transition hover:text-slate-950 dark:text-slate-400 dark:hover:text-white; }
-            .database-tabs button.is-active { @@apply bg-white text-indigo-700 shadow-sm dark:bg-white/10 dark:text-indigo-300; }
-            .database-result { @@apply p-4; }
-            .database-result-meta { @@apply mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400; }
+            .database-object strong { @@apply block truncate text-[11px] font-medium leading-4; }
+            .database-object small { @@apply block truncate text-[9px] leading-3 text-[#728490] dark:text-slate-500; }
+            .database-object.is-active { @@apply bg-[#87b8d4] text-[#102f43] shadow-inner ring-1 ring-inset ring-[#679bb9] dark:bg-sky-500/20 dark:text-sky-200 dark:ring-sky-400/30; }
+            .database-content { @@apply min-w-0 bg-[#f8f8f8] dark:bg-[#11161c]; }
+            .database-content-head { @@apply sticky top-14 z-20 flex flex-col justify-between gap-2 border-b border-[#aeb9c2] bg-gradient-to-b from-[#f9fafb] to-[#dce2e6] px-3 py-2 shadow-sm sm:flex-row sm:items-center dark:border-white/10 dark:from-[#222b35] dark:to-[#171e26]; }
+            .database-content-head h2 { @@apply text-sm text-[#2d4352] dark:text-slate-100; }
+            .database-content-head .eyebrow { @@apply text-[8px] tracking-[.08em] text-[#738794] dark:text-slate-500; }
+            .database-tabs { @@apply flex flex-wrap gap-0 overflow-hidden rounded border border-[#aeb9c2] bg-[#d7dde1] p-0 shadow-sm dark:border-white/10 dark:bg-black/20; }
+            .database-tabs button { @@apply min-h-9 cursor-pointer rounded-none border-r border-[#aeb9c2] bg-gradient-to-b from-[#fbfcfc] to-[#d8dee2] px-3 text-[11px] font-semibold text-[#415969] transition-colors last:border-r-0 hover:from-white hover:to-[#cbd8e0] hover:text-[#173f59] dark:border-white/10 dark:from-white/[.07] dark:to-white/[.02] dark:text-slate-400 dark:hover:text-white; }
+            .database-tabs button.is-active { @@apply bg-none bg-white text-[#1d587b] shadow-inner dark:bg-[#11161c] dark:text-sky-300; box-shadow: inset 0 -3px 0 #e7a33e; }
+            .database-content-head select { @@apply min-h-9 rounded border-[#aeb9c2] bg-white text-xs dark:border-white/10 dark:bg-black/25; }
+            .database-result { @@apply p-3; }
+            .database-result-meta { @@apply mb-2 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-[#c0cbd2] bg-[#e9eef1] px-2.5 py-1.5 text-[11px] text-[#4c6371] dark:border-white/10 dark:bg-white/[.04] dark:text-slate-400; }
+            .database-page .table-wrap { @@apply rounded-sm border-[#aeb9c2] shadow-none dark:border-white/10; }
+            .database-page .table-wrap th { @@apply border-[#aeb9c2] bg-gradient-to-b from-[#f3f5f6] to-[#cfd7dc] px-2.5 py-2 text-[10px] tracking-[.05em] text-[#334b5c] dark:border-white/10 dark:from-white/[.08] dark:to-white/[.02] dark:text-slate-300; }
+            .database-page .table-wrap td { @@apply border-[#d6dde1] px-2.5 py-1.5 text-[11px] dark:border-white/[.06]; }
+            .database-page .table-wrap tbody tr:nth-child(even) { @@apply bg-[#eef3f5] dark:bg-white/[.025]; }
+            .database-page .table-wrap tbody tr:hover { @@apply bg-[#fff4cf] dark:bg-amber-400/[.06]; }
             .database-data-table table { @@apply min-w-max; }
             .database-data-table th span { @@apply block; }
-            .database-data-table th small { @@apply mt-0.5 block text-[9px] font-medium normal-case tracking-normal text-slate-400; }
+            .database-data-table th small { @@apply mt-0.5 block text-[9px] font-normal normal-case tracking-normal text-[#687d8a] dark:text-slate-500; }
             .database-data-table td { @@apply max-w-[28rem] align-top; }
             .database-cell { @@apply block max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5; }
-            .database-null { @@apply rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] italic text-slate-400 dark:bg-white/[.05] dark:text-slate-500; }
-            .database-truncated { @@apply mt-1 block text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-300; }
-            .database-pager { @@apply mt-4 flex items-center justify-end gap-3 text-xs text-slate-500 dark:text-slate-400; }
-            .sql-console { @@apply p-4; }
-            .sql-console > label { @@apply mb-2 block text-xs font-semibold text-slate-700 dark:text-slate-200; }
-            .sql-console textarea { @@apply min-h-64 w-full resize-y rounded-xl border border-slate-300 bg-slate-950 p-4 font-mono text-base leading-6 text-slate-100 shadow-inner outline-none placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 sm:text-sm dark:border-white/10 dark:bg-black/40; }
-            .sql-actions { @@apply mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end; }
-            .sql-actions > span { @@apply mr-auto text-[11px] text-slate-400 dark:text-slate-500; }
+            .database-null { @@apply rounded-sm bg-[#e2e7ea] px-1.5 py-0.5 font-mono text-[10px] italic text-[#6c7f8b] dark:bg-white/[.05] dark:text-slate-500; }
+            .database-truncated { @@apply mt-1 block text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300; }
+            .database-pager { @@apply mt-3 flex items-center justify-end gap-2 border-t border-[#c8d1d7] pt-2 text-[11px] text-[#516773] dark:border-white/10 dark:text-slate-400; }
+            .database-page .database-pager .btn { @@apply min-h-9 rounded border-[#aeb9c2] px-2.5 py-1 text-[11px] shadow-none dark:border-white/10; }
+            .sql-console { @@apply p-3; }
+            .sql-console > label { @@apply mb-1.5 block text-[11px] font-semibold text-[#354d5d] dark:text-slate-200; }
+            .sql-console textarea { @@apply min-h-64 w-full resize-y rounded-sm border border-[#8799a5] bg-white p-3 font-mono text-base leading-6 text-[#182c39] shadow-inner outline-none placeholder:text-[#82929c] focus:border-[#4c88ae] focus:ring-2 focus:ring-[#4c88ae]/20 sm:text-[13px] dark:border-white/15 dark:bg-[#090d12] dark:text-slate-100 dark:placeholder:text-slate-600; }
+            .sql-actions { @@apply mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end; }
+            .sql-actions > span { @@apply mr-auto text-[10px] text-[#70838f] dark:text-slate-500; }
             .database-modal { @@apply fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm; }
-            .database-modal-card { @@apply w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl sm:p-8 dark:border-white/10 dark:bg-[#111722]; }
-            .database-loading { @@apply grid min-h-52 place-items-center text-center text-sm text-slate-500 dark:text-slate-400; }
-            .database-spinner { @@apply mx-auto mb-3 size-7 animate-spin rounded-full border-2 border-slate-200 border-t-indigo-500 motion-reduce:animate-none dark:border-white/10 dark:border-t-indigo-400; }
+            .database-modal-card { @@apply w-full max-w-lg rounded border border-[#8799a5] bg-[#f7f7f7] p-5 shadow-2xl sm:p-6 dark:border-white/10 dark:bg-[#171e26]; }
+            .database-loading { @@apply grid min-h-52 place-items-center text-center text-sm text-[#5b707d] dark:text-slate-400; }
+            .database-spinner { @@apply mx-auto mb-3 size-7 animate-spin rounded-full border-2 border-[#c8d3da] border-t-[#4c88ae] motion-reduce:animate-none dark:border-white/10 dark:border-t-sky-400; }
+            .pma-topbar { @@apply sticky top-14 z-30 grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 border-b border-[#9eabb4] bg-gradient-to-b from-[#fafbfc] to-[#d9e0e4] px-3 shadow-sm dark:border-white/10 dark:from-[#25303b] dark:to-[#171e26]; }
+            .pma-product-mark { @@apply flex min-w-0 items-center gap-2.5 border-r border-[#b5c0c7] pr-4 text-[#243b4a] dark:border-white/10 dark:text-slate-100; }
+            .pma-product-mark > span:last-child { @@apply min-w-0; }
+            .pma-product-mark strong { @@apply block truncate text-sm font-bold leading-4; }
+            .pma-product-mark small { @@apply block truncate text-[9px] uppercase tracking-[.1em] text-[#71838f] dark:text-slate-500; }
+            .pma-product-icon { @@apply grid size-8 shrink-0 place-items-center rounded bg-gradient-to-br from-[#5d8eac] to-[#365f79] text-white shadow-sm; }
+            .pma-product-icon svg { @@apply size-5; }
+            .pma-server-path { @@apply flex min-w-0 items-center gap-2 overflow-hidden rounded-sm bg-[#777] px-2.5 py-1.5 text-[11px] text-white shadow-inner dark:bg-black/30 dark:text-slate-300; }
+            .pma-path-item { @@apply flex min-w-0 items-center gap-1.5 truncate whitespace-nowrap; }
+            .pma-path-item svg { @@apply size-3.5 shrink-0 text-slate-200 dark:text-sky-400; }
+            .pma-path-item strong { @@apply truncate font-semibold text-white dark:text-slate-100; }
+            .pma-path-separator { @@apply text-slate-300 dark:text-slate-500; }
+            .pma-top-actions { @@apply flex items-center gap-1; }
+            .pma-icon-action { @@apply inline-flex min-h-9 items-center gap-1.5 rounded border border-transparent px-2 text-[10px] font-semibold text-[#486273] no-underline transition-colors hover:border-[#adb9c1] hover:bg-white/60 hover:text-[#163f5a] dark:text-slate-400 dark:hover:border-white/10 dark:hover:bg-white/[.05] dark:hover:text-white; }
+            .pma-icon-action svg { @@apply size-3.5; }
+            .pma-navigation-toggle, .pma-navigation-close, .pma-navigation-scrim { @@apply hidden; }
+            .pma-main-tabs { @@apply sticky top-[7rem] z-30 min-h-10 rounded-none border-x-0 border-t-0 bg-gradient-to-b from-[#f7f8f9] to-[#ccd5da] px-2 shadow-sm dark:from-[#202a34] dark:to-[#141b22]; }
+            .pma-main-tabs button { @@apply flex min-h-10 items-center gap-1.5 border-y-0 px-3; }
+            .pma-main-tabs button svg { @@apply size-3.5 text-[#587d94] dark:text-sky-400; }
+            .pma-main-tabs .pma-tab-spacer { @@apply min-w-2 flex-1; }
+            .pma-target-chip { @@apply mx-2 flex items-center gap-1.5 self-center whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-semibold; }
+            .pma-target-chip.coordinator { @@apply border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-400/20 dark:bg-sky-400/10 dark:text-sky-300; }
+            .pma-target-chip.worker { @@apply border-cyan-200 bg-cyan-50 text-cyan-800 dark:border-cyan-400/20 dark:bg-cyan-400/10 dark:text-cyan-300; }
+            .pma-navigation-toolbar { @@apply flex min-h-9 items-center gap-2 border-b border-[#aeb9c2] bg-gradient-to-b from-[#f6f7f8] to-[#ccd5da] px-2 text-[#435d6d] shadow-sm dark:border-white/10 dark:from-white/[.08] dark:to-white/[.02] dark:text-slate-300; }
+            .pma-home-button { @@apply grid size-7 shrink-0 place-items-center rounded border border-transparent text-[#56788d] hover:border-[#a9b7c0] hover:bg-white/70 dark:text-sky-400 dark:hover:border-white/10 dark:hover:bg-white/[.06]; }
+            .pma-home-button svg { @@apply size-4; }
+            .pma-navigation-title { @@apply min-w-0 flex-1 truncate text-[10px] font-bold uppercase tracking-[.07em]; }
+            .pma-navigation-toolbar .status-pill { @@apply border-[#aeb9c2] bg-white/60 px-1.5 py-0 text-[9px] text-[#596f7d] dark:border-white/10 dark:bg-white/[.05] dark:text-slate-400; }
+            .pma-filter svg { @@apply size-3.5 shrink-0; }
+            .pma-tree-database { @@apply mx-2 mt-2 border-b border-[#b9c5cc] pb-2 dark:border-white/10; }
+            .pma-tree-root { @@apply flex min-h-9 items-center gap-2 rounded bg-[#d3dce2] px-2 text-[#28495e] shadow-inner dark:bg-white/[.05] dark:text-slate-200; }
+            .pma-tree-root > svg { @@apply size-4 shrink-0 text-[#4e7a95] dark:text-sky-400; }
+            .pma-tree-root > span { @@apply min-w-0; }
+            .pma-tree-root small { @@apply block text-[8px] uppercase tracking-[.08em] text-[#728692] dark:text-slate-500; }
+            .pma-tree-root strong { @@apply block truncate text-[11px] leading-4; }
+            .pma-tree-empty { @@apply p-3 text-[11px] leading-5 text-[#617783] dark:text-slate-500; }
+            .pma-tree-caret { @@apply grid size-3.5 shrink-0 place-items-center rounded-sm border border-[#8fa0ab] bg-[#f9fafb] text-[10px] leading-none text-[#3c596b] dark:border-white/20 dark:bg-white/[.05] dark:text-slate-300; }
+            .pma-schema-node .database-schema-toggle > svg, .database-object > svg { @@apply size-3.5 shrink-0 text-[#5a7d92] dark:text-sky-400/80; }
+            .pma-content { @@apply min-h-0; }
+            .pma-context-bar { @@apply sticky top-[9.5rem] z-20 flex min-h-9 items-center justify-between gap-3 border-b border-[#b6c1c8] bg-[#eef1f3] px-3 py-1.5 text-[10px] text-[#536a78] shadow-sm dark:border-white/10 dark:bg-[#1b232c] dark:text-slate-400; }
+            .pma-context-path { @@apply flex min-w-0 flex-wrap items-center gap-1.5; }
+            .pma-context-path strong, #selected-database-object { @@apply font-semibold text-[#24485f] dark:text-slate-200; }
+            .pma-page-size { @@apply flex shrink-0 items-center gap-1.5 whitespace-nowrap font-semibold; }
+            .pma-page-size select { @@apply min-h-8 rounded-sm border border-[#aeb9c2] bg-white px-1.5 py-1 text-xs text-[#273c49] shadow-inner dark:border-white/10 dark:bg-black/25 dark:text-slate-200; }
+            .pma-target-notice { @@apply m-3 mb-0 min-h-10 rounded-sm border px-3 py-2 text-[10px] shadow-none; }
+            .pma-target-notice strong { @@apply text-[11px]; }
+            .pma-target-notice p { @@apply text-[10px] leading-4; }
+            .pma-result-area { @@apply min-h-[20rem]; }
+            .pma-welcome-state { @@apply mx-auto mt-10 max-w-lg rounded-sm border-[#bdc8cf] bg-white px-8 py-12 shadow-sm dark:border-white/10 dark:bg-white/[.025]; }
+            .pma-welcome-state > svg { @@apply mx-auto mb-3 size-10 text-[#6d91a7] dark:text-sky-400; }
+            .pma-welcome-state h3 { @@apply text-sm text-[#304c5e] dark:text-slate-200; }
+            .pma-welcome-state p { @@apply mt-1 text-[11px] leading-5 text-[#627682] dark:text-slate-500; }
+            .pma-query-message { @@apply flex items-center gap-2 rounded-sm border px-3 py-2 text-[11px]; }
+            .pma-query-message > svg { @@apply size-4 shrink-0; }
+            .pma-result-toolbar { @@apply mb-2 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-[#bcc8cf] bg-[#e8edef] px-2.5 py-1.5 text-[11px] text-[#4e6573] dark:border-white/10 dark:bg-white/[.04] dark:text-slate-400; }
+            .pma-browse-table { @@apply rounded-sm; }
+            .pma-row-number { @@apply w-10 bg-[#e1e7ea] text-center font-mono text-[#6a7e89] dark:bg-white/[.04] dark:text-slate-500; }
+            .pma-pagination { @@apply mt-3; }
+            .pma-shard-message { @@apply rounded-sm px-3 py-2; }
+            .pma-section-title { @@apply mb-2 flex items-end justify-between border-b border-[#b7c3ca] pb-1.5 dark:border-white/10; }
+            .pma-section-title h2 { @@apply text-sm text-[#2c485a] dark:text-slate-200; }
+            .pma-section-title p { @@apply mt-0.5 text-[10px] text-[#657985] dark:text-slate-500; }
+            .pma-index-title { @@apply mt-5; }
+            .pma-index-list { @@apply grid gap-2; }
+            .pma-index-card { @@apply rounded-sm border-[#b8c4cb] bg-white p-3 shadow-none dark:border-white/10 dark:bg-white/[.025]; }
+            .pma-index-card > strong { @@apply text-[11px] text-[#334f60] dark:text-slate-300; }
+            .pma-index-card .json-block { @@apply mt-2 max-h-none rounded-sm border-[#bec9cf] bg-[#f1f4f5] p-2.5 text-[10px] text-[#3c5361] dark:border-white/10 dark:bg-black/25 dark:text-slate-400; }
+            .pma-result-set { @@apply mb-5; }
+            .pma-sql-console { @@apply min-h-[24rem]; }
+            .pma-editor-label { @@apply mt-3; }
+            .pma-sql-console .sql-actions > div { @@apply flex gap-1.5; }
+            .pma-sql-console .btn { @@apply min-h-9 rounded-sm px-3 py-1.5 text-[11px] shadow-none; }
+            .pma-sql-console .btn-primary { @@apply border-[#397aa2] bg-[#4d8db4] hover:border-[#2f6e94] hover:bg-[#407fa6] dark:border-sky-500/30 dark:bg-sky-600; }
+            .pma-sql-result { @@apply mt-3; }
+            .pma-modal-icon { @@apply mb-4 grid size-10 place-items-center rounded-sm bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300; }
+            .pma-modal-icon svg { @@apply size-5; }
+            .pma-modal-copy { @@apply mt-2 text-xs leading-5 text-[#596f7d] dark:text-slate-400; }
+            body:has(> .database-tool-shell) { @@apply overflow-hidden; }
+            .database-tool-shell { @@apply h-dvh min-h-0 overflow-hidden bg-[#f6f6f6] dark:bg-[#11161c]; }
+            .database-tool-shell .database-page { @@apply flex h-full min-h-0 flex-col overflow-hidden; }
+            .database-tool-shell .pma-topbar,
+            .database-tool-shell .pma-main-tabs { @@apply relative top-auto shrink-0; }
+            .database-tool-shell .database-workbench { @@apply min-h-0 flex-1; }
+            .database-tool-shell .database-tree { @@apply lg:relative lg:top-auto lg:h-full lg:min-h-0; }
+            .database-tool-shell .database-tree-scroll { @@apply min-h-0 max-h-none; }
+            .database-tool-shell .pma-content { @@apply h-full min-h-0 overflow-y-auto overscroll-contain; }
+            .database-tool-shell .pma-context-bar { @@apply top-0; }
+            @@media (max-width: 1023px) {
+                .pma-topbar { @@apply top-0 grid-cols-[minmax(0,1fr)_auto]; }
+                .pma-server-path { @@apply col-span-2 row-start-2 border-t border-[#bbc5cb] py-1.5 dark:border-white/10; }
+                .pma-main-tabs { @@apply top-[5.25rem]; }
+                .database-workbench { @@apply grid-cols-1; }
+                .pma-navigation-toggle, .pma-navigation-close { @@apply inline-flex; }
+                .pma-navigation-close { @@apply size-9 shrink-0 items-center justify-center rounded-sm text-[#4d6777] hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/[.06]; }
+                .pma-navigation-close svg { @@apply size-4; }
+                .database-tree { @@apply fixed inset-y-0 left-0 z-50 h-dvh w-[17.5rem] -translate-x-full border-r transition-transform duration-200; }
+                .database-tree.is-open { @@apply translate-x-0; }
+                .database-tree-scroll { @@apply max-h-none; }
+                .pma-navigation-scrim:not(.hidden) { @@apply fixed inset-0 z-40 block bg-slate-950/45 backdrop-blur-[1px]; }
+                .pma-context-bar { @@apply static; }
+            }
+            @@media (max-width: 639px) {
+                .pma-topbar { @@apply gap-2 px-2; }
+                .pma-product-mark { @@apply border-r-0 pr-0; }
+                .pma-product-mark small, .pma-icon-action span, .pma-server-path .pma-path-item:first-child, .pma-server-path .pma-path-separator:first-of-type { @@apply hidden; }
+                .pma-icon-action { @@apply size-10 justify-center p-0; }
+                .pma-icon-action svg { @@apply size-4; }
+                .pma-main-tabs { @@apply top-[5.25rem] overflow-x-auto px-0; }
+                .pma-main-tabs button { @@apply min-h-11 shrink-0 px-3; }
+                .pma-target-chip { @@apply hidden; }
+                .database-tree-scroll { @@apply max-h-none; }
+                .pma-context-bar { @@apply items-start; }
+                .pma-context-path { @@apply hidden; }
+                .pma-page-size { @@apply ml-auto min-h-11; }
+                .pma-target-notice { @@apply mx-2; }
+                .database-result, .sql-console { @@apply p-2; }
+            }
             .empty-state { @@apply rounded-xl border border-dashed border-slate-300 bg-white/50 p-10 text-center text-sm text-slate-500 dark:border-white/15 dark:bg-white/[.02] dark:text-slate-400; }
             .empty-state h3 { @@apply mb-1; }
             .empty-state.compact { @@apply p-5; }
@@ -202,7 +344,15 @@
 </head>
 <body>
 <a class="skip-link" href="#main-content">Bỏ qua điều hướng</a>
-@if (User.Identity?.IsAuthenticated == true)
+@if (User.Identity?.IsAuthenticated == true && isDatabaseExplorer)
+{
+    <main id="main-content" class="database-tool-shell" tabindex="-1">
+        @if (TempData["Notice"] is string notice) { <div class="notice success" role="status">@notice</div> }
+        @if (TempData["Error"] is string error) { <div class="notice danger" role="alert">@error</div> }
+        @RenderBody()
+    </main>
+}
+else if (User.Identity?.IsAuthenticated == true)
 {
     <div class="app-shell">
         <aside class="sidebar" aria-label="Điều hướng chính">

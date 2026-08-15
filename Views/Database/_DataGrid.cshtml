@@ -1,6 +1,10 @@
 @model TableDataResponse
-<div class="database-result-meta">
-    <span><strong>@Model.Rows.Count</strong> rows · trang @Model.Page · @Model.Duration.TotalMilliseconds.ToString("N0") ms</span>
+<div class="pma-query-message" role="status">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+    <span>Đang hiển thị <strong>@Model.Rows.Count</strong> hàng ở trang <strong>@Model.Page</strong>. Truy vấn mất @Model.Duration.TotalMilliseconds.ToString("N0") ms.</span>
+</div>
+<div class="database-result-meta pma-result-toolbar">
+    <span>Kết quả truy vấn</span>
     @if (!Model.HasStableOrder) { <span class="status-pill warning">Thứ tự không ổn định · thiếu primary key</span> }
 </div>
 @if (Model.Columns.Count == 0)
@@ -9,7 +13,7 @@
 }
 else
 {
-    <div class="table-wrap database-data-table"><table><thead><tr>
+    <div class="table-wrap database-data-table pma-browse-table"><table><thead><tr>
         @foreach (var column in Model.Columns) { <th><span>@column.Name</span><small>@column.DataType</small></th> }
     </tr></thead><tbody>
         @if (Model.Rows.Count == 0) { <tr><td colspan="@Model.Columns.Count" class="!py-12 !text-center">Bảng chưa có dữ liệu trong phạm vi target này.</td></tr> }
@@ -25,8 +29,12 @@ else
         }
     </tbody></table></div>
 }
-<div class="database-pager">
-    <button type="button" class="btn btn-secondary" data-database-page="@(Model.Page - 1)" disabled="@(!Model.HasPrevious)">Trang trước</button>
-    <span>Trang @Model.Page</span>
-    <button type="button" class="btn btn-secondary" data-database-page="@(Model.Page + 1)" disabled="@(!Model.HasNext)">Trang sau</button>
+<div class="database-pager pma-pagination" aria-label="Phân trang dữ liệu">
+    <button type="button" class="btn btn-secondary" data-database-page="@(Model.Page - 1)" disabled="@(!Model.HasPrevious)">
+        <span aria-hidden="true">‹</span> Trang trước
+    </button>
+    <span>Trang <strong>@Model.Page</strong></span>
+    <button type="button" class="btn btn-secondary" data-database-page="@(Model.Page + 1)" disabled="@(!Model.HasNext)">
+        Trang sau <span aria-hidden="true">›</span>
+    </button>
 </div>

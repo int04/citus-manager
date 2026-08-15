@@ -4,62 +4,127 @@
     var groupedObjects = Model.Objects.GroupBy(x => x.Schema).OrderBy(x => x.Key);
     var objectKinds = new[]
     {
-        (Kind: "table", Label: "Tables"),
-        (Kind: "view", Label: "Views"),
-        (Kind: "sequence", Label: "Sequences")
+        (Kind: "table", Label: "Bảng"),
+        (Kind: "view", Label: "View"),
+        (Kind: "sequence", Label: "Sequence")
     };
 }
 
-<div class="database-page" data-database-explorer
+<div class="database-page pma-explorer" data-database-explorer
      data-browse-url="@Url.Action("Browse", "Database", new { clusterId = Model.Cluster.Id })"
      data-structure-url="@Url.Action("Structure", "Database", new { clusterId = Model.Cluster.Id })"
      data-sql-url="@Url.Action("ExecuteSql", "Database", new { clusterId = Model.Cluster.Id })"
      data-node-id="@Model.NodeId">
-    <div class="page-heading">
-        <div>
-            <p class="eyebrow">DATABASE EXPLORER</p>
-            <h1>@Model.Cluster.Database</h1>
-            <p>@Model.TargetLabel · @Model.Cluster.Name</p>
-        </div>
-        <div class="heading-actions">
-            <a class="btn btn-ghost" asp-controller="Clusters" asp-action="Details" asp-route-id="@Model.Cluster.Id">Về cluster</a>
-            <a class="btn btn-secondary" asp-controller="Database" asp-action="Index"
-               asp-route-clusterId="@Model.Cluster.Id" asp-route-nodeId="@Model.NodeId"
-               asp-route-showSystem="@(!Model.ShowSystem)">
-                @(Model.ShowSystem ? "Ẩn system schema" : "Hiện system schema")
-            </a>
-        </div>
-    </div>
-
-    <div class="target-banner @(Model.IsCoordinator ? "coordinator" : "worker")">
-        <span class="status-dot ok" aria-hidden="true"></span>
-        <div><strong>@(Model.IsCoordinator ? "Coordinator / logical data" : "Worker / local shard data")</strong><p>@(Model.IsCoordinator ? "Truy vấn logical table sẽ đi qua Citus và tổng hợp dữ liệu toàn cluster." : "Chỉ physical shard placements hiện có trên node này được đọc.")</p></div>
-        <code>@Model.Cluster.Database</code>
-    </div>
-
     <form id="database-antiforgery" class="hidden">@Html.AntiForgeryToken()</form>
 
-    <div class="database-workbench">
-        <aside class="database-tree" aria-label="Danh sách database objects">
-            <div class="database-tree-head">
-                <span>Database objects</span>
+    <header class="pma-topbar">
+        <div class="pma-product-mark" aria-label="Citus Manager Database Explorer">
+            <span class="pma-product-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+            </span>
+            <span><strong>Citus Manager</strong><small>Database Explorer</small></span>
+        </div>
+
+        <div class="pma-server-path" aria-label="Vị trí hiện tại">
+            <span class="pma-path-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M8 6.5h.01M8 17.5h.01"/></svg>
+                Server: <strong>@Model.Cluster.Host:@Model.Cluster.Port</strong>
+            </span>
+            <span class="pma-path-separator" aria-hidden="true">›</span>
+            <span class="pma-path-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+                Database: <strong>@Model.Cluster.Database</strong>
+            </span>
+            @if (!Model.IsCoordinator)
+            {
+                <span class="pma-path-separator" aria-hidden="true">›</span>
+                <span class="pma-path-item">Node: <strong>@Model.TargetLabel</strong></span>
+            }
+        </div>
+
+        <div class="pma-top-actions">
+            <button class="pma-icon-action pma-navigation-toggle" id="database-navigation-toggle" type="button"
+                    aria-controls="database-navigation" aria-expanded="false" aria-label="Mở cây điều hướng database">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                <span>Đối tượng</span>
+            </button>
+            <button class="pma-icon-action" id="theme-toggle" type="button" aria-label="Đổi giao diện sáng tối">
+                <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
+                <span>Giao diện</span>
+            </button>
+            <a class="pma-icon-action" asp-controller="Clusters" asp-action="Details" asp-route-id="@Model.Cluster.Id">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                <span>Cluster</span>
+            </a>
+            <a class="pma-icon-action" asp-controller="Database" asp-action="Index"
+               asp-route-clusterId="@Model.Cluster.Id" asp-route-nodeId="@Model.NodeId"
+               asp-route-showSystem="@(!Model.ShowSystem)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+                <span>@(Model.ShowSystem ? "Ẩn system" : "Hiện system")</span>
+            </a>
+        </div>
+    </header>
+
+    <nav class="database-tabs pma-main-tabs" aria-label="Chức năng database" role="tablist">
+        <button type="button" class="is-active" data-database-tab="data" role="tab" aria-selected="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16v14H4zM4 9h16M9 9v10"/></svg>
+            Duyệt
+        </button>
+        <button type="button" data-database-tab="structure" role="tab" aria-selected="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+            Cấu trúc
+        </button>
+        @if (Model.IsCoordinator)
+        {
+            <button type="button" data-database-tab="sql" role="tab" aria-selected="false">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></svg>
+                SQL
+            </button>
+        }
+        <span class="pma-tab-spacer"></span>
+        <span class="pma-target-chip @(Model.IsCoordinator ? "coordinator" : "worker")">
+            <span class="status-dot ok" aria-hidden="true"></span>
+            @(Model.IsCoordinator ? "Coordinator · toàn cluster" : "Worker · shard cục bộ")
+        </span>
+    </nav>
+
+    <div class="database-workbench pma-workbench">
+        <button class="pma-navigation-scrim hidden" id="database-navigation-scrim" type="button" aria-label="Đóng cây điều hướng database"></button>
+        <aside class="database-tree pma-navigation" id="database-navigation" aria-label="Cây đối tượng database">
+            <div class="pma-navigation-toolbar">
+                <a class="pma-home-button" asp-controller="Clusters" asp-action="Details" asp-route-id="@Model.Cluster.Id" aria-label="Về trang cluster">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m3 11 9-8 9 8M5 10v10h14V10M9 20v-6h6v6"/></svg>
+                </a>
+                <span class="pma-navigation-title">Cây điều hướng</span>
                 <span class="status-pill neutral">@Model.Objects.Count</span>
+                <button class="pma-navigation-close" id="database-navigation-close" type="button" aria-label="Đóng cây điều hướng database">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+                </button>
             </div>
-            <label class="database-search">
-                <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-                <span class="sr-only">Tìm database object</span>
-                <input id="database-object-search" type="search" placeholder="Tìm table, view, sequence…" autocomplete="off" />
+            <label class="database-search pma-filter">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+                <span class="sr-only">Lọc database object</span>
+                <input id="database-object-search" type="search" placeholder="Lọc theo tên…" autocomplete="off" />
             </label>
-            <div class="database-tree-scroll">
+
+            <div class="pma-tree-database">
+                <div class="pma-tree-root">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+                    <span><small>Database</small><strong>@Model.Cluster.Database</strong></span>
+                </div>
+            </div>
+
+            <div class="database-tree-scroll pma-tree-scroll">
                 @if (Model.Objects.Count == 0)
                 {
-                    <p class="p-4 text-xs leading-5 text-slate-500 dark:text-slate-400">Không tìm thấy database object có thể đọc trên target này.</p>
+                    <p class="pma-tree-empty">Không tìm thấy object có thể đọc trên target này.</p>
                 }
                 @foreach (var schema in groupedObjects)
                 {
-                    <section class="database-schema" data-schema-group>
+                    <section class="database-schema pma-schema-node" data-schema-group>
                         <button type="button" class="database-schema-toggle" aria-expanded="true">
-                            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3V7Z"/><path d="M3 7V5h7l2 2"/></svg>
+                            <svg class="pma-tree-caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 3 5 5-5 5"/></svg>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3V7Z"/><path d="M3 7V5h7l2 2"/></svg>
                             <span>@schema.Key</span><small>@schema.Count()</small>
                         </button>
                         <div class="database-schema-items">
@@ -75,11 +140,11 @@
                                                 data-schema="@item.Schema" data-table="@item.Name" data-kind="@item.Kind"
                                                 data-search-text="@(item.Schema + "." + item.Name + " " + objectKind.Label)">
                                             @if (item.Kind == "view")
-                                            { <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg> }
+                                            { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg> }
                                             else if (item.Kind == "sequence")
-                                            { <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h4M4 12h7M4 18h10"/><path d="m16 8 4 4-4 4"/></svg> }
+                                            { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h4M4 12h7M4 18h10"/><path d="m16 8 4 4-4 4"/></svg> }
                                             else
-                                            { <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg> }
+                                            { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg> }
                                             <span><strong>@item.Name</strong><small>@item.TableType@(item.LocalShardCount > 0 ? $" · {item.LocalShardCount} shard" : string.Empty)</small></span>
                                         </button>
                                     }
@@ -91,42 +156,61 @@
             </div>
         </aside>
 
-        <section class="database-content" aria-live="polite">
-            <header class="database-content-head">
-                <div><p class="eyebrow !mb-1">SELECTED OBJECT</p><h2 id="selected-database-object">Chọn một object</h2></div>
-                <nav class="database-tabs" aria-label="Database object views" role="tablist">
-                    <button type="button" class="is-active" data-database-tab="data" role="tab" aria-selected="true">Dữ liệu</button>
-                    <button type="button" data-database-tab="structure" role="tab" aria-selected="false">Cấu trúc</button>
-                    @if (Model.IsCoordinator) { <button type="button" data-database-tab="sql" role="tab" aria-selected="false">SQL</button> }
-                </nav>
-                <label class="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    <span class="whitespace-nowrap">Rows/trang</span>
-                    <select id="database-page-size" class="min-h-11 w-20 rounded-lg border border-slate-300 bg-white px-2 py-1 text-base text-slate-900 sm:text-xs dark:border-white/10 dark:bg-black/20 dark:text-white">
+        <section class="database-content pma-content" aria-live="polite">
+            <div class="pma-context-bar">
+                <div class="pma-context-path">
+                    <span>Server: <strong>@Model.Cluster.Name</strong></span>
+                    <span>›</span>
+                    <span>Database: <strong>@Model.Cluster.Database</strong></span>
+                    <span>›</span>
+                    <span id="selected-database-object">Chưa chọn bảng</span>
+                </div>
+                <label class="pma-page-size" for="database-page-size">
+                    <span>Số hàng:</span>
+                    <select id="database-page-size">
                         @foreach (var size in Model.AllowedPageSizes) { <option value="@size" selected="@(size == 50)">@size</option> }
                     </select>
                 </label>
-            </header>
+            </div>
+
+            <div class="target-banner pma-target-notice @(Model.IsCoordinator ? "coordinator" : "worker")">
+                <span class="status-dot ok" aria-hidden="true"></span>
+                <div>
+                    <strong>@(Model.IsCoordinator ? "Dữ liệu logical toàn cluster" : "Dữ liệu shard trên worker")</strong>
+                    <p>@(Model.IsCoordinator ? "Citus điều phối truy vấn và tổng hợp dữ liệu từ các worker." : "Chỉ đọc physical shard placements hiện có trên node này.")</p>
+                </div>
+                <code>@Model.TargetLabel</code>
+            </div>
 
             <div id="database-feedback" class="connection-result error hidden" role="alert" tabindex="-1"></div>
-            <div id="database-result" class="database-result">
-                <div class="empty-state"><h3>Chưa chọn object</h3><p>Chọn table, view hoặc sequence ở sidebar để xem dữ liệu và cấu trúc.</p></div>
+            <div id="database-result" class="database-result pma-result-area">
+                <div class="empty-state pma-welcome-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+                    <h3>Chọn một đối tượng từ cây điều hướng</h3>
+                    <p>Mở schema bên trái, sau đó chọn bảng, view hoặc sequence để duyệt dữ liệu và cấu trúc.</p>
+                </div>
             </div>
 
             @if (Model.IsCoordinator)
             {
-                <section id="sql-console" class="sql-console hidden" aria-labelledby="sql-console-title">
+                <section id="sql-console" class="sql-console pma-sql-console hidden" aria-labelledby="sql-console-title">
+                    <div class="pma-section-title">
+                        <div><h2 id="sql-console-title">Chạy truy vấn SQL trên database <strong>@Model.Cluster.Database</strong></h2><p>Nhập một hoặc nhiều câu lệnh SQL.</p></div>
+                    </div>
                     <div class="warning-callout"><strong>Quyền lực đầy đủ:</strong> SQL chạy trực tiếp trên coordinator bằng credential đã lưu. DML, DDL và multi-statement đều được phép.</div>
-                    <label for="sql-editor" id="sql-console-title">SQL query</label>
+                    <label class="pma-editor-label" for="sql-editor">Câu lệnh SQL</label>
                     <textarea id="sql-editor" spellcheck="false" placeholder="SELECT * FROM public.my_table LIMIT 100;"></textarea>
                     <div class="sql-actions">
-                        <span>Timeout @Model.CommandTimeoutSeconds s · tối đa @Model.MaxRowsPerResultSet.ToString("N0") rows/result set</span>
-                        <button type="button" class="btn btn-ghost hidden" id="cancel-sql-button">Dừng query</button>
-                        <button type="button" class="btn btn-primary" id="prepare-sql-button">
-                            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 5 8 7-8 7V5Z"/></svg>
-                            Chạy SQL
-                        </button>
+                        <span>Timeout @Model.CommandTimeoutSeconds s · tối đa @Model.MaxRowsPerResultSet.ToString("N0") hàng/result set</span>
+                        <div>
+                            <button type="button" class="btn btn-ghost hidden" id="cancel-sql-button">Dừng query</button>
+                            <button type="button" class="btn btn-primary" id="prepare-sql-button">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 5 8 7-8 7V5Z"/></svg>
+                                Thực thi
+                            </button>
+                        </div>
                     </div>
-                    <div id="sql-result" class="mt-4"></div>
+                    <div id="sql-result" class="pma-sql-result"></div>
                 </section>
             }
         </section>
@@ -136,11 +220,12 @@
     {
         <div id="sql-confirm-modal" class="database-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sql-confirm-title">
             <div class="database-modal-card">
-                <div class="mb-5 grid size-11 place-items-center rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300" aria-hidden="true">
-                    <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.8 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0Z"/></svg>
+                <div class="pma-modal-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.8 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0Z"/></svg>
                 </div>
-                <p class="eyebrow">UNRESTRICTED SQL</p><h2 id="sql-confirm-title" class="!text-xl">Xác nhận thực thi</h2>
-                <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">Target: <strong class="text-slate-900 dark:text-white">@Model.Cluster.Name / @Model.Cluster.Database</strong>. Câu lệnh có thể thay đổi hoặc xóa dữ liệu.</p>
+                <p class="eyebrow">UNRESTRICTED SQL</p>
+                <h2 id="sql-confirm-title">Xác nhận thực thi</h2>
+                <p class="pma-modal-copy">Target: <strong>@Model.Cluster.Name / @Model.Cluster.Database</strong>. Câu lệnh có thể thay đổi hoặc xóa dữ liệu.</p>
                 <div class="form-actions"><button type="button" class="btn btn-ghost" id="close-sql-modal">Hủy</button><button type="button" class="btn btn-danger" id="confirm-sql-button">Tôi hiểu, chạy SQL</button></div>
             </div>
         </div>
