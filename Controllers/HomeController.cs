@@ -1,14 +1,18 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using CitusManager.Models;
+using CitusManager.Services;
 
 namespace CitusManager.Controllers;
 
-public class HomeController : Controller
+public class HomeController(IClusterService clusters, IOperationService operations) : Controller
 {
-    public IActionResult Index()
+    public async Task<IActionResult> Index(CancellationToken cancellationToken)
     {
-        return View();
+        var model = new DashboardViewModel(
+            await clusters.GetAllAsync(cancellationToken),
+            await operations.GetAllAsync(null, cancellationToken));
+        return View(model);
     }
 
     public IActionResult Privacy()

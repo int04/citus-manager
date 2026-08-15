@@ -1,0 +1,87 @@
+@baseUrl = http://localhost:5115
+@clusterId = 00000000-0000-0000-0000-000000000000
+@operationId = 00000000-0000-0000-0000-000000000000
+
+# Login through /Account/Login first; requests use the Identity cookie from the client session.
+
+### OpenAPI (development, anonymous)
+GET {{baseUrl}}/openapi/v1.json
+
+### List cluster profiles (never returns passwords/tokens)
+GET {{baseUrl}}/api/clusters
+
+### Register coordinator after read-only capability scan
+POST {{baseUrl}}/api/clusters
+Content-Type: application/json
+
+{
+  "name": "Production Citus",
+  "host": "coordinator.internal",
+  "port": 5432,
+  "database": "appdb",
+  "username": "citus_monitor",
+  "password": "replace-in-client-only",
+  "sslMode": "VerifyFull",
+  "prometheusBaseUrl": "https://prometheus.internal",
+  "prometheusBearerToken": null
+}
+
+### Refresh inventory
+POST {{baseUrl}}/api/clusters/{{clusterId}}/refresh
+
+### Read sanitized activity (no SQL text/parameters)
+GET {{baseUrl}}/api/clusters/{{clusterId}}/activity
+
+### Read metric samples
+GET {{baseUrl}}/api/clusters/{{clusterId}}/metrics?take=1000
+
+### Create rebalance plan; does not execute before another Admin approves
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}
+Content-Type: application/json
+
+{
+  "kind": "Rebalance",
+  "workerHost": null,
+  "workerPort": null,
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "typedConfirmation": null
+}
+
+### Create drain plan
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}
+Content-Type: application/json
+
+{
+  "kind": "DrainWorker",
+  "workerHost": "worker-03.internal",
+  "workerPort": 5432,
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "typedConfirmation": null
+}
+
+### Create remove plan; host confirmation must match exactly and placements must already be zero
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}
+Content-Type: application/json
+
+{
+  "kind": "RemoveWorker",
+  "workerHost": "worker-03.internal",
+  "workerPort": 5432,
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "typedConfirmation": "worker-03.internal"
+}
+
+### Approve as a different Admin
+POST {{baseUrl}}/api/operations/{{operationId}}/approve
+
+### Request safe cancel/stop
+POST {{baseUrl}}/api/operations/{{operationId}}/cancel
+
+### Read alerts
+GET {{baseUrl}}/api/alerts?state=Open
+
+### Read sanitized audit (Admin)
+GET {{baseUrl}}/api/audit?take=100
+
+### Delete local profile only; target Citus database is untouched
+DELETE {{baseUrl}}/api/clusters/{{clusterId}}

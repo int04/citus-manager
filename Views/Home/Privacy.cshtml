@@ -1,6 +1,7 @@
-﻿@{
-    ViewData["Title"] = "Privacy Policy";
-}
-<h1>@ViewData["Title"]</h1>
-
-<p>Use this page to detail your site's privacy policy.</p>
+@{ ViewData["Title"] = "Bảo mật & quyền riêng tư"; }
+<div class="page-heading"><div><p class="eyebrow">SECURITY</p><h1>Bảo mật & quyền riêng tư</h1><p>Nguyên tắc xử lý credentials, audit và dữ liệu giám sát trong Citus Manager.</p></div></div>
+<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <section class="panel"><h2>Credentials</h2><p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">Password và bearer token được mã hóa bằng ASP.NET Data Protection. API không trả secret sau khi lưu.</p></section>
+    <section class="panel"><h2>Activity</h2><p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">SQL text và parameters bị loại khỏi activity UI để giảm rủi ro lộ dữ liệu ứng dụng.</p></section>
+    <section class="panel"><h2>Audit</h2><p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">Topology mutation ghi actor, plan hash, checkpoint và kết quả sanitized; không ghi connection string.</p></section>
+</div>

@@ -1,49 +1,206 @@
-﻿<!DOCTYPE html>
-<html lang="en">
+@using System.Globalization
+@{
+    var currentController = ViewContext.RouteData.Values["controller"]?.ToString();
+}
+<!DOCTYPE html>
+<html lang="@CultureInfo.CurrentUICulture.TwoLetterISOLanguageName" data-theme="dark" class="scheme-light dark:scheme-dark">
 <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>@ViewData["Title"] - CitusManager</title>
-    <script type="importmap"></script>
-    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css"/>
-    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true"/>
-    <link rel="stylesheet" href="~/CitusManager.styles.css" asp-append-version="true"/>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>@ViewData["Title"] · Citus Manager</title>
+    <script src="https://cdn.jsdelivr.net/npm/@@tailwindcss/browser@@4"></script>
+    <style type="text/tailwindcss">
+        @@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+        @@theme {
+            --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            --font-mono: "Fira Code", "Cascadia Code", Consolas, monospace;
+            --color-brand-50: #eef2ff;
+            --color-brand-100: #e0e7ff;
+            --color-brand-400: #818cf8;
+            --color-brand-500: #6366f1;
+            --color-brand-600: #4f46e5;
+            --color-brand-700: #4338ca;
+        }
+
+        @@layer base {
+            * { @@apply border-slate-200 dark:border-white/10; }
+            html { @@apply min-h-full bg-slate-50 antialiased dark:bg-[#080b12]; }
+            body { @@apply min-h-screen bg-slate-50 font-sans text-slate-950 selection:bg-indigo-200 selection:text-indigo-950 dark:bg-[#080b12] dark:text-slate-100 dark:selection:bg-indigo-500/40 dark:selection:text-white; }
+            h1 { @@apply text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl dark:text-white; }
+            h2 { @@apply text-base font-semibold tracking-tight text-slate-950 dark:text-white; }
+            h3 { @@apply text-sm font-semibold text-slate-950 dark:text-white; }
+            code, pre { @@apply font-mono text-[0.82em] tabular-nums; }
+            code { @@apply rounded bg-slate-100 px-1.5 py-0.5 text-slate-700 dark:bg-white/5 dark:text-slate-300; }
+            button, a, input, select { @@apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-[#080b12]; }
+        }
+
+        @@layer components {
+            .skip-link { @@apply fixed left-4 -top-20 z-50 rounded-lg bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-xl transition-all focus:top-4 dark:bg-white dark:text-slate-950; }
+            .app-shell { @@apply min-h-screen lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]; }
+            .sidebar { @@apply border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur-xl lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col lg:border-r lg:border-b-0 lg:px-3 dark:border-white/10 dark:bg-[#0d111a]/95; }
+            .brand { @@apply flex min-h-12 items-center gap-3 rounded-xl px-2 text-slate-950 no-underline dark:text-white; }
+            .brand-mark { @@apply grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 via-indigo-600 to-cyan-500 text-[11px] font-black tracking-wider text-white shadow-lg shadow-indigo-600/20 ring-1 ring-white/20; }
+            .brand strong { @@apply block text-sm font-semibold tracking-tight; }
+            .brand small { @@apply block text-[11px] text-slate-500 dark:text-slate-400; }
+            .side-nav { @@apply mt-5 grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1; }
+            .side-nav a { @@apply flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium text-slate-600 no-underline transition duration-150 hover:bg-slate-100 hover:text-slate-950 active:scale-[.99] dark:text-slate-400 dark:hover:bg-white/[.06] dark:hover:text-white; }
+            .side-nav a.is-active { @@apply bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200/70 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-400/20; }
+            .sidebar-footer { @@apply mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:mt-auto dark:border-white/10; }
+            .identity-name { @@apply truncate px-2 text-xs font-medium text-slate-700 dark:text-slate-300; }
+            .role-line { @@apply flex flex-wrap gap-1 px-2; }
+            .workspace { @@apply min-w-0; }
+            .topbar { @@apply sticky top-0 z-30 flex min-h-14 items-center justify-between border-b border-slate-200 bg-white/80 px-4 backdrop-blur-xl sm:px-6 lg:px-8 dark:border-white/10 dark:bg-[#080b12]/80; }
+            .culture-switch { @@apply flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-white/[.04] dark:text-slate-400; }
+            .culture-switch a { @@apply grid min-h-11 min-w-11 place-items-center rounded-md no-underline transition hover:bg-white hover:text-slate-950 dark:hover:bg-white/10 dark:hover:text-white; }
+            .main-content { @@apply mx-auto w-full max-w-[96rem] p-4 sm:p-6 lg:p-8; }
+            .page-heading { @@apply mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-start; }
+            .page-heading p { @@apply mt-1 max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400; }
+            .narrow-heading { @@apply max-w-4xl; }
+            .heading-actions { @@apply flex flex-wrap gap-2; }
+            .eyebrow { @@apply mb-1.5 text-[11px] font-bold uppercase tracking-[.16em] text-indigo-600 dark:text-indigo-400; }
+            .metric-grid { @@apply mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4; }
+            .metric-card { @@apply relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md dark:border-white/10 dark:bg-white/[.035] dark:shadow-none dark:hover:border-indigo-400/40 dark:hover:bg-white/[.05]; }
+            .metric-card::before { content: ""; @@apply absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent opacity-0 transition; }
+            .metric-card:hover::before { @@apply opacity-100; }
+            .metric-card span { @@apply block text-xs font-medium text-slate-500 dark:text-slate-400; }
+            .metric-card strong { @@apply mt-3 block font-mono text-2xl font-semibold tabular-nums tracking-tight text-slate-950 dark:text-white; }
+            .metric-card small { @@apply mt-1 block text-[11px] text-slate-400 dark:text-slate-500; }
+            .metric-danger { @@apply border-rose-300 bg-rose-50/60 dark:border-rose-500/30 dark:bg-rose-500/[.06]; }
+            .section-block { @@apply my-8; }
+            .section-title { @@apply mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-end; }
+            .section-title p { @@apply mt-0.5 text-xs text-slate-500 dark:text-slate-400; }
+            .cluster-grid, .topology-grid { @@apply grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3; }
+            .cluster-card { @@apply rounded-xl border border-slate-200 bg-white p-4 text-slate-950 no-underline shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-lg hover:shadow-indigo-500/5 dark:border-white/10 dark:bg-white/[.035] dark:text-white dark:shadow-none dark:hover:border-indigo-400/40 dark:hover:bg-white/[.055]; }
+            .cluster-card-head, .node-card-head { @@apply mb-3 flex items-center gap-2; }
+            .cluster-card-head .status-pill { @@apply ml-auto; }
+            .node-card { @@apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[.035] dark:shadow-none; }
+            .status-dot { @@apply size-2.5 shrink-0 rounded-full bg-slate-400 ring-4 ring-slate-400/10; }
+            .status-dot.ok { @@apply bg-emerald-500 ring-emerald-500/15; }
+            .status-dot.bad { @@apply bg-rose-500 ring-rose-500/15; }
+            .status-pill { @@apply inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider; }
+            .status-pill.success { @@apply border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300; }
+            .status-pill.warning { @@apply border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300; }
+            .status-pill.danger { @@apply border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300; }
+            .status-pill.neutral { @@apply border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/[.06] dark:text-slate-300; }
+            .status-large { @@apply px-3 py-1 text-xs; }
+            .compact-dl, .detail-list { @@apply mt-4 grid; }
+            .compact-dl div, .detail-list div { @@apply flex justify-between gap-4 border-t border-slate-100 py-2 text-xs dark:border-white/[.07]; }
+            .compact-dl dt, .detail-list dt { @@apply font-normal text-slate-500 dark:text-slate-400; }
+            .compact-dl dd, .detail-list dd { @@apply m-0 break-all text-right font-medium text-slate-700 dark:text-slate-200; }
+            .table-wrap { @@apply overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-white/[.025] dark:shadow-none; }
+            .table-wrap table { @@apply w-full min-w-[760px] border-collapse; }
+            .table-wrap th { @@apply border-b border-slate-200 bg-slate-50/80 px-4 py-3 text-left text-[10px] font-bold uppercase tracking-[.12em] text-slate-500 dark:border-white/10 dark:bg-white/[.035] dark:text-slate-400; }
+            .table-wrap td { @@apply border-b border-slate-100 px-4 py-3 text-xs text-slate-700 dark:border-white/[.06] dark:text-slate-300; }
+            .table-wrap tbody tr { @@apply transition hover:bg-indigo-50/40 dark:hover:bg-indigo-400/[.04]; }
+            .table-link { @@apply font-semibold text-indigo-600 no-underline hover:text-indigo-500 hover:underline dark:text-indigo-400; }
+            .panel { @@apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/[.035] dark:shadow-none; }
+            .form-panel { @@apply max-w-4xl; }
+            .form-grid { @@apply grid grid-cols-1 gap-x-4 md:grid-cols-2; }
+            .span-2 { @@apply md:col-span-2; }
+            .field { @@apply mb-4 grid gap-1.5; }
+            .field label, legend { @@apply text-xs font-semibold text-slate-700 dark:text-slate-200; }
+            .field input:not([type=checkbox]), .field select { @@apply min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-sm transition placeholder:text-slate-400 hover:border-slate-400 focus:border-indigo-500 focus:ring-indigo-500 dark:border-white/10 dark:bg-black/20 dark:text-white dark:placeholder:text-slate-600 dark:hover:border-white/20; }
+            .field small { @@apply text-[11px] leading-4 text-slate-500 dark:text-slate-400; }
+            .field span, .validation-summary { @@apply text-xs text-rose-600 dark:text-rose-300; }
+            .check-field { @@apply my-3 flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-white/[.025] dark:text-slate-300; }
+            .check-field input { @@apply mt-0.5 size-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-white/20 dark:bg-black/30; }
+            .form-actions { @@apply mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4 dark:border-white/[.07]; }
+            .btn { @@apply inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-semibold no-underline shadow-sm transition duration-150 hover:-translate-y-px active:translate-y-0 disabled:pointer-events-none disabled:opacity-50; }
+            .btn-primary { @@apply border-indigo-600 bg-indigo-600 text-white shadow-indigo-600/15 hover:border-indigo-500 hover:bg-indigo-500 dark:border-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400; }
+            .btn-secondary { @@apply border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[.04] dark:text-slate-200 dark:hover:bg-white/[.08]; }
+            .btn-ghost { @@apply border-transparent bg-transparent text-slate-600 shadow-none hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/[.06] dark:hover:text-white; }
+            .btn-danger { @@apply border-rose-600 bg-rose-600 text-white hover:border-rose-500 hover:bg-rose-500; }
+            .notice, .callout, .warning-callout { @@apply mb-4 rounded-lg border p-3 text-xs leading-5; }
+            .notice.success, .callout { @@apply border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/[.08] dark:text-emerald-200; }
+            .notice.danger, .warning-callout { @@apply border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/[.08] dark:text-rose-200; }
+            .empty-state { @@apply rounded-xl border border-dashed border-slate-300 bg-white/50 p-10 text-center text-sm text-slate-500 dark:border-white/15 dark:bg-white/[.02] dark:text-slate-400; }
+            .empty-state h3 { @@apply mb-1; }
+            .empty-state.compact { @@apply p-5; }
+            .danger-zone { @@apply mt-8 rounded-xl border border-rose-200 bg-rose-50/60 p-5 dark:border-rose-500/20 dark:bg-rose-500/[.06]; }
+            .danger-zone p { @@apply mt-1 text-xs text-rose-700 dark:text-rose-300; }
+            .two-column { @@apply grid grid-cols-1 gap-4 xl:grid-cols-[minmax(18rem,.8fr)_minmax(0,1.2fr)]; }
+            .json-block { @@apply mt-3 max-h-[30rem] overflow-auto whitespace-pre-wrap break-all rounded-lg border border-slate-200 bg-slate-950 p-4 text-[11px] leading-5 text-slate-300 dark:border-white/10 dark:bg-black/30; }
+            .timeline { @@apply m-0 list-none p-0; }
+            .timeline li { @@apply flex gap-3 border-b border-slate-100 py-4 last:border-0 dark:border-white/[.07]; }
+            .timeline p { @@apply my-1 text-xs text-slate-500 dark:text-slate-400; }
+            .timeline small { @@apply text-[10px] text-slate-400 dark:text-slate-500; }
+            .alert-list { @@apply grid gap-3; }
+            .alert-card { @@apply grid grid-cols-1 items-center gap-4 md:grid-cols-[9rem_minmax(0,1fr)_auto]; }
+            .alert-card p, .alert-card small { @@apply text-xs text-slate-500 dark:text-slate-400; }
+            .alert-card .status-pill { @@apply mr-1; }
+            .auth-shell { @@apply relative grid min-h-screen place-items-center overflow-hidden bg-slate-950 p-4; }
+            .auth-shell::before { content: ""; @@apply pointer-events-none absolute -left-40 -top-40 size-[32rem] rounded-full bg-indigo-600/20 blur-3xl; }
+            .auth-shell::after { content: ""; @@apply pointer-events-none absolute -bottom-48 -right-40 size-[34rem] rounded-full bg-cyan-500/10 blur-3xl; }
+            .auth-card { @@apply relative z-10 w-full max-w-md rounded-2xl border border-white/10 bg-white/[.06] p-6 text-white shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-8; }
+            .auth-card h1 { @@apply text-white; }
+            .auth-card > p:not(.eyebrow) { @@apply mb-6 text-sm leading-6 text-slate-400; }
+            .auth-card .field label { @@apply text-slate-200; }
+            .auth-card .field input { @@apply border-white/10 bg-black/25 text-white; }
+            .auth-brand { @@apply mb-8; }
+            .w-100 { @@apply w-full; }
+            .me-1 { @@apply mr-1; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@@2.0.10/dist/htmx.min.js"
+            integrity="sha384-H5SrcfygHmAuTDZphMHqBJLc3FhssKjG7w/CeCpFReSfwBWDTKpkzPP8c+cLsK+V"
+            crossorigin="anonymous" defer></script>
 </head>
 <body>
-<header>
-    <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
-        <div class="container-fluid">
-            <a class="navbar-brand" asp-area="" asp-controller="Home" asp-action="Index">CitusManager</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-controls="navbarSupportedContent"
-                    aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
-                <ul class="navbar-nav flex-grow-1">
-                    <li class="nav-item">
-                        <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Index">Home</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
-                    </li>
-                </ul>
+<a class="skip-link" href="#main-content">Bỏ qua điều hướng</a>
+@if (User.Identity?.IsAuthenticated == true)
+{
+    <div class="app-shell">
+        <aside class="sidebar" aria-label="Điều hướng chính">
+            <a class="brand" asp-controller="Home" asp-action="Index" aria-label="Citus Manager trang chủ">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+                </span>
+                <span><strong>Citus Manager</strong><small>Distributed DB control</small></span>
+            </a>
+            <p class="mt-6 hidden px-3 text-[10px] font-bold uppercase tracking-[.16em] text-slate-400 lg:block dark:text-slate-600">Workspace</p>
+            <nav class="side-nav">
+                <a class="@(currentController == "Home" || currentController == "Clusters" ? "is-active" : null)" asp-controller="Home" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg><span>Fleet overview</span></a>
+                <a class="@(currentController == "Operations" ? "is-active" : null)" asp-controller="Operations" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>Operations</span></a>
+                <a class="@(currentController == "Alerts" ? "is-active" : null)" asp-controller="Alerts" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span>Alerts</span></a>
+                @if (User.IsInRole("Admin")) { <a class="@(currentController == "Audit" ? "is-active" : null)" asp-controller="Audit" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11h6M9 15h6M10 3h4l1 2h4v16H5V5h4l1-2Z"/></svg><span>Audit</span></a> }
+                @if (User.IsInRole("Admin")) { <a class="@(currentController == "Users" ? "is-active" : null)" asp-controller="Users" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Users & roles</span></a> }
+                @if (User.IsInRole("Operator") || User.IsInRole("Admin"))
+                { <a asp-controller="Clusters" asp-action="Create"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg><span>Thêm coordinator</span></a> }
+            </nav>
+            <div class="sidebar-footer">
+                <div class="identity-name">@User.Identity.Name</div>
+                <div class="role-line">
+                    @foreach (var role in new[] { "Viewer", "Operator", "Admin" }.Where(User.IsInRole))
+                    { <span class="status-pill neutral">@role</span> }
+                </div>
+                <form asp-controller="Account" asp-action="Logout" method="post">
+                    <button class="btn btn-ghost w-100" type="submit"><svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 17l5-5-5-5M15 12H3M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>Đăng xuất</button>
+                </form>
             </div>
+        </aside>
+        <div class="workspace">
+            <header class="topbar">
+                <div><p class="text-[10px] font-bold uppercase tracking-[.16em] text-slate-400 dark:text-slate-600">Citus control plane</p><p class="text-xs font-medium text-slate-700 dark:text-slate-300">@ViewData["Title"]</p></div>
+                <div class="flex items-center gap-2">
+                    <button class="btn btn-ghost !size-11 !p-0" id="theme-toggle" type="button" aria-label="Đổi giao diện sáng tối"><svg id="theme-icon" class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg></button>
+                    <div class="culture-switch" aria-label="Ngôn ngữ"><a href="?culture=vi-VN&ui-culture=vi-VN">VI</a><span class="text-slate-300 dark:text-slate-700">/</span><a href="?culture=en-US&ui-culture=en-US">EN</a></div>
+                </div>
+            </header>
+            <main id="main-content" class="main-content" tabindex="-1">
+                @if (TempData["Notice"] is string notice) { <div class="notice success" role="status">@notice</div> }
+                @if (TempData["Error"] is string error) { <div class="notice danger" role="alert">@error</div> }
+                @RenderBody()
+            </main>
         </div>
-    </nav>
-</header>
-<div class="container">
-    <main role="main" class="pb-3">
-        @RenderBody()
-    </main>
-</div>
-
-<footer class="border-top footer text-muted">
-    <div class="container">
-        &copy; 2026 - CitusManager - <a asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
     </div>
-</footer>
+}
+else
+{
+    <main id="main-content" class="auth-shell" tabindex="-1">@RenderBody()</main>
+}
 <script src="~/lib/jquery/dist/jquery.min.js"></script>
-<script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
 <script src="~/js/site.js" asp-append-version="true"></script>
 @await RenderSectionAsync("Scripts", required: false)
 </body>

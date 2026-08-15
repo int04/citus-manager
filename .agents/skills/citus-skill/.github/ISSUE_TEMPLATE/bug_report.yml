@@ -1,0 +1,56 @@
+name: Skill behavior or correctness issue
+description: Report incorrect, unsafe, ambiguous, or version-incompatible guidance.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove credentials, private topology, customer data, and production-only details before submitting.
+
+  - type: input
+    id: file
+    attributes:
+      label: Affected file or section
+      placeholder: references/07-cluster-operations.md — Drain and remove one worker
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: PostgreSQL and Citus versions
+      placeholder: PostgreSQL <VERSION>, Citus <VERSION>, self-managed or provider
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Explain what is incorrect, unsafe, unclear, or incompatible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Include SQLSTATE, function signatures, plans, official documentation, or a minimal reproduction.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected skill behavior
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed passwords, private keys, connection strings, private hostnames, and customer data.
+          required: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Citus Engineering"
+  short_description: "Design, operate, and optimize PostgreSQL Citus safely."
+  default_prompt: "Use this skill to assess the Citus architecture or operation, detect installed capabilities, separate facts from assumptions, and provide a measured plan with verification and rollback."
+
+policy:
+  allow_implicit_invocation: true

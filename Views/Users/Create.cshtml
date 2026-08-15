@@ -1,0 +1,14 @@
+@model CreateUserViewModel
+@{ ViewData["Title"] = "Thêm user"; }
+<div class="page-heading narrow-heading"><div><p class="eyebrow">RBAC</p><h1>Thêm user</h1><p>Tạo ít nhất hai Admin để thực thi approval tách người.</p></div></div>
+<form asp-action="Create" method="post" class="panel form-panel">
+    <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
+    <div class="form-grid">
+        <div class="field"><label asp-for="DisplayName">Tên hiển thị</label><input asp-for="DisplayName" autocomplete="name" /><span asp-validation-for="DisplayName"></span></div>
+        <div class="field"><label asp-for="Email">Email</label><input asp-for="Email" autocomplete="email" /><span asp-validation-for="Email"></span></div>
+        <div class="field"><label asp-for="Password">Mật khẩu tạm</label><input asp-for="Password" autocomplete="new-password" /><span asp-validation-for="Password"></span></div>
+        <div class="field"><label asp-for="Role">Role chính</label><select asp-for="Role"><option>Viewer</option><option>Operator</option><option>Admin</option></select><span asp-validation-for="Role"></span></div>
+    </div>
+    <div class="form-actions"><a class="btn btn-ghost" asp-action="Index">Hủy</a><button class="btn btn-primary" type="submit">Tạo user</button></div>
+</form>
+@section Scripts { <partial name="_ValidationScriptsPartial" /> }

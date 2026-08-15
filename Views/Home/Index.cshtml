@@ -1,8 +1,43 @@
-﻿@{
-    ViewData["Title"] = "Home Page";
+@model DashboardViewModel
+@{
+    ViewData["Title"] = "Fleet overview";
+    var activeOps = Model.Operations.Count(x => x.Status is OperationStatus.Approved or OperationStatus.Running or OperationStatus.Cancelling);
+    var failedOps = Model.Operations.Count(x => x.Status is OperationStatus.Failed or OperationStatus.RecoveryRequired);
 }
-
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="page-heading">
+    <div><p class="eyebrow">CONTROL PLANE</p><h1>Fleet overview</h1><p>Quản lý nhiều Citus database. Capability-first; mutation luôn có approval + checkpoint.</p></div>
+    @if (User.IsInRole("Operator") || User.IsInRole("Admin"))
+    { <a class="btn btn-primary" asp-controller="Clusters" asp-action="Create">Thêm coordinator</a> }
 </div>
+<section class="metric-grid" aria-label="Tổng quan fleet">
+    <article class="metric-card"><span>Clusters</span><strong>@Model.Clusters.Count</strong><small>database profiles</small></article>
+    <article class="metric-card"><span>Healthy profiles</span><strong>@Model.Clusters.Count(x => x.LastError is null)</strong><small>lần kiểm tra gần nhất</small></article>
+    <article class="metric-card"><span>Active operations</span><strong>@activeOps</strong><small>approved / running</small></article>
+    <article class="metric-card @(failedOps > 0 ? "metric-danger" : "")"><span>Needs attention</span><strong>@failedOps</strong><small>failed / recovery</small></article>
+</section>
+<section class="section-block">
+    <div class="section-title"><div><h2>Clusters</h2><p>Mỗi profile = một Citus-enabled PostgreSQL database.</p></div></div>
+    @if (Model.Clusters.Count == 0)
+    {
+        <div class="empty-state"><h3>Chưa có cluster</h3><p>Đăng ký control coordinator. App chạy read-only capability scan trước khi lưu.</p>
+        @if (User.IsInRole("Operator") || User.IsInRole("Admin")) { <a class="btn btn-primary" asp-controller="Clusters" asp-action="Create">Đăng ký cluster đầu tiên</a> }
+        </div>
+    }
+    else
+    {
+        <div class="cluster-grid">
+        @foreach (var cluster in Model.Clusters)
+        {
+            <a class="cluster-card" asp-controller="Clusters" asp-action="Details" asp-route-id="@cluster.Id">
+                <div class="cluster-card-head"><span class="status-dot @(cluster.LastError is null ? "ok" : "bad")" aria-hidden="true"></span><strong>@cluster.Name</strong><span class="status-pill @(cluster.LastError is null ? "success" : "danger")">@(cluster.LastError is null ? "READY" : "CHECK")</span></div>
+                <code>@cluster.Host:@cluster.Port/@cluster.Database</code>
+                <dl class="compact-dl"><div><dt>Citus</dt><dd>@(cluster.CitusVersion ?? "unknown")</dd></div><div><dt>SSL</dt><dd>@cluster.SslMode</dd></div><div><dt>Checked</dt><dd>@(cluster.LastCheckedAt?.ToLocalTime().ToString("g") ?? "never")</dd></div></dl>
+            </a>
+        }
+        </div>
+    }
+</section>
+<section class="section-block">
+    <div class="section-title"><div><h2>Recent operations</h2><p>Plan → approval → runner → validation.</p></div></div>
+    <partial name="~/Views/Clusters/_OperationTable.cshtml" model="Model.Operations.Take(10).ToList()" />
+</section>

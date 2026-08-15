@@ -1,0 +1,114 @@
+@model SetupViewModel
+@{ ViewData["Title"] = "Khởi tạo quản trị"; }
+
+<section class="relative z-10 grid w-full max-w-6xl overflow-hidden rounded-3xl border border-white/10 bg-[#0d111a]/90 shadow-2xl shadow-black/50 backdrop-blur-xl lg:grid-cols-[minmax(0,.85fr)_minmax(28rem,1.15fr)]" aria-labelledby="setup-title">
+    <aside class="relative overflow-hidden border-b border-white/10 bg-gradient-to-br from-indigo-600/25 via-slate-950 to-cyan-500/10 p-6 sm:p-8 lg:border-r lg:border-b-0 lg:p-10">
+        <div class="pointer-events-none absolute -left-24 top-24 size-64 rounded-full bg-indigo-500/20 blur-3xl" aria-hidden="true"></div>
+
+        <div class="relative flex h-full flex-col">
+            <div class="brand !px-0 text-white">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <ellipse cx="12" cy="5" rx="7" ry="3" />
+                        <path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
+                        <path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+                    </svg>
+                </span>
+                <span><strong>Citus Manager</strong><small class="!text-slate-400">Distributed DB control</small></span>
+            </div>
+
+            <div class="mt-10 max-w-md lg:mt-16">
+                <span class="inline-flex min-h-7 items-center rounded-full border border-indigo-400/20 bg-indigo-400/10 px-3 text-[10px] font-bold uppercase tracking-[.16em] text-indigo-300">Thiết lập lần đầu</span>
+                <h1 class="mt-5 text-3xl font-semibold leading-tight tracking-tight text-white sm:text-4xl">Bắt đầu control-plane an toàn.</h1>
+                <p class="mt-4 text-sm leading-6 text-slate-400">Tạo chủ sở hữu đầu tiên để quản lý coordinator, worker, phân phối dữ liệu và toàn bộ hoạt động vận hành.</p>
+            </div>
+
+            <ul class="relative mt-8 grid gap-4" aria-label="Quyền của tài khoản đầu tiên">
+                <li class="flex gap-3">
+                    <span class="grid size-9 shrink-0 place-items-center rounded-lg border border-emerald-400/20 bg-emerald-400/10 text-emerald-300" aria-hidden="true">
+                        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6" /></svg>
+                    </span>
+                    <div><strong class="text-sm font-semibold text-white">Toàn quyền quản trị</strong><p class="mt-1 text-xs leading-5 text-slate-400">Quản lý cluster, người dùng, role và chính sách vận hành.</p></div>
+                </li>
+                <li class="flex gap-3">
+                    <span class="grid size-9 shrink-0 place-items-center rounded-lg border border-cyan-400/20 bg-cyan-400/10 text-cyan-300" aria-hidden="true">
+                        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 4 7v5c0 5 3.4 8.2 8 9 4.6-.8 8-4 8-9V7l-8-4Z" /><path d="m9 12 2 2 4-4" /></svg>
+                    </span>
+                    <div><strong class="text-sm font-semibold text-white">Luồng duyệt hai người</strong><p class="mt-1 text-xs leading-5 text-slate-400">Sau setup, thêm Admin thứ hai để phê duyệt thao tác nhạy cảm.</p></div>
+                </li>
+            </ul>
+
+            <p class="mt-10 flex items-center gap-2 text-[11px] text-slate-500 lg:mt-auto lg:pt-12">
+                <svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
+                Chỉ thực hiện một lần khi hệ thống chưa có tài khoản.
+            </p>
+        </div>
+    </aside>
+
+    <div class="bg-white p-6 sm:p-8 lg:p-10 dark:bg-white/[.035]">
+        <div class="mb-8 flex items-start justify-between gap-4">
+            <div>
+                <p class="eyebrow">CONTROL PLANE BOOTSTRAP</p>
+                <h2 id="setup-title" class="!text-2xl sm:!text-3xl">Tạo Admin đầu tiên</h2>
+                <p class="mt-2 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">Thông tin này dùng để đăng nhập và xác nhận các thao tác quản trị.</p>
+            </div>
+            <span class="hidden shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 sm:inline-flex dark:border-white/10 dark:bg-white/[.04] dark:text-slate-400">Bước 1 / 1</span>
+        </div>
+
+        <form asp-action="Setup" method="post" class="grid gap-5">
+            <div asp-validation-summary="ModelOnly" class="validation-summary rounded-lg border border-rose-200 bg-rose-50 p-3 empty:hidden dark:border-rose-500/20 dark:bg-rose-500/[.08]" role="alert"></div>
+
+            <fieldset class="grid gap-4">
+                <legend class="mb-1 text-xs font-bold uppercase tracking-[.12em] text-slate-400 dark:text-slate-500">Thông tin tài khoản</legend>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="field !mb-0">
+                        <label asp-for="DisplayName">Tên hiển thị <span class="text-rose-500" aria-hidden="true">*</span></label>
+                        <input asp-for="DisplayName" autocomplete="name" placeholder="Ví dụ: Nguyễn Văn An" autofocus />
+                        <span asp-validation-for="DisplayName" aria-live="polite"></span>
+                    </div>
+                    <div class="field !mb-0">
+                        <label asp-for="Email">Email đăng nhập <span class="text-rose-500" aria-hidden="true">*</span></label>
+                        <input asp-for="Email" autocomplete="email" inputmode="email" placeholder="admin@company.com" />
+                        <span asp-validation-for="Email" aria-live="polite"></span>
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset class="grid gap-4 border-t border-slate-100 pt-5 dark:border-white/[.07]">
+                <legend class="mb-1 text-xs font-bold uppercase tracking-[.12em] text-slate-400 dark:text-slate-500">Bảo mật</legend>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="field !mb-0">
+                        <label asp-for="Password">Mật khẩu <span class="text-rose-500" aria-hidden="true">*</span></label>
+                        <div class="relative">
+                            <input asp-for="Password" autocomplete="new-password" class="!pr-16" aria-describedby="password-help" />
+                            <button class="absolute inset-y-0 right-1 my-auto min-h-11 rounded-md px-3 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-slate-400 dark:hover:bg-white/[.06] dark:hover:text-white" type="button" data-password-toggle="Password" aria-controls="Password" aria-label="Hiện mật khẩu">Hiện</button>
+                        </div>
+                        <span asp-validation-for="Password" aria-live="polite"></span>
+                    </div>
+                    <div class="field !mb-0">
+                        <label asp-for="ConfirmPassword">Nhập lại mật khẩu <span class="text-rose-500" aria-hidden="true">*</span></label>
+                        <div class="relative">
+                            <input asp-for="ConfirmPassword" autocomplete="new-password" class="!pr-16" />
+                            <button class="absolute inset-y-0 right-1 my-auto min-h-11 rounded-md px-3 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-slate-400 dark:hover:bg-white/[.06] dark:hover:text-white" type="button" data-password-toggle="ConfirmPassword" aria-controls="ConfirmPassword" aria-label="Hiện mật khẩu xác nhận">Hiện</button>
+                        </div>
+                        <span asp-validation-for="ConfirmPassword" aria-live="polite"></span>
+                    </div>
+                </div>
+                <div id="password-help" class="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/[.07] dark:text-amber-200">
+                    <svg class="mt-0.5 size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></svg>
+                    <span>Dùng ít nhất 12 ký tự, gồm chữ hoa, chữ thường, số và ký tự đặc biệt. Không dùng lại mật khẩu hệ thống khác.</span>
+                </div>
+            </fieldset>
+
+            <div class="mt-1 flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between dark:border-white/[.07]">
+                <p class="text-center text-[11px] leading-5 text-slate-400 sm:max-w-56 sm:text-left dark:text-slate-500">Bằng việc tiếp tục, bạn xác nhận đang thiết lập hệ thống được ủy quyền.</p>
+                <button class="btn btn-primary min-w-52" type="submit">
+                    <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3 4 7v5c0 5 3.4 8.2 8 9 4.6-.8 8-4 8-9V7l-8-4Z" /><path d="m9 12 2 2 4-4" /></svg>
+                    Khởi tạo control-plane
+                </button>
+            </div>
+        </form>
+    </div>
+</section>
+
+@section Scripts { <partial name="_ValidationScriptsPartial" /> }

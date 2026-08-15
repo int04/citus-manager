@@ -1,0 +1,19 @@
+@model CreateClusterRequest
+@{ ViewData["Title"] = "Thêm coordinator"; }
+<div class="page-heading narrow-heading"><div><p class="eyebrow">READ-ONLY PREFLIGHT</p><h1>Thêm coordinator</h1><p>Đăng ký endpoint database. Không tạo VM/container; không thay đổi cluster ở bước này.</p></div></div>
+<form asp-action="Create" method="post" class="panel form-panel">
+    <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
+    <div class="form-grid">
+        <div class="field span-2"><label asp-for="Name">Tên hiển thị *</label><input asp-for="Name" autocomplete="off" /><span asp-validation-for="Name"></span></div>
+        <div class="field"><label asp-for="Host">Host / IP *</label><input asp-for="Host" autocomplete="off" /><span asp-validation-for="Host"></span></div>
+        <div class="field"><label asp-for="Port">Port *</label><input asp-for="Port" inputmode="numeric" /><span asp-validation-for="Port"></span></div>
+        <div class="field"><label asp-for="Database">Database *</label><input asp-for="Database" autocomplete="off" /><small>Citus metadata theo từng database.</small><span asp-validation-for="Database"></span></div>
+        <div class="field"><label asp-for="SslMode">TLS mode *</label><select asp-for="SslMode" asp-items="Html.GetEnumSelectList<ClusterSslMode>()"></select></div>
+        <div class="field"><label asp-for="Username">Username</label><input asp-for="Username" autocomplete="username" /></div>
+        <div class="field"><label asp-for="Password">Password</label><input asp-for="Password" type="password" autocomplete="current-password" /><small>Mã hóa trước khi lưu; không trả lại qua API.</small></div>
+        <div class="field"><label asp-for="PrometheusBaseUrl">Prometheus URL</label><input asp-for="PrometheusBaseUrl" type="url" placeholder="https://prometheus.internal" autocomplete="url" /><small>Tùy chọn; SQL monitoring luôn hoạt động độc lập.</small><span asp-validation-for="PrometheusBaseUrl"></span></div>
+        <div class="field"><label asp-for="PrometheusBearerToken">Prometheus bearer token</label><input asp-for="PrometheusBearerToken" type="password" autocomplete="new-password" /><small>Tùy chọn; mã hóa cùng cluster secrets.</small></div>
+    </div>
+    <div class="callout"><strong>Read-only scan:</strong> PostgreSQL/Citus version, database/user, function signatures, metadata views, nodes, tables, shards.</div>
+    <div class="form-actions"><a class="btn btn-ghost" asp-controller="Home" asp-action="Index">Hủy</a><button class="btn btn-primary" type="submit">Kiểm tra và đăng ký</button></div>
+</form>

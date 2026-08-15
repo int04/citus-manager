@@ -1,0 +1,7 @@
+@model IReadOnlyList<AuditEvent>
+@{ ViewData["Title"] = "Audit"; }
+<div class="page-heading"><div><p class="eyebrow">IMMUTABLE EVENT LOG</p><h1>Audit</h1><p>Sanitized actor/action/resource records. Không lưu password, connection string hoặc raw SQL.</p></div><a class="btn btn-secondary" asp-action="Index">Refresh</a></div>
+<div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Detail</th></tr></thead><tbody>
+@foreach (var item in Model)
+{ <tr><td>@item.OccurredAt.ToLocalTime().ToString("G")</td><td><code>@(item.ActorId?.ToString()[..8] ?? "system")</code></td><td>@item.Action</td><td>@item.ResourceType / <code>@item.ResourceId</code></td><td><code>@item.DetailJson</code></td></tr> }
+</tbody></table></div>

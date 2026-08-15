@@ -1,0 +1,7 @@
+@model IReadOnlyList<UserListItemViewModel>
+@{ ViewData["Title"] = "Users & roles"; }
+<div class="page-heading"><div><p class="eyebrow">RBAC</p><h1>Users & roles</h1><p>Viewer đọc; Operator tạo plan; Admin khác phê duyệt.</p></div><a class="btn btn-primary" asp-action="Create">Thêm user</a></div>
+<div class="table-wrap"><table><thead><tr><th>User</th><th>Email</th><th>Roles</th><th>State</th></tr></thead><tbody>
+@foreach (var user in Model)
+{ <tr><td>@user.DisplayName</td><td>@user.Email</td><td>@foreach (var role in user.Roles) { <span class="status-pill neutral me-1">@role</span> }</td><td>@(user.Locked ? "Locked" : "Active")</td></tr> }
+</tbody></table></div>
