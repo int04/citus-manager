@@ -1,4 +1,5 @@
 @model TableStructureResponse
+<div class="pma-structure-result">
 @if (Model.LocalShardIds.Count > 0)
 {
     <div class="callout pma-shard-message"><strong>Worker-local shards:</strong> @string.Join(", ", Model.LocalShardIds)</div>
@@ -17,3 +18,4 @@ else
 {
     <div class="pma-index-list">@foreach (var index in Model.Indexes) { <article class="panel pma-index-card"><strong>@index.Name</strong><pre class="json-block">@index.Definition</pre></article> }</div>
 }
+</div>

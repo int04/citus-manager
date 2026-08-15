@@ -231,16 +231,13 @@
             .pma-tree-empty { @@apply p-3 text-[11px] leading-5 text-[#617783] dark:text-slate-500; }
             .pma-tree-caret { @@apply grid size-3.5 shrink-0 place-items-center rounded-sm border border-[#8fa0ab] bg-[#f9fafb] text-[10px] leading-none text-[#3c596b] dark:border-white/20 dark:bg-white/[.05] dark:text-slate-300; }
             .pma-schema-node .database-schema-toggle > svg, .database-object > svg { @@apply size-3.5 shrink-0 text-[#5a7d92] dark:text-sky-400/80; }
-            .pma-content { @@apply min-h-0; }
+            .pma-content { @@apply flex min-h-0 flex-col overflow-hidden; }
             .pma-context-bar { @@apply sticky top-[9.5rem] z-20 flex min-h-9 items-center justify-between gap-3 border-b border-[#b6c1c8] bg-[#eef1f3] px-3 py-1.5 text-[10px] text-[#536a78] shadow-sm dark:border-white/10 dark:bg-[#1b232c] dark:text-slate-400; }
             .pma-context-path { @@apply flex min-w-0 flex-wrap items-center gap-1.5; }
             .pma-context-path strong, #selected-database-object { @@apply font-semibold text-[#24485f] dark:text-slate-200; }
             .pma-page-size { @@apply flex shrink-0 items-center gap-1.5 whitespace-nowrap font-semibold; }
             .pma-page-size select { @@apply min-h-8 rounded-sm border border-[#aeb9c2] bg-white px-1.5 py-1 text-xs text-[#273c49] shadow-inner dark:border-white/10 dark:bg-black/25 dark:text-slate-200; }
-            .pma-target-notice { @@apply m-3 mb-0 min-h-10 rounded-sm border px-3 py-2 text-[10px] shadow-none; }
-            .pma-target-notice strong { @@apply text-[11px]; }
-            .pma-target-notice p { @@apply text-[10px] leading-4; }
-            .pma-result-area { @@apply min-h-[20rem]; }
+            .pma-result-area { @@apply min-h-0 flex-1 overflow-hidden; }
             .pma-welcome-state { @@apply mx-auto mt-10 max-w-lg rounded-sm border-[#bdc8cf] bg-white px-8 py-12 shadow-sm dark:border-white/10 dark:bg-white/[.025]; }
             .pma-welcome-state > svg { @@apply mx-auto mb-3 size-10 text-[#6d91a7] dark:text-sky-400; }
             .pma-welcome-state h3 { @@apply text-sm text-[#304c5e] dark:text-slate-200; }
@@ -248,9 +245,16 @@
             .pma-query-message { @@apply flex items-center gap-2 rounded-sm border px-3 py-2 text-[11px]; }
             .pma-query-message > svg { @@apply size-4 shrink-0; }
             .pma-result-toolbar { @@apply mb-2 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-[#bcc8cf] bg-[#e8edef] px-2.5 py-1.5 text-[11px] text-[#4e6573] dark:border-white/10 dark:bg-white/[.04] dark:text-slate-400; }
+            .pma-browse-result { @@apply flex h-full min-h-0 flex-col overflow-hidden; }
+            .pma-browse-result > .pma-query-message { @@apply mb-2 shrink-0; }
+            .pma-browse-result > .pma-result-toolbar { @@apply shrink-0; }
+            .pma-browse-scroll { @@apply min-h-0 flex-1 overflow-auto overscroll-contain rounded-sm border border-[#aeb9c2] bg-white dark:border-white/10 dark:bg-[#11161c]; scrollbar-color: #9baab4 transparent; scrollbar-width: thin; }
+            .pma-browse-scroll .pma-browse-table { @@apply overflow-visible rounded-none border-0; }
+            .pma-browse-scroll thead th { @@apply sticky top-0 z-10; }
             .pma-browse-table { @@apply rounded-sm; }
             .pma-row-number { @@apply w-10 bg-[#e1e7ea] text-center font-mono text-[#6a7e89] dark:bg-white/[.04] dark:text-slate-500; }
-            .pma-pagination { @@apply mt-3; }
+            .pma-pagination { @@apply mt-2 shrink-0; }
+            .pma-structure-result { @@apply h-full min-h-0 overflow-auto overscroll-contain; }
             .pma-shard-message { @@apply rounded-sm px-3 py-2; }
             .pma-section-title { @@apply mb-2 flex items-end justify-between border-b border-[#b7c3ca] pb-1.5 dark:border-white/10; }
             .pma-section-title h2 { @@apply text-sm text-[#2c485a] dark:text-slate-200; }
@@ -278,7 +282,7 @@
             .database-tool-shell .database-workbench { @@apply min-h-0 flex-1; }
             .database-tool-shell .database-tree { @@apply lg:relative lg:top-auto lg:h-full lg:min-h-0; }
             .database-tool-shell .database-tree-scroll { @@apply min-h-0 max-h-none; }
-            .database-tool-shell .pma-content { @@apply h-full min-h-0 overflow-y-auto overscroll-contain; }
+            .database-tool-shell .pma-content { @@apply h-full min-h-0 overflow-hidden; }
             .database-tool-shell .pma-context-bar { @@apply top-0; }
             @@media (max-width: 1023px) {
                 .pma-topbar { @@apply top-0 grid-cols-[minmax(0,1fr)_auto]; }
@@ -307,7 +311,6 @@
                 .pma-context-bar { @@apply items-start; }
                 .pma-context-path { @@apply hidden; }
                 .pma-page-size { @@apply ml-auto min-h-11; }
-                .pma-target-notice { @@apply mx-2; }
                 .database-result, .sql-console { @@apply p-2; }
             }
             .empty-state { @@apply rounded-xl border border-dashed border-slate-300 bg-white/50 p-10 text-center text-sm text-slate-500 dark:border-white/15 dark:bg-white/[.02] dark:text-slate-400; }
