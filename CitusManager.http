@@ -26,6 +26,14 @@ Content-Type: application/json
   "prometheusBearerToken": null
 }
 
+### Test coordinator connection from the MVC form
+# Requires authenticated Identity cookie and a current anti-forgery token from /Clusters/Create.
+POST {{baseUrl}}/Clusters/TestConnection
+Content-Type: application/x-www-form-urlencoded
+X-Requested-With: XMLHttpRequest
+
+__RequestVerificationToken=replace-from-form&Host=coordinator.internal&Port=5432&Database=appdb&Username=citus_monitor&Password=replace-in-client-only&SslMode=VerifyFull
+
 ### Refresh inventory
 POST {{baseUrl}}/api/clusters/{{clusterId}}/refresh
 

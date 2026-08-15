@@ -17,6 +17,28 @@ public sealed record CreateClusterRequest
     public ClusterSslMode SslMode { get; init; } = ClusterSslMode.Prefer;
 }
 
+/// <summary>Connection fields used by the read-only coordinator preflight.</summary>
+public sealed record TestClusterConnectionRequest
+{
+    [Required, MaxLength(255)] public required string Host { get; init; }
+    [Range(1, 65535)] public int Port { get; init; } = 5432;
+    [Required, MaxLength(63)] public string Database { get; init; } = "postgres";
+    [MaxLength(128)] public string? Username { get; init; }
+    public string? Password { get; init; }
+    public ClusterSslMode SslMode { get; init; } = ClusterSslMode.Prefer;
+}
+
+/// <summary>Sanitized result of a read-only Citus coordinator connection test.</summary>
+public sealed record ClusterConnectionTestResponse(
+    bool Success,
+    string PostgreSqlVersion,
+    string CitusVersion,
+    string Database,
+    string User,
+    int NodeCount,
+    int DistributedTableCount,
+    DateTimeOffset CheckedAt);
+
 /// <summary>Safe cluster profile; credentials are never returned.</summary>
 public sealed record ClusterResponse(
     Guid Id,

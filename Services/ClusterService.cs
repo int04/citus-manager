@@ -11,6 +11,8 @@ public interface IClusterService
 {
     Task<IReadOnlyList<ClusterResponse>> GetAllAsync(CancellationToken cancellationToken);
     Task<ClusterResponse?> GetAsync(Guid id, CancellationToken cancellationToken);
+    Task<ClusterConnectionTestResponse> TestConnectionAsync(
+        TestClusterConnectionRequest request, CancellationToken cancellationToken);
     Task<ClusterResponse> CreateAsync(CreateClusterRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<ClusterInventoryResponse> RefreshAsync(Guid id, CancellationToken cancellationToken);
     Task DeleteAsync(Guid id, Guid actorId, CancellationToken cancellationToken);
@@ -30,21 +32,33 @@ public sealed class ClusterService(
         return cluster is null ? null : Map(cluster);
     }
 
+    public async Task<ClusterConnectionTestResponse> TestConnectionAsync(
+        TestClusterConnectionRequest request, CancellationToken cancellationToken)
+    {
+        var inventory = await inspector.CollectAsync(ToProfile(
+            request.Host, request.Port, request.Database, request.Username,
+            request.Password, request.SslMode), cancellationToken);
+        return new(
+            true,
+            inventory.Capability.PostgreSqlVersion,
+            inventory.Capability.CitusVersion,
+            inventory.Capability.Database,
+            inventory.Capability.User,
+            inventory.Nodes.Count,
+            inventory.Tables.Count,
+            inventory.CollectedAt);
+    }
+
     public async Task<ClusterResponse> CreateAsync(
         CreateClusterRequest request, Guid actorId, CancellationToken cancellationToken)
     {
-        var cluster = new ClusterProfile
-        {
-            Name = request.Name.Trim(),
-            Host = request.Host.Trim(),
-            Port = request.Port,
-            Database = request.Database.Trim(),
-            Username = string.IsNullOrWhiteSpace(request.Username) ? null : request.Username.Trim(),
-            ProtectedPassword = string.IsNullOrEmpty(request.Password) ? null : secrets.Protect(request.Password),
-            PrometheusBaseUrl = string.IsNullOrWhiteSpace(request.PrometheusBaseUrl) ? null : request.PrometheusBaseUrl.TrimEnd('/'),
-            ProtectedPrometheusToken = string.IsNullOrEmpty(request.PrometheusBearerToken) ? null : secrets.Protect(request.PrometheusBearerToken),
-            SslMode = request.SslMode
-        };
+        var cluster = ToProfile(request.Host, request.Port, request.Database, request.Username,
+            request.Password, request.SslMode);
+        cluster.Name = request.Name.Trim();
+        cluster.PrometheusBaseUrl = string.IsNullOrWhiteSpace(request.PrometheusBaseUrl)
+            ? null : request.PrometheusBaseUrl.TrimEnd('/');
+        cluster.ProtectedPrometheusToken = string.IsNullOrEmpty(request.PrometheusBearerToken)
+            ? null : secrets.Protect(request.PrometheusBearerToken);
 
         var inventory = await inspector.CollectAsync(cluster, cancellationToken);
         cluster.PostgreSqlVersion = inventory.Capability.PostgreSqlVersion;
@@ -101,6 +115,18 @@ public sealed class ClusterService(
         x.Id, x.Name, x.Host, x.Port, x.Database, x.Username, x.SslMode,
         !string.IsNullOrWhiteSpace(x.ProtectedPassword), !string.IsNullOrWhiteSpace(x.PrometheusBaseUrl), x.IsEnabled,
         x.PostgreSqlVersion, x.CitusVersion, x.LastCheckedAt, x.LastError);
+
+    private ClusterProfile ToProfile(
+        string host, int port, string database, string? username, string? password, ClusterSslMode sslMode) => new()
+    {
+        Name = host.Trim(),
+        Host = host.Trim(),
+        Port = port,
+        Database = database.Trim(),
+        Username = string.IsNullOrWhiteSpace(username) ? null : username.Trim(),
+        ProtectedPassword = string.IsNullOrEmpty(password) ? null : secrets.Protect(password),
+        SslMode = sslMode
+    };
 
     internal static AuditEvent Audit(Guid? actorId, string action, string type, object id, object detail) => new()
     {
