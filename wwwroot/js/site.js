@@ -184,7 +184,6 @@
       selectedTable = button.data("table");
       $("[data-database-object]").removeClass("is-active");
       button.addClass("is-active");
-      $("#selected-database-object").text(`${selectedSchema}.${selectedTable}`);
       setNavigationOpen(false);
       if (activeTab === "sql") activateTab("data");
       else activateTab(activeTab);

@@ -200,7 +200,8 @@
             .pma-product-mark small { @@apply block truncate text-[9px] uppercase tracking-[.1em] text-[#71838f] dark:text-slate-500; }
             .pma-product-icon { @@apply grid size-8 shrink-0 place-items-center rounded bg-gradient-to-br from-[#5d8eac] to-[#365f79] text-white shadow-sm; }
             .pma-product-icon svg { @@apply size-5; }
-            .pma-server-path { @@apply flex min-w-0 items-center gap-2 overflow-hidden rounded-sm bg-[#777] px-2.5 py-1.5 text-[11px] text-white shadow-inner dark:bg-black/30 dark:text-slate-300; }
+            .pma-server-summary { @@apply flex min-w-0 items-center gap-2 overflow-hidden py-1; }
+            .pma-server-path { @@apply flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-sm bg-[#777] px-2.5 py-1.5 text-[11px] text-white shadow-inner dark:bg-black/30 dark:text-slate-300; }
             .pma-path-item { @@apply flex min-w-0 items-center gap-1.5 truncate whitespace-nowrap; }
             .pma-path-item svg { @@apply size-3.5 shrink-0 text-slate-200 dark:text-sky-400; }
             .pma-path-item strong { @@apply truncate font-semibold text-white dark:text-slate-100; }
@@ -209,11 +210,10 @@
             .pma-icon-action { @@apply inline-flex min-h-9 items-center gap-1.5 rounded border border-transparent px-2 text-[10px] font-semibold text-[#486273] no-underline transition-colors hover:border-[#adb9c1] hover:bg-white/60 hover:text-[#163f5a] dark:text-slate-400 dark:hover:border-white/10 dark:hover:bg-white/[.05] dark:hover:text-white; }
             .pma-icon-action svg { @@apply size-3.5; }
             .pma-navigation-toggle, .pma-navigation-close, .pma-navigation-scrim { @@apply hidden; }
-            .pma-main-tabs { @@apply sticky top-[7rem] z-30 min-h-10 rounded-none border-x-0 border-t-0 bg-gradient-to-b from-[#f7f8f9] to-[#ccd5da] px-2 shadow-sm dark:from-[#202a34] dark:to-[#141b22]; }
-            .pma-main-tabs button { @@apply flex min-h-10 items-center gap-1.5 border-y-0 px-3; }
+            .pma-main-tabs { @@apply relative top-auto z-auto min-h-8 shrink-0 rounded-sm bg-gradient-to-b from-[#f7f8f9] to-[#ccd5da] p-0 shadow-none dark:from-[#202a34] dark:to-[#141b22]; }
+            .pma-main-tabs button { @@apply flex min-h-8 items-center gap-1.5 border-y-0 px-2.5; }
             .pma-main-tabs button svg { @@apply size-3.5 text-[#587d94] dark:text-sky-400; }
-            .pma-main-tabs .pma-tab-spacer { @@apply min-w-2 flex-1; }
-            .pma-target-chip { @@apply mx-2 flex items-center gap-1.5 self-center whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-semibold; }
+            .pma-target-chip { @@apply flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[9px] font-semibold; }
             .pma-target-chip.coordinator { @@apply border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-400/20 dark:bg-sky-400/10 dark:text-sky-300; }
             .pma-target-chip.worker { @@apply border-cyan-200 bg-cyan-50 text-cyan-800 dark:border-cyan-400/20 dark:bg-cyan-400/10 dark:text-cyan-300; }
             .pma-navigation-toolbar { @@apply flex min-h-9 items-center gap-2 border-b border-[#aeb9c2] bg-gradient-to-b from-[#f6f7f8] to-[#ccd5da] px-2 text-[#435d6d] shadow-sm dark:border-white/10 dark:from-white/[.08] dark:to-white/[.02] dark:text-slate-300; }
@@ -233,8 +233,7 @@
             .pma-schema-node .database-schema-toggle > svg, .database-object > svg { @@apply size-3.5 shrink-0 text-[#5a7d92] dark:text-sky-400/80; }
             .pma-content { @@apply flex min-h-0 flex-col overflow-hidden; }
             .pma-context-bar { @@apply sticky top-[9.5rem] z-20 flex min-h-9 items-center justify-between gap-3 border-b border-[#b6c1c8] bg-[#eef1f3] px-3 py-1.5 text-[10px] text-[#536a78] shadow-sm dark:border-white/10 dark:bg-[#1b232c] dark:text-slate-400; }
-            .pma-context-path { @@apply flex min-w-0 flex-wrap items-center gap-1.5; }
-            .pma-context-path strong, #selected-database-object { @@apply font-semibold text-[#24485f] dark:text-slate-200; }
+            .pma-context-primary { @@apply flex min-w-0 flex-1 items-center gap-3 overflow-hidden; }
             .pma-page-size { @@apply flex shrink-0 items-center gap-1.5 whitespace-nowrap font-semibold; }
             .pma-page-size select { @@apply min-h-8 rounded-sm border border-[#aeb9c2] bg-white px-1.5 py-1 text-xs text-[#273c49] shadow-inner dark:border-white/10 dark:bg-black/25 dark:text-slate-200; }
             .pma-result-area { @@apply min-h-0 flex-1 overflow-hidden; }
@@ -286,8 +285,8 @@
             .database-tool-shell .pma-context-bar { @@apply top-0; }
             @@media (max-width: 1023px) {
                 .pma-topbar { @@apply top-0 grid-cols-[minmax(0,1fr)_auto]; }
-                .pma-server-path { @@apply col-span-2 row-start-2 border-t border-[#bbc5cb] py-1.5 dark:border-white/10; }
-                .pma-main-tabs { @@apply top-[5.25rem]; }
+                .pma-server-summary { @@apply col-span-2 row-start-2; }
+                .pma-server-path { @@apply min-w-0 flex-1 border-t border-[#bbc5cb] py-1.5 dark:border-white/10; }
                 .database-workbench { @@apply grid-cols-1; }
                 .pma-navigation-toggle, .pma-navigation-close { @@apply inline-flex; }
                 .pma-navigation-close { @@apply size-9 shrink-0 items-center justify-center rounded-sm text-[#4d6777] hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/[.06]; }
@@ -304,12 +303,10 @@
                 .pma-product-mark small, .pma-icon-action span, .pma-server-path .pma-path-item:first-child, .pma-server-path .pma-path-separator:first-of-type { @@apply hidden; }
                 .pma-icon-action { @@apply size-10 justify-center p-0; }
                 .pma-icon-action svg { @@apply size-4; }
-                .pma-main-tabs { @@apply top-[5.25rem] overflow-x-auto px-0; }
+                .pma-main-tabs { @@apply top-auto overflow-x-auto px-0; }
                 .pma-main-tabs button { @@apply min-h-11 shrink-0 px-3; }
-                .pma-target-chip { @@apply hidden; }
                 .database-tree-scroll { @@apply max-h-none; }
                 .pma-context-bar { @@apply items-start; }
-                .pma-context-path { @@apply hidden; }
                 .pma-page-size { @@apply ml-auto min-h-11; }
                 .database-result, .sql-console { @@apply p-2; }
             }
