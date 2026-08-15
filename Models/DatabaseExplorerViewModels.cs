@@ -11,4 +11,7 @@ public sealed record DatabaseExplorerPageViewModel(
     int CommandTimeoutSeconds,
     int MaxRowsPerResultSet,
     IReadOnlyList<int> AllowedPageSizes,
-    IReadOnlyList<DatabaseObjectResponse> Objects);
+    IReadOnlyList<DatabaseObjectResponse> Objects,
+    DatabaseActionMetadataResponse? ActionMetadata = null,
+    bool CanOperate = false,
+    bool CanAdmin = false);

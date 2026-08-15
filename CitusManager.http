@@ -94,6 +94,27 @@ Content-Type: application/json
   "typedConfirmation": "worker-03.internal"
 }
 
+### Create durable local-to-distributed table conversion plan
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}/table-conversions
+Content-Type: application/json
+
+{
+  "schema": "public",
+  "table": "events",
+  "targetMode": "Distributed",
+  "distributionColumn": "tenant_id",
+  "colocateWith": null,
+  "shardCount": 64,
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "typedConfirmation": "public.events"
+}
+
+### Refresh database tree partial
+GET {{baseUrl}}/Clusters/{{clusterId}}/Database/Tree
+
+### Read database action metadata and Citus capabilities
+GET {{baseUrl}}/Clusters/{{clusterId}}/Database/ActionMetadata
+
 ### Approve as a different Admin
 POST {{baseUrl}}/api/operations/{{operationId}}/approve
 

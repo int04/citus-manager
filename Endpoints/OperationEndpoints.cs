@@ -35,6 +35,18 @@ public static class OperationEndpoints
             .RequireAuthorization("Operator")
             .WithName("CreateOperation").WithSummary("Create immutable preflight plan awaiting approval");
 
+        group.MapPost("/clusters/{clusterId:guid}/table-conversions", async Task<Accepted<OperationResponse>> (
+                Guid clusterId, CreateTableConversionOperationRequest request, ClaimsPrincipal user,
+                IOperationService service, CancellationToken cancellationToken) =>
+            {
+                var operation = await service.CreateTableConversionAsync(
+                    clusterId, request, EndpointUser.Id(user), cancellationToken);
+                return TypedResults.Accepted($"/api/operations/{operation.Id}", operation);
+            })
+            .RequireAuthorization("Operator")
+            .WithName("CreateTableConversionOperation")
+            .WithSummary("Create an approved Citus table conversion plan");
+
         group.MapPost("/{id:guid}/approve", async Task<Ok<OperationResponse>> (
                 Guid id, ClaimsPrincipal user, IOperationService service, CancellationToken cancellationToken) =>
                 TypedResults.Ok(await service.ApproveAsync(id, EndpointUser.Id(user), cancellationToken)))

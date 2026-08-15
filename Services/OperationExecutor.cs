@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CitusManager.Contracts;
 using CitusManager.Data;
 using CitusManager.Domain;
 using Microsoft.EntityFrameworkCore;
@@ -63,6 +64,9 @@ public sealed class OperationExecutor(
                 case OperationKind.RemoveWorker:
                     await ExecuteRemoveAsync(operation, cluster, plan, current, hostStoppingToken);
                     break;
+                case OperationKind.ConvertTable:
+                    await ExecuteTableConversionAsync(operation, cluster, plan, hostStoppingToken);
+                    break;
                 default:
                     throw new InvalidOperationException("Unsupported operation kind.");
             }
@@ -76,8 +80,10 @@ public sealed class OperationExecutor(
         {
             logger.LogError("Operation {OperationId} failed ({ErrorType}, SQLSTATE {SqlState}).",
                 operation.Id, exception.GetType().Name, (exception as PostgresException)?.SqlState);
-            operation.Status = operation.Kind == OperationKind.RemoveWorker
-                ? OperationStatus.RecoveryRequired : OperationStatus.Failed;
+            operation.Status = operation.Kind == OperationKind.RemoveWorker ||
+                               (operation.Kind == OperationKind.ConvertTable && HasStep(operation, "table-preflight"))
+                ? OperationStatus.RecoveryRequired
+                : OperationStatus.Failed;
             operation.SafeError = exception is PostgresException postgres
                 ? $"Citus/PostgreSQL command failed (SQLSTATE {postgres.SqlState}). Review server logs and operation checkpoints."
                 : "Operation failed. Review preflight and checkpoints.";
@@ -171,6 +177,79 @@ public sealed class OperationExecutor(
             target.Port,
             note = "Citus metadata removed. Infrastructure was not stopped or deleted."
         }, cancellationToken);
+    }
+
+    private async Task ExecuteTableConversionAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan plan,
+        CancellationToken cancellationToken)
+    {
+        var conversion = plan.TableConversion
+            ?? throw new InvalidOperationException("Table conversion plan is missing.");
+        if (operation.Status == OperationStatus.Cancelling)
+        {
+            operation.Status = OperationStatus.Cancelled;
+            operation.CompletedAt = DateTimeOffset.UtcNow;
+            operation.Version++;
+            await SaveStepAsync(operation, "cancel", "Succeeded",
+                "Cancelled before table conversion command started.", cancellationToken);
+            return;
+        }
+
+        var before = await mutator.ReadTableConversionStateAsync(
+            cluster, conversion.Schema, conversion.Table, cancellationToken);
+        if (before.Mode == conversion.TargetMode)
+        {
+            ValidateConvertedState(before, conversion);
+            await CompleteAsync(operation, new
+            {
+                conversion.Schema,
+                conversion.Table,
+                mode = before.Mode,
+                before.ShardCount,
+                state = "already-converted-and-validated"
+            }, cancellationToken);
+            return;
+        }
+        if (before.Mode != DatabaseTableMode.Local)
+            throw new InvalidOperationException("Table is no longer local and does not match the approved target mode.");
+        if (!string.Equals(before.Fingerprint, conversion.CatalogFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("Table catalog changed after approval; create a new conversion plan.");
+        await SaveStepAsync(operation, "table-preflight", "Succeeded",
+            $"Catalog fingerprint matched; estimated_rows={before.EstimatedRows}; bytes={before.Bytes}.", cancellationToken);
+
+        await mutator.ConvertTableAsync(cluster, conversion, cancellationToken);
+        await SaveStepAsync(operation, "table-conversion", "Succeeded",
+            $"Citus conversion command completed for {conversion.Schema}.{conversion.Table}.", cancellationToken);
+
+        var after = await mutator.ReadTableConversionStateAsync(
+            cluster, conversion.Schema, conversion.Table, cancellationToken);
+        ValidateConvertedState(after, conversion);
+        await CompleteAsync(operation, new
+        {
+            conversion.Schema,
+            conversion.Table,
+            mode = after.Mode,
+            after.DistributionExpression,
+            after.ShardCount,
+            rollback = "No automatic undistribute. Use a separately reviewed recovery plan if reversal is required."
+        }, cancellationToken);
+    }
+
+    private static void ValidateConvertedState(TableConversionState state, TableConversionPlan plan)
+    {
+        if (state.Mode != plan.TargetMode)
+            throw new InvalidOperationException("Converted table mode validation failed.");
+        if (plan.TargetMode == DatabaseTableMode.Distributed)
+        {
+            if (state.ShardCount <= 0) throw new InvalidOperationException("Converted table has no shards.");
+            if (string.IsNullOrWhiteSpace(state.DistributionExpression) ||
+                !state.DistributionExpression.Contains(plan.DistributionColumn!, StringComparison.Ordinal))
+                throw new InvalidOperationException("Distribution column validation failed.");
+            if (plan.ShardCount.HasValue && state.ShardCount != plan.ShardCount.Value)
+                throw new InvalidOperationException("Shard count validation failed.");
+        }
+        if (plan.TargetMode == DatabaseTableMode.Reference && state.ShardCount != 1)
+            throw new InvalidOperationException("Reference table shard validation failed.");
     }
 
     private async Task MonitorRebalanceAsync(

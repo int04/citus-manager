@@ -6,6 +6,13 @@ namespace CitusManager.Tests;
 public sealed class DatabaseExplorerSafetyTests
 {
     [Fact]
+    public void Command_tags_are_bounded_summaries_without_obsolete_driver_metadata()
+    {
+        var tags = DatabaseExplorerSafety.CommandTags("SELECT 1; -- next\nUPDATE public.items SET value = 2;");
+        Assert.Equal(["SELECT", "UPDATE"], tags);
+    }
+
+    [Fact]
     public void Identifier_quoting_escapes_embedded_quotes() =>
         Assert.Equal("\"tenant\"\"data\"", DatabaseExplorerSafety.QuoteIdentifier("tenant\"data"));
 

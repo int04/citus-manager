@@ -5,7 +5,8 @@ public enum OperationKind
     AddWorker,
     Rebalance,
     DrainWorker,
-    RemoveWorker
+    RemoveWorker,
+    ConvertTable
 }
 
 public enum OperationRisk

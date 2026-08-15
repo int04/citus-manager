@@ -1,19 +1,28 @@
 @model DatabaseExplorerPageViewModel
 @{
     ViewData["Title"] = $"Database · {Model.Cluster.Name}";
-    var groupedObjects = Model.Objects.GroupBy(x => x.Schema).OrderBy(x => x.Key);
-    var objectKinds = new[]
-    {
-        (Kind: "table", Label: "Bảng"),
-        (Kind: "view", Label: "View"),
-        (Kind: "sequence", Label: "Sequence")
-    };
 }
 
 <div class="database-page pma-explorer" data-database-explorer
      data-browse-url="@Url.Action("Browse", "Database", new { clusterId = Model.Cluster.Id })"
      data-structure-url="@Url.Action("Structure", "Database", new { clusterId = Model.Cluster.Id })"
      data-sql-url="@Url.Action("ExecuteSql", "Database", new { clusterId = Model.Cluster.Id })"
+     data-tree-url="@Url.Action("Tree", "Database", new { clusterId = Model.Cluster.Id })"
+     data-metadata-url="@Url.Action("ActionMetadata", "Database", new { clusterId = Model.Cluster.Id })"
+     data-view-definition-url="@Url.Action("ViewDefinition", "Database", new { clusterId = Model.Cluster.Id })"
+     data-sequence-inspect-url="@Url.Action("InspectSequence", "Database", new { clusterId = Model.Cluster.Id })"
+     data-dependencies-url="@Url.Action("Dependencies", "Database", new { clusterId = Model.Cluster.Id })"
+     data-create-schema-url="@Url.Action("CreateSchema", "Database", new { clusterId = Model.Cluster.Id })"
+     data-create-table-url="@Url.Action("CreateTable", "Database", new { clusterId = Model.Cluster.Id })"
+     data-create-view-url="@Url.Action("CreateView", "Database", new { clusterId = Model.Cluster.Id })"
+     data-create-sequence-url="@Url.Action("CreateSequence", "Database", new { clusterId = Model.Cluster.Id })"
+     data-rename-url="@Url.Action("Rename", "Database", new { clusterId = Model.Cluster.Id })"
+     data-drop-url="@Url.Action("Drop", "Database", new { clusterId = Model.Cluster.Id })"
+     data-truncate-url="@Url.Action("Truncate", "Database", new { clusterId = Model.Cluster.Id })"
+     data-restart-sequence-url="@Url.Action("RestartSequence", "Database", new { clusterId = Model.Cluster.Id })"
+     data-refresh-materialized-view-url="@Url.Action("RefreshMaterializedView", "Database", new { clusterId = Model.Cluster.Id })"
+     data-convert-table-url="@Url.Action("PlanTableConversion", "Database", new { clusterId = Model.Cluster.Id })"
+     data-show-system="@Model.ShowSystem.ToString().ToLowerInvariant()"
      data-node-id="@Model.NodeId">
     <form id="database-antiforgery" class="hidden">@Html.AntiForgeryToken()</form>
 
@@ -90,53 +99,7 @@
                 <input id="database-object-search" type="search" placeholder="Lọc theo tên…" autocomplete="off" />
             </label>
 
-            <div class="pma-tree-database">
-                <div class="pma-tree-root">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
-                    <span><small>Database</small><strong>@Model.Cluster.Database</strong></span>
-                </div>
-            </div>
-
-            <div class="database-tree-scroll pma-tree-scroll">
-                @if (Model.Objects.Count == 0)
-                {
-                    <p class="pma-tree-empty">Không tìm thấy object có thể đọc trên target này.</p>
-                }
-                @foreach (var schema in groupedObjects)
-                {
-                    <section class="database-schema pma-schema-node" data-schema-group>
-                        <button type="button" class="database-schema-toggle" aria-expanded="true">
-                            <svg class="pma-tree-caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 3 5 5-5 5"/></svg>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3V7Z"/><path d="M3 7V5h7l2 2"/></svg>
-                            <span>@schema.Key</span><small>@schema.Count()</small>
-                        </button>
-                        <div class="database-schema-items">
-                            @foreach (var objectKind in objectKinds)
-                            {
-                                var kindItems = schema.Where(x => x.Kind == objectKind.Kind).ToList();
-                                if (kindItems.Count == 0) continue;
-                                <div class="database-object-kind" data-object-kind>
-                                    <div class="database-object-kind-label"><span>@objectKind.Label</span><small>@kindItems.Count</small></div>
-                                    @foreach (var item in kindItems)
-                                    {
-                                        <button type="button" class="database-object" data-database-object
-                                                data-schema="@item.Schema" data-table="@item.Name" data-kind="@item.Kind"
-                                                data-search-text="@(item.Schema + "." + item.Name + " " + objectKind.Label)">
-                                            @if (item.Kind == "view")
-                                            { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg> }
-                                            else if (item.Kind == "sequence")
-                                            { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h4M4 12h7M4 18h10"/><path d="m16 8 4 4-4 4"/></svg> }
-                                            else
-                                            { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg> }
-                                            <span><strong>@item.Name</strong><small>@item.TableType@(item.LocalShardCount > 0 ? $" · {item.LocalShardCount} shard" : string.Empty)</small></span>
-                                        </button>
-                                    }
-                                </div>
-                            }
-                        </div>
-                    </section>
-                }
-            </div>
+            <div id="database-tree-content"><partial name="_Tree" model="Model" /></div>
         </aside>
 
         <section class="database-content pma-content" aria-live="polite">
@@ -151,7 +114,7 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
                             Cấu trúc
                         </button>
-                        @if (Model.IsCoordinator)
+                        @if (Model.IsCoordinator && Model.CanOperate)
                         {
                             <button type="button" data-database-tab="sql" role="tab" aria-selected="false">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></svg>
@@ -177,7 +140,7 @@
                 </div>
             </div>
 
-            @if (Model.IsCoordinator)
+            @if (Model.IsCoordinator && Model.CanOperate)
             {
                 <section id="sql-console" class="sql-console pma-sql-console hidden" aria-labelledby="sql-console-title">
                     <div class="pma-section-title">
@@ -202,7 +165,7 @@
         </section>
     </div>
 
-    @if (Model.IsCoordinator)
+    @if (Model.IsCoordinator && Model.CanOperate)
     {
         <div id="sql-confirm-modal" class="database-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sql-confirm-title">
             <div class="database-modal-card">
@@ -216,4 +179,34 @@
             </div>
         </div>
     }
+
+    <div id="database-context-menu" class="database-context-menu hidden" role="menu" aria-label="Database object actions"></div>
+    <div id="database-action-modal" class="database-modal hidden" role="dialog" aria-modal="true"
+         aria-labelledby="database-action-title" aria-describedby="database-action-description">
+        <div class="database-modal-card database-action-card" tabindex="-1">
+            <div class="database-action-heading">
+                <div class="database-action-title-lockup">
+                    <span class="database-action-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v14H4zM4 9h16M9 9v10"/></svg></span>
+                    <div><p class="eyebrow" id="database-action-eyebrow">DATABASE ACTION</p><h2 id="database-action-title">Thao tác database</h2></div>
+                </div>
+                <button type="button" class="database-action-close" aria-label="Đóng dialog">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+                </button>
+            </div>
+            <p id="database-action-description" class="pma-modal-copy"></p>
+            <form id="database-action-form" novalidate>
+                <div id="database-action-fields" class="database-action-fields"></div>
+                <div id="database-action-error" class="connection-result error hidden" role="alert" tabindex="-1"></div>
+                <div class="form-actions database-action-footer">
+                    <button type="button" class="btn btn-ghost database-action-cancel">Hủy</button>
+                    <button type="submit" class="btn btn-primary" id="database-action-submit">Xác nhận</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div id="database-toast" class="database-toast hidden" role="status" aria-live="polite"></div>
 </div>
+
+@section Scripts {
+    <script src="~/js/database-explorer-actions.js" asp-append-version="true"></script>
+}

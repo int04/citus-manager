@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CitusManager.Contracts;
 using CitusManager.Data;
 using CitusManager.Domain;
@@ -22,6 +23,7 @@ public sealed class DatabaseExplorerOptions
     public int MaxRowsPerResultSet { get; set; } = 1000;
     public int MaxResultSets { get; set; } = 10;
     public int MaxCellCharacters { get; set; } = 65_536;
+    public int ConversionCommandTimeoutSeconds { get; set; } = 3600;
 }
 
 public interface IDatabaseExplorerService
@@ -183,7 +185,7 @@ public sealed class DatabaseExplorerService(
                 resultSets.Add(new(columns, rows, truncated));
                 if (truncated) break;
             } while (await reader.NextResultAsync(cancellationToken));
-            commandTags.AddRange(command.Statements.Select(x => x.StatementType.ToString()).Distinct());
+            commandTags.AddRange(DatabaseExplorerSafety.CommandTags(request.Sql));
             affected = reader.RecordsAffected;
             success = true;
             return new(resultSets, commandTags, affected, resultSetLimitReached, watch.Elapsed, queryHash);
@@ -252,7 +254,7 @@ public sealed class DatabaseExplorerService(
                      WHEN c.relkind = 'f' THEN 'foreign table'
                      WHEN p.logicalrelid IS NULL THEN 'local'
                      WHEN p.partmethod = 'n' THEN 'reference' ELSE 'distributed' END,
-                   GREATEST(c.reltuples::bigint, 0), pg_total_relation_size(c.oid)
+                   GREATEST(c.reltuples::bigint, 0), pg_total_relation_size(c.oid), c.relkind::text
             FROM pg_class AS c
             JOIN pg_namespace AS ns ON ns.oid = c.relnamespace
             LEFT JOIN pg_dist_partition AS p ON p.logicalrelid = c.oid
@@ -266,8 +268,20 @@ public sealed class DatabaseExplorerService(
         command.Parameters.AddWithValue(showSystem);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
+        {
+            var relkind = reader.GetString(6)[0];
+            var objectKind = DatabaseObjectDdlSafety.KindFromRelkind(relkind);
+            var tableMode = objectKind is DatabaseObjectKind.Table or DatabaseObjectKind.PartitionedTable or DatabaseObjectKind.ForeignTable
+                ? reader.GetString(3) switch
+                {
+                    "reference" => DatabaseTableMode.Reference,
+                    "distributed" => DatabaseTableMode.Distributed,
+                    _ => DatabaseTableMode.Local
+                }
+                : DatabaseTableMode.NotApplicable;
             result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                reader.GetInt64(4), reader.GetInt64(5), 0));
+                reader.GetInt64(4), reader.GetInt64(5), 0, relkind.ToString(), objectKind, tableMode));
+        }
         return result;
     }
 
@@ -330,7 +344,9 @@ public sealed class DatabaseExplorerService(
                     .Where(x => x is not null).Cast<PhysicalRelation>().ToList();
                 return new WorkerObjectMap(
                     new(group.Key.Schema, group.Key.Table, "table", group.Key.TableType,
-                        relations.Sum(x => x.EstimatedRows), relations.Sum(x => x.Bytes), relations.Count),
+                        relations.Sum(x => x.EstimatedRows), relations.Sum(x => x.Bytes), relations.Count,
+                        "r", DatabaseObjectKind.Table,
+                        group.Key.TableType == "reference" ? DatabaseTableMode.Reference : DatabaseTableMode.Distributed),
                     relations);
             })
             .Where(x => x.Relations.Count > 0)
@@ -495,6 +511,13 @@ internal static class DatabaseExplorerSafety
 
     internal static string QueryHash(string sql) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sql)));
+
+    internal static IReadOnlyList<string> CommandTags(string sql) =>
+        Regex.Matches(sql, @"(?im)(?:^|;)\s*(?:(?:--[^\r\n]*(?:\r?\n|$))|(?:/\*[\s\S]*?\*/\s*))*([a-z]+)")
+            .Select(match => match.Groups[1].Value.ToUpperInvariant())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
 
     internal static bool TryParseShardId(string relationName, out long shardId)
     {

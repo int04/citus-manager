@@ -18,20 +18,35 @@ public sealed record OperationPlan(
     string PreviewJson,
     long? PlacementsOnTarget,
     IReadOnlyList<string> Warnings,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    TableConversionPlan? TableConversion = null);
+
+public sealed record TableConversionPlan(
+    string Schema,
+    string Table,
+    DatabaseTableMode TargetMode,
+    string? DistributionColumn,
+    string? ColocateWith,
+    int? ShardCount,
+    string CatalogFingerprint,
+    long EstimatedRows,
+    long Bytes);
 
 public interface IOperationService
 {
     Task<IReadOnlyList<OperationResponse>> GetAllAsync(Guid? clusterId, CancellationToken cancellationToken);
     Task<OperationResponse?> GetAsync(Guid id, CancellationToken cancellationToken);
     Task<OperationResponse> CreateAsync(Guid clusterId, CreateOperationRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> CreateTableConversionAsync(
+        Guid clusterId, CreateTableConversionOperationRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> ApproveAsync(Guid id, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> CancelAsync(Guid id, Guid actorId, CancellationToken cancellationToken);
 }
 
 public sealed class OperationService(
     ControlDbContext db,
-    ICitusInspector inspector) : IOperationService
+    ICitusInspector inspector,
+    ICitusMutator mutator) : IOperationService
 {
     public async Task<IReadOnlyList<OperationResponse>> GetAllAsync(
         Guid? clusterId, CancellationToken cancellationToken)
@@ -103,6 +118,75 @@ public sealed class OperationService(
         return Map(operation);
     }
 
+    public async Task<OperationResponse> CreateTableConversionAsync(
+        Guid clusterId, CreateTableConversionOperationRequest request, Guid actorId,
+        CancellationToken cancellationToken)
+    {
+        DatabaseObjectDdlSafety.ValidateIdentifier(request.Schema, nameof(request.Schema));
+        DatabaseObjectDdlSafety.ValidateIdentifier(request.Table, nameof(request.Table));
+        DatabaseObjectDdlSafety.RequireTypedConfirmation($"{request.Schema}.{request.Table}", request.TypedConfirmation);
+        if (!request.ExternalCapacityAndBackupChecksAcknowledged)
+            throw new ArgumentException("External capacity, backup/PITR, and rollback-owner checks must be acknowledged.");
+        if (request.TargetMode is not (DatabaseTableMode.Reference or DatabaseTableMode.Distributed))
+            throw new ArgumentException("Conversion target must be reference or distributed.");
+        if (request.TargetMode == DatabaseTableMode.Distributed)
+            DatabaseObjectDdlSafety.ValidateIdentifier(request.DistributionColumn ?? string.Empty, nameof(request.DistributionColumn));
+        else if (request.DistributionColumn is not null || request.ColocateWith is not null || request.ShardCount.HasValue)
+            throw new ArgumentException("Reference table conversion does not accept distribution options.");
+
+        var cluster = await db.Clusters.SingleOrDefaultAsync(x => x.Id == clusterId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cluster not found.");
+        var inventory = await inspector.CollectAsync(cluster, cancellationToken);
+        var capabilityName = request.TargetMode == DatabaseTableMode.Reference
+            ? "create_reference_table" : "create_distributed_table";
+        var capability = inventory.Capability.Functions.Where(x => x.Name == capabilityName).ToList();
+        if (capability.Count == 0)
+            throw new InvalidOperationException($"Installed Citus lacks {capabilityName} capability.");
+        if (request.TargetMode == DatabaseTableMode.Distributed &&
+            !capability.Any(x => x.Arguments.Contains("distribution_column", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Installed create_distributed_table signature lacks distribution_column.");
+
+        var state = await mutator.ReadTableConversionStateAsync(cluster, request.Schema, request.Table, cancellationToken);
+        if (state.Mode != DatabaseTableMode.Local)
+            throw new InvalidOperationException("Only a local table can be converted.");
+        if (request.TargetMode == DatabaseTableMode.Distributed)
+        {
+            if (!state.Columns.Contains(request.DistributionColumn!, StringComparer.Ordinal))
+                throw new ArgumentException("Distribution column does not exist.");
+            if (state.PrimaryKeyColumns.Count > 0 &&
+                !state.PrimaryKeyColumns.Contains(request.DistributionColumn!, StringComparer.Ordinal))
+                throw new ArgumentException("Primary key must include the distribution column.");
+        }
+
+        var conversion = new TableConversionPlan(request.Schema, request.Table, request.TargetMode,
+            request.DistributionColumn, string.IsNullOrWhiteSpace(request.ColocateWith) ? null : request.ColocateWith,
+            request.ShardCount, state.Fingerprint, state.EstimatedRows, state.Bytes);
+        var warnings = new List<string>
+        {
+            "Table conversion can move data, take locks, generate WAL, and consume worker capacity.",
+            "A successful conversion is not automatically undistributed by this application.",
+            "Cancellation is guaranteed only before the conversion command starts."
+        };
+        var plan = new OperationPlan(OperationKind.ConvertTable, null, null,
+            inventory.Capability.CitusVersion, capability, "[]", null, warnings,
+            DateTimeOffset.UtcNow, conversion);
+        var planJson = JsonSerializer.Serialize(plan);
+        var operation = new ClusterOperation
+        {
+            ClusterId = clusterId,
+            Kind = OperationKind.ConvertTable,
+            Risk = OperationRisk.Impact,
+            PlanJson = planJson,
+            PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
+            RequestedBy = actorId
+        };
+        db.Operations.Add(operation);
+        db.AuditEvents.Add(ClusterService.Audit(actorId, "operation.request", "operation", operation.Id,
+            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, request.Schema, request.Table }));
+        await db.SaveChangesAsync(cancellationToken);
+        return Map(operation);
+    }
+
     public async Task<OperationResponse> ApproveAsync(Guid id, Guid actorId, CancellationToken cancellationToken)
     {
         var operation = await LoadAsync(id, cancellationToken);
@@ -169,6 +253,7 @@ public sealed class OperationService(
             OperationKind.Rebalance => ["get_rebalance_table_shards_plan", "citus_rebalance_start", "citus_rebalance_status"],
             OperationKind.DrainWorker => ["citus_set_node_property", "get_rebalance_table_shards_plan", "citus_rebalance_start", "citus_rebalance_status"],
             OperationKind.RemoveWorker => ["citus_remove_node"],
+            OperationKind.ConvertTable => ["create_distributed_table"],
             _ => []
         };
         var missing = required.Where(x => !names.Contains(x)).ToArray();
@@ -187,6 +272,8 @@ internal static class OperationSafety
 {
     internal static void ValidateRequest(CreateOperationRequest request)
     {
+        if (request.Kind == OperationKind.ConvertTable)
+            throw new ArgumentException("Use the dedicated table-conversion endpoint.");
         if (request.Kind is OperationKind.AddWorker or OperationKind.DrainWorker or OperationKind.RemoveWorker)
         {
             if (string.IsNullOrWhiteSpace(request.WorkerHost) || request.WorkerPort is null)
@@ -204,6 +291,7 @@ internal static class OperationSafety
         OperationKind.AddWorker => OperationRisk.Write,
         OperationKind.Rebalance or OperationKind.DrainWorker => OperationRisk.Impact,
         OperationKind.RemoveWorker => OperationRisk.Destructive,
+        OperationKind.ConvertTable => OperationRisk.Impact,
         _ => OperationRisk.Impact
     };
 }

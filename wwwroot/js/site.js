@@ -178,7 +178,7 @@
       }
     };
 
-    $("[data-database-object]").on("click", function () {
+    $("#database-tree-content").on("click", "[data-database-object]", function () {
       const button = $(this);
       selectedSchema = button.data("schema");
       selectedTable = button.data("table");
@@ -193,7 +193,7 @@
       if (!this.disabled) loadBrowse(Number($(this).data("database-page")));
     });
     $("#database-page-size").on("change", () => { if (selectedTable && activeTab === "data") loadBrowse(1); });
-    $(".database-schema-toggle").on("click", function () {
+    $("#database-tree-content").on("click", ".database-schema-toggle", function () {
       const expanded = $(this).attr("aria-expanded") === "true";
       $(this).attr("aria-expanded", String(!expanded)).next().toggleClass("hidden", expanded);
     });

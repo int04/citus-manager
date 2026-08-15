@@ -29,6 +29,7 @@ public sealed class OperationSafetyTests
     [InlineData(OperationKind.Rebalance, OperationRisk.Impact)]
     [InlineData(OperationKind.DrainWorker, OperationRisk.Impact)]
     [InlineData(OperationKind.RemoveWorker, OperationRisk.Destructive)]
+    [InlineData(OperationKind.ConvertTable, OperationRisk.Impact)]
     public void Operation_risk_is_fixed(OperationKind kind, OperationRisk expected) =>
         Assert.Equal(expected, OperationSafety.RiskFor(kind));
 
@@ -37,6 +38,13 @@ public sealed class OperationSafetyTests
     {
         var request = Request(OperationKind.RemoveWorker, "worker-1", "worker-1");
         OperationSafety.ValidateRequest(request);
+    }
+
+    [Fact]
+    public void Generic_operation_request_rejects_table_conversion()
+    {
+        var request = Request(OperationKind.ConvertTable, null, null);
+        Assert.Throws<ArgumentException>(() => OperationSafety.ValidateRequest(request));
     }
 
     private static CreateOperationRequest Request(OperationKind kind, string? host, string? confirmation) => new()
