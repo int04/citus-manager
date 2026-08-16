@@ -396,8 +396,9 @@ internal static class ConsoleSqlAnalyzer
     internal static IReadOnlyList<ConsoleStatementDescriptor> Analyze(string sql)
     {
         if (string.IsNullOrWhiteSpace(sql)) throw new ArgumentException("SQL là bắt buộc.");
-        var ranges = Split(sql);
+        var ranges = ExpandImplicitNewlineStatements(sql, Split(sql));
         if (ranges.Count == 0) throw new ArgumentException("Không tìm thấy statement SQL.");
+        if (ranges.Count > 100) throw new ArgumentException("Một lần chạy hỗ trợ tối đa 100 statements.");
         var result = new List<ConsoleStatementDescriptor>(ranges.Count);
         foreach (var (start, length) in ranges)
         {
@@ -485,6 +486,118 @@ internal static class ConsoleSqlAnalyzer
         AddRange(sql, result, start, sql.Length);
         return result;
     }
+
+    private static List<(int Start, int Length)> ExpandImplicitNewlineStatements(
+        string sql, IReadOnlyList<(int Start, int Length)> ranges)
+    {
+        var result = new List<(int Start, int Length)>();
+        foreach (var (start, length) in ranges) ExpandRange(sql, start, start + length, result);
+        return result;
+    }
+
+    private static void ExpandRange(string sql, int start, int end, ICollection<(int Start, int Length)> result)
+    {
+        foreach (var candidate in TopLevelStatementLineStarts(sql, start, end))
+        {
+            var prefixStart = start;
+            var prefixEnd = candidate;
+            TrimRange(sql, ref prefixStart, ref prefixEnd);
+            if (prefixEnd <= prefixStart || !IsCompleteStatement(sql[prefixStart..prefixEnd])) continue;
+            AddRange(sql, result, start, candidate);
+            ExpandRange(sql, candidate, end, result);
+            return;
+        }
+        AddRange(sql, result, start, end);
+    }
+
+    private static IEnumerable<int> TopLevelStatementLineStarts(string sql, int start, int end)
+    {
+        var candidates = new List<int>();
+        var i = start; var parentheses = 0; var blockDepth = 0;
+        var single = false; var quoted = false; var lineComment = false; string? dollar = null;
+        while (i < end)
+        {
+            if (lineComment)
+            {
+                if (sql[i] == '\n') { lineComment = false; AddLineCandidate(sql, i + 1, end, parentheses, start, candidates); }
+                i++; continue;
+            }
+            if (blockDepth > 0)
+            {
+                if (i + 1 < end && sql[i] == '/' && sql[i + 1] == '*') { blockDepth++; i += 2; continue; }
+                if (i + 1 < end && sql[i] == '*' && sql[i + 1] == '/') { blockDepth--; i += 2; continue; }
+                i++; continue;
+            }
+            if (dollar is not null)
+            {
+                if (sql.AsSpan(i).StartsWith(dollar, StringComparison.Ordinal)) { i += dollar.Length; dollar = null; }
+                else i++;
+                continue;
+            }
+            if (single)
+            {
+                if (sql[i] == '\\' && i + 1 < end) { i += 2; continue; }
+                if (sql[i] == '\'' && i + 1 < end && sql[i + 1] == '\'') { i += 2; continue; }
+                if (sql[i] == '\'') single = false;
+                i++; continue;
+            }
+            if (quoted)
+            {
+                if (sql[i] == '"' && i + 1 < end && sql[i + 1] == '"') { i += 2; continue; }
+                if (sql[i] == '"') quoted = false;
+                i++; continue;
+            }
+            if (i + 1 < end && sql[i] == '-' && sql[i + 1] == '-') { lineComment = true; i += 2; continue; }
+            if (i + 1 < end && sql[i] == '/' && sql[i + 1] == '*') { blockDepth = 1; i += 2; continue; }
+            if (sql[i] == '\'') { single = true; i++; continue; }
+            if (sql[i] == '"') { quoted = true; i++; continue; }
+            if (sql[i] == '$')
+            {
+                var tagEnd = sql.IndexOf('$', i + 1);
+                if (tagEnd >= 0 && tagEnd < end && sql.AsSpan(i + 1, tagEnd - i - 1).ToString().All(ch => char.IsLetterOrDigit(ch) || ch == '_'))
+                { dollar = sql[i..(tagEnd + 1)]; i = tagEnd + 1; continue; }
+            }
+            if (sql[i] == '(') parentheses++;
+            else if (sql[i] == ')' && parentheses > 0) parentheses--;
+            else if (sql[i] == '\n') AddLineCandidate(sql, i + 1, end, parentheses, start, candidates);
+            i++;
+        }
+        return candidates;
+    }
+
+    private static void AddLineCandidate(
+        string sql, int position, int end, int parentheses, int rangeStart, ICollection<int> candidates)
+    {
+        if (parentheses != 0) return;
+        while (position < end && char.IsWhiteSpace(sql[position])) position++;
+        if (position <= rangeStart || position >= end) return;
+        var keywordEnd = position;
+        while (keywordEnd < end && (char.IsLetter(sql[keywordEnd]) || sql[keywordEnd] == '_')) keywordEnd++;
+        if (keywordEnd == position) return;
+        var keyword = sql[position..keywordEnd].ToUpperInvariant();
+        if (StatementStartKeywords.Contains(keyword)) candidates.Add(position);
+    }
+
+    private static bool IsCompleteStatement(string sql)
+    {
+        var parsed = Parser.Parse(sql, new ParserOptions());
+        return parsed.IsSuccess && parsed.Value is not null && parsed.Value.Stmts.Count == 1;
+    }
+
+    private static void TrimRange(string sql, ref int start, ref int end)
+    {
+        while (start < end && char.IsWhiteSpace(sql[start])) start++;
+        while (end > start && char.IsWhiteSpace(sql[end - 1])) end--;
+    }
+
+    private static readonly HashSet<string> StatementStartKeywords = new(StringComparer.Ordinal)
+    {
+        "SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "TRUNCATE",
+        "EXPLAIN", "ANALYZE", "VACUUM", "REINDEX", "CALL", "DO", "COPY", "GRANT", "REVOKE", "COMMENT",
+        "BEGIN", "START", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "SET", "RESET", "SHOW", "DISCARD",
+        "PREPARE", "EXECUTE", "DEALLOCATE", "DECLARE", "FETCH", "MOVE", "CLOSE", "LOCK", "LISTEN", "UNLISTEN",
+        "NOTIFY", "REFRESH", "CLUSTER", "CHECKPOINT", "SECURITY"
+    };
 
     private static void AddRange(string sql, ICollection<(int, int)> result, int rawStart, int rawEnd)
     {

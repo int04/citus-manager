@@ -3,6 +3,9 @@ import { createQueryHistory } from "./query-console-history.js";
 import { createConsoleResultGrid } from "./console-result-grid.js";
 
 const SQL_KEYWORDS = ["SELECT","FROM","WHERE","JOIN","LEFT JOIN","RIGHT JOIN","FULL JOIN","INNER JOIN","ON","GROUP BY","ORDER BY","HAVING","LIMIT","OFFSET","INSERT INTO","VALUES","UPDATE","SET","DELETE FROM","RETURNING","WITH","AS","DISTINCT","UNION ALL","CASE","WHEN","THEN","ELSE","END","NULL","IS NULL","IS NOT NULL","AND","OR","NOT","EXISTS","CREATE TABLE","ALTER TABLE","DROP TABLE","TRUNCATE","BEGIN","COMMIT","ROLLBACK","EXPLAIN","ANALYZE"];
+const RESERVED_IDENTIFIERS = new Set(SQL_KEYWORDS.flatMap(value => value.toLowerCase().split(/\s+/)).concat(["user","current_user","session_user","table","column","constraint","primary","references"]));
+const sqlIdentifier = value => /^[a-z_][a-z0-9_$]*$/.test(value) && !RESERVED_IDENTIFIERS.has(value) ? value : `"${value.replaceAll('"','""')}"`;
+const qualifiedIdentifier = (...parts) => parts.map(sqlIdentifier).join(".");
 
 function jsonHeaders(token) { return { "Content-Type": "application/json", "RequestVerificationToken": token }; }
 function stamp(value = Date.now()) { return new Intl.DateTimeFormat("sv-SE", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)); }
@@ -80,11 +83,17 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
 
   function metadataCompletions(metadata) {
     const values = SQL_KEYWORDS.map(label => ({ label, type: "keyword" }));
-    metadata.schemas.forEach(label => values.push({ label, type: "namespace" }));
+    const activeSchema = metadata.scope.schema || "public";
+    metadata.schemas.forEach(schema => values.push({ label: sqlIdentifier(schema), apply: sqlIdentifier(schema), detail: "schema", type: "namespace" }));
     metadata.relations.forEach(relation => {
-      values.push({ label: `${relation.schema}.${relation.name}`, detail: relation.kind, type: "class" });
-      values.push({ label: relation.name, detail: relation.schema, type: "class", boost: relation.schema === metadata.scope.schema ? 30 : 0 });
-      relation.columns.forEach(column => values.push({ label: column, detail: relation.name, type: "property", boost: relation.name === metadata.scope.objectName ? 50 : 0 }));
+      const sameSchema = relation.schema === activeSchema;
+      const relationName = sameSchema ? sqlIdentifier(relation.name) : qualifiedIdentifier(relation.schema, relation.name);
+      values.push({ label: relationName, apply: relationName, detail: `${relation.kind} · ${relation.schema}`, type: "class", boost: sameSchema ? 30 : 0 });
+      relation.columns.forEach(column => {
+        const isActiveObject = sameSchema && relation.name === metadata.scope.objectName;
+        const columnName = isActiveObject ? sqlIdentifier(column) : sameSchema ? qualifiedIdentifier(relation.name, column) : qualifiedIdentifier(relation.schema, relation.name, column);
+        values.push({ label: columnName, apply: columnName, detail: `${relation.schema}.${relation.name}`, type: "property", boost: isActiveObject ? 50 : 0 });
+      });
     });
     metadata.functions.forEach(label => values.push({ label, type: "function", apply: `${label}()` }));
     metadata.dataTypes.forEach(label => values.push({ label, type: "type" }));
@@ -100,8 +109,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     stage.innerHTML = `<div class="database-query-console" data-query-console>
       <section class="query-console-editor-pane" style="height:${workspace.editorPercent}%">
         <div class="query-console-toolbar">
-          <button type="button" class="is-primary" data-console-run title="Ctrl+Enter"><i class="fa fa-play"></i> Run</button>
-          <button type="button" data-console-run-all><i class="fa fa-forward"></i> Run All</button>
+          <button type="button" class="is-primary" data-console-run title="Ctrl+Enter · Không bôi: chạy tất cả · Có bôi: chỉ chạy selection"><i class="fa fa-play"></i> Run</button>
           <button type="button" data-console-stop disabled><i class="fa fa-stop"></i> Stop</button>
           <button type="button" data-console-clear><i class="fa fa-eraser"></i> Clear</button>
           <span class="query-console-target"><i class="fa fa-database"></i> ${html(scopeLabel(workspace.scope))}</span>
@@ -120,7 +128,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     bindSplitter(workspace, root.querySelector(".query-console-splitter.horizontal"), "y", "editorPercent", editorPane, bottom);
     bindSplitter(workspace, root.querySelector(".query-console-splitter.vertical"), "x", "historyPercent", historyPane, resultPane);
     if (!window.CitusQueryEditor) { root.querySelector("[data-console-editor]").innerHTML = '<p class="database-workspace-error">SQL editor bundle chưa tải.</p>'; return; }
-    workspace.editor = window.CitusQueryEditor.create({ parent: root.querySelector("[data-console-editor]"), value: workspace.sql || "", onChange: value => { workspace.sql = value; workspace.dirty = !!value.trim(); }, onRun: () => execute(false) });
+    workspace.editor = window.CitusQueryEditor.create({ parent: root.querySelector("[data-console-editor]"), value: workspace.sql || "", onChange: value => { workspace.sql = value; workspace.dirty = !!value.trim(); }, onRun: () => execute() });
     renderResults(workspace, root); renderHistory(workspace, root);
 
     const metadataUrl = new URL(explorer.dataset.consoleMetadataUrl, location.origin);
@@ -129,42 +137,42 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     if (workspace.metadata) applyMetadata(workspace.metadata);
     else fetch(metadataUrl).then(async response => { if (!response.ok) throw new Error(await problem(response)); return response.json(); }).then(applyMetadata).catch(error => showError(error.message));
 
-    async function execute(all) {
-      const sql = workspace.editor.getValue(); if (!sql.trim() || workspace.sqlAbort) return;
+    async function execute() {
+      const editorSql = workspace.editor.getValue(), selection = workspace.editor.getSelection();
+      const sql = selection.empty ? editorSql : editorSql.slice(selection.from, selection.to);
+      if (!sql.trim() || workspace.sqlAbort) return;
+      const lineOffset = selection.empty ? 0 : editorSql.slice(0, selection.from).split("\n").length - 1;
+      const editorLine = statement => statement.startLine + lineOffset;
       try {
         const analysis = await api(explorer.dataset.consoleAnalyzeUrl, { sql, nodeId: workspace.scope.nodeId });
-        const selection = workspace.editor.getSelection();
-        let selected = analysis.statements;
-        if (!all) selected = selection.empty ? analysis.statements.filter(x => selection.cursor >= x.start && selection.cursor <= x.start + x.length) : analysis.statements.filter(x => x.start < selection.to && x.start + x.length > selection.from);
-        if (!selected.length) { showError("Đặt cursor trong statement hoặc bôi vùng SQL cần chạy."); return; }
+        const selected = analysis.statements;
         const risky = selected.filter(x => x.requiresConfirmation);
         if (!(await confirmRisk(root, risky))) return;
         workspace.results = []; workspace.activeResult = null;
         workspace.output.push({ time: Date.now(), text: `${scopeLabel(workspace.scope, workspace.metadata?.database || "database")}> ${selected.map(x => x.command).join(", ")}` });
-        workspace.editor.setStatuses(selected.map(x => ({ line: x.startLine, status: "queued", title: "Đang chờ" })));
-        const statuses = new Map(selected.map(x => [x.index, { line: x.startLine, status: "queued", title: "Đang chờ" }]));
-        workspace.sqlAbort = new AbortController(); root.querySelector("[data-console-run]").disabled = true; root.querySelector("[data-console-run-all]").disabled = true; root.querySelector("[data-console-stop]").disabled = false;
+        workspace.editor.setStatuses(selected.map(x => ({ line: editorLine(x), status: "queued", title: "Đang chờ" })));
+        const statuses = new Map(selected.map(x => [x.index, { line: editorLine(x), status: "queued", title: "Đang chờ" }]));
+        workspace.sqlAbort = new AbortController(); root.querySelector("[data-console-run]").disabled = true; root.querySelector("[data-console-stop]").disabled = false;
         const started = performance.now(); let success = true;
         const response = await fetch(explorer.dataset.consoleExecuteUrl, { method: "POST", headers: jsonHeaders(token), signal: workspace.sqlAbort.signal, body: JSON.stringify({ sql, nodeId: workspace.scope.nodeId, scope: workspace.scope, statementIndexes: selected.map(x => x.index), confirmedStatementIndexes: risky.filter(x => String(x.risk).toLowerCase() === "write").map(x => x.index), destructiveConfirmedStatementIndexes: risky.filter(x => String(x.risk).toLowerCase() === "destructive").map(x => x.index), analysisHash: analysis.queryHash }) });
         if (!response.ok) throw new Error(await problem(response));
         const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = "";
         const accept = event => {
-          if (event.type === "statementStarted") statuses.set(event.statementIndex, { line: analysis.statements[event.statementIndex].startLine, status: "running", title: "Đang chạy" });
-          if (event.type === "statementSucceeded") { statuses.set(event.statementIndex, { line: analysis.statements[event.statementIndex].startLine, status: "success", title: `Thành công · ${event.durationMilliseconds} ms` }); workspace.output.push({ time: event.timestamp, kind: "success", text: `${event.command}: ${event.message} (${event.durationMilliseconds} ms)` }); }
-          if (event.type === "statementFailed") { success = false; if (event.statementIndex != null) statuses.set(event.statementIndex, { line: analysis.statements[event.statementIndex].startLine, status: "error", title: event.message }); workspace.output.push({ time: event.timestamp, kind: "error", text: `${event.sqlState ? `[${event.sqlState}] ` : ""}${event.message}` }); }
+          if (event.type === "statementStarted") statuses.set(event.statementIndex, { line: editorLine(analysis.statements[event.statementIndex]), status: "running", title: "Đang chạy" });
+          if (event.type === "statementSucceeded") { statuses.set(event.statementIndex, { line: editorLine(analysis.statements[event.statementIndex]), status: "success", title: `Thành công · ${event.durationMilliseconds} ms` }); workspace.output.push({ time: event.timestamp, kind: "success", text: `${event.command}: ${event.message} (${event.durationMilliseconds} ms)` }); }
+          if (event.type === "statementFailed") { success = false; if (event.statementIndex != null) statuses.set(event.statementIndex, { line: editorLine(analysis.statements[event.statementIndex]), status: "error", title: event.message }); workspace.output.push({ time: event.timestamp, kind: "error", text: `${event.sqlState ? `[${event.sqlState}] ` : ""}${event.message}` }); }
           if (event.type === "connected") workspace.output.push({ time: event.timestamp, text: `Connected · ${event.message}` });
           if (event.type === "resultPage") { const descriptor = analysis.statements[event.statementIndex]; workspace.output.push({ time: event.timestamp, text: `${event.rows?.length || 0} rows retrieved in ${event.durationMilliseconds} ms (execution: ${event.executionMilliseconds || 0} ms, fetching: ${event.fetchingMilliseconds || 0} ms)` }); workspace.results.push({ sql: sql.substring(descriptor.start, descriptor.start + descriptor.length), nodeId: workspace.scope.nodeId, scope: workspace.scope, columns: event.columns || [], rows: event.rows || [], page: 1, pageSize: 20, hasPrevious: false, hasNext: !!event.isTruncated, widths: {} }); workspace.activeResult = workspace.results.length - 1; }
           workspace.editor.setStatuses([...statuses.values()]); renderResults(workspace, root);
         };
         while (true) { const chunk = await reader.read(); if (chunk.done) break; buffer += decoder.decode(chunk.value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop(); lines.filter(Boolean).forEach(line => accept(JSON.parse(line))); }
         if (buffer.trim()) accept(JSON.parse(buffer));
-        await workspace.history.add({ sql: selected.map(x => sql.substring(x.start, x.start+x.length)).join("\n\n"), context: scopeLabel(workspace.scope), command: selected.map(x => x.command).join(", "), success, duration: Math.round(performance.now()-started), queryHash: analysis.queryHash });
+        await workspace.history.add({ sql, context: scopeLabel(workspace.scope), command: selected.map(x => x.command).join(", "), success, duration: Math.round(performance.now()-started), queryHash: analysis.queryHash });
         renderHistory(workspace, root);
       } catch (error) { if (error.name !== "AbortError") { showError(error.message); workspace.output.push({ time: Date.now(), kind: "error", text: error.message }); renderResults(workspace, root); } }
-      finally { workspace.sqlAbort = null; root.querySelector("[data-console-run]").disabled = false; root.querySelector("[data-console-run-all]").disabled = false; root.querySelector("[data-console-stop]").disabled = true; }
+      finally { workspace.sqlAbort = null; root.querySelector("[data-console-run]").disabled = false; root.querySelector("[data-console-stop]").disabled = true; }
     }
-    root.querySelector("[data-console-run]").onclick = () => execute(false);
-    root.querySelector("[data-console-run-all]").onclick = () => execute(true);
+    root.querySelector("[data-console-run]").onclick = () => execute();
     root.querySelector("[data-console-stop]").onclick = () => workspace.sqlAbort?.abort();
     root.querySelector("[data-console-clear]").onclick = () => { workspace.editor.setValue(""); workspace.output = []; workspace.results = []; workspace.activeResult = null; workspace.editor.setStatuses([]); renderResults(workspace, root); };
     root.querySelector("[data-history-search]").oninput = event => renderHistory(workspace, root, event.target.value);

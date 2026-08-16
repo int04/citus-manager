@@ -38,4 +38,22 @@ public sealed class ConsoleSqlAnalyzerTests
         Assert.Single(statements);
         Assert.Equal("SELECT", statements[0].Command);
     }
+
+    [Fact]
+    public void Splits_complete_statements_on_newline_without_semicolon()
+    {
+        const string sql = "select * from public.users\nselect * from users";
+        var statements = ConsoleSqlAnalyzer.Analyze(sql);
+
+        Assert.Equal(2, statements.Count);
+        Assert.All(statements, statement => Assert.Equal("SELECT", statement.Command));
+        Assert.Equal(sql.IndexOf("select * from users", StringComparison.Ordinal), statements[1].Start);
+    }
+
+    [Theory]
+    [InlineData("select id,\n       name\nfrom public.users\nwhere id > 0")]
+    [InlineData("select 1\nunion all\nselect 2")]
+    [InlineData("select (\n  select max(id)\n  from public.users\n) as max_id")]
+    public void Does_not_split_one_multiline_select(string sql) =>
+        Assert.Single(ConsoleSqlAnalyzer.Analyze(sql));
 }
