@@ -1138,7 +1138,7 @@ public sealed class DatabaseObjectService(
             SELECT format_type(t.oid, NULL)
             FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
             WHERE t.oid = to_regtype($1) AND t.typisdefined AND t.typtype IN ('b','e','r')
-              AND t.typelem = 0 AND n.nspname IN ('pg_catalog','public')
+              AND n.nspname NOT LIKE 'pg_temp_%'
             """, connection);
         command.Parameters.AddWithValue(requested);
         return (string?)await command.ExecuteScalarAsync(cancellationToken)

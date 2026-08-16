@@ -11,6 +11,7 @@
   const fields = document.getElementById("database-action-fields");
   const error = document.getElementById("database-action-error");
   const submit = document.getElementById("database-action-submit");
+  let designerEditorForm = null;
   const toast = document.getElementById("database-toast");
   const token = document.querySelector("#database-antiforgery input[name='__RequestVerificationToken']")?.value;
   let contextNode = null;
@@ -45,9 +46,12 @@
   const getMetadata = () => metadataPromise ||= $.getJSON($explorer.data("metadata-url"));
   const problemText = xhr => {
     const body = xhr.responseJSON;
-    if (body?.errors) return Object.values(body.errors).flat().join(" ");
+    const validationErrors = body?.errors
+      ? Object.values(body.errors).flat().filter(message => typeof message === "string" && message.trim())
+      : [];
+    if (validationErrors.length) return validationErrors.join(" ");
     const state = body?.sqlState ? ` [${body.sqlState}]` : "";
-    return `${body?.detail || t("action.databaseFailed")}${state}`;
+    return `${body?.detail || body?.title || t("action.databaseFailed")}${state}`;
   };
   const showToast = message => {
     toast.textContent = message;
@@ -417,10 +421,20 @@
   }
   function openModal({ title, eyebrow = "DATABASE ACTION", description = "", body, button = t("common.confirm"), danger = false, variant = "compact", onSubmit }) {
     modalTrigger = menuTrigger;
+    designerEditorForm?.remove();
+    designerEditorForm = null;
     document.getElementById("database-action-title").textContent = title;
     document.getElementById("database-action-eyebrow").textContent = eyebrow;
     document.getElementById("database-action-description").textContent = description;
     fields.innerHTML = body;
+    if (variant === "table") {
+      designerEditorForm = document.createElement("form");
+      designerEditorForm.id = "database-table-designer-editor-form";
+      designerEditorForm.hidden = true;
+      document.body.appendChild(designerEditorForm);
+      fields.querySelectorAll("[data-designer-panel]:not([data-designer-panel='table']) input, [data-designer-panel]:not([data-designer-panel='table']) select, [data-designer-panel]:not([data-designer-panel='table']) textarea")
+        .forEach(control => control.setAttribute("form", designerEditorForm.id));
+    }
     modalCard.classList.toggle("is-table-designer", variant === "table");
     modalCard.classList.toggle("is-destructive", danger);
     window.CitusConnectionResult.clear(error);
@@ -436,6 +450,8 @@
     modal.classList.add("hidden");
     document.body.classList.remove("database-modal-open");
     modalSubmit = null;
+    designerEditorForm?.remove();
+    designerEditorForm = null;
     modalTrigger?.focus();
   }
   modal.querySelectorAll(".database-action-close,.database-action-cancel").forEach(x => x.addEventListener("click", closeModal));
@@ -603,10 +619,9 @@
     });
     document.getElementById("database-tree-content").innerHTML = tree;
     document.querySelectorAll("[data-schema-group]").forEach(group => {
-      if (!expanded.includes(group.dataset.schemaName)) {
-        group.querySelector(".database-schema-toggle")?.setAttribute("aria-expanded", "false");
-        group.querySelector(".database-schema-items")?.classList.add("hidden");
-      }
+      const restoreExpanded = expanded.includes(group.dataset.schemaName);
+      group.querySelector(".database-schema-toggle")?.setAttribute("aria-expanded", String(restoreExpanded));
+      group.querySelector(".database-schema-items")?.classList.toggle("hidden", !restoreExpanded);
     });
     document.querySelectorAll("[data-database-object-node]").forEach(node => {
       if (!expandedObjects.includes(node.dataset.objectKey)) return;
@@ -1757,60 +1772,58 @@
           FillFactor: form.elements.FillFactor.value ? Number(form.elements.FillFactor.value) : null,
           AccessMethod: form.elements.AccessMethod.value || null, Tablespace: form.elements.Tablespace.value || null, Owner: form.elements.Owner.value || null,
           DistributionColumn: form.elements.DistributionColumn?.value || null, ColocateWith: form.elements.ColocateWith?.value || null,
-          ShardCount: form.elements.ShardCount?.value ? Number(form.elements.ShardCount.value) : null };
+          ShardCount: form.elements.ShardCount?.value ? Number(form.elements.ShardCount.value) : null,
+          Columns: [], Keys: [], ForeignKeys: [], Indexes: [], Checks: [], Grants: [], ListPartitions: [] };
         [...document.querySelectorAll(".database-column-row")].forEach((row, index) => {
           const column = columnRowData(row);
-          data[`Columns[${index}].OriginalName`] = column.originalName || null;
-          data[`Columns[${index}].Name`] = column.name; data[`Columns[${index}].DataType`] = column.dataType; data[`Columns[${index}].Nullable`] = column.nullable;
-          data[`Columns[${index}].PrimaryKey`] = column.primaryKey; data[`Columns[${index}].Comment`] = column.comment || null;
-          data[`Columns[${index}].DefaultExpression`] = column.identity ? null : column.defaultExpression || null;
-          data[`Columns[${index}].DefaultLiteral`] = null; data[`Columns[${index}].DefaultCurrentTimestamp`] = false;
-          data[`Columns[${index}].Identity`] = column.identity; data[`Columns[${index}].IdentityKind`] = column.identityKind;
-          data[`Columns[${index}].IdentityMinimum`] = column.identity && column.identityMinimum ? Number(column.identityMinimum) : null;
-          data[`Columns[${index}].IdentityMaximum`] = column.identity && column.identityMaximum ? Number(column.identityMaximum) : null;
-          data[`Columns[${index}].IdentityIncrement`] = column.identity && column.identityIncrement ? Number(column.identityIncrement) : null;
-          data[`Columns[${index}].IdentityCache`] = column.identity && column.identityCache ? Number(column.identityCache) : null;
-          data[`Columns[${index}].IdentityCycle`] = column.identityCycle;
+          if (!column.name.trim()) throw { responseJSON: { detail: t("designer.columnNeedsName", index + 1) } };
+          data.Columns.push({ OriginalName: column.originalName || null, Name: column.name, DataType: column.dataType,
+            Nullable: column.nullable, PrimaryKey: column.primaryKey, Comment: column.comment || null,
+            DefaultExpression: column.identity ? null : column.defaultExpression || null, DefaultLiteral: null,
+            DefaultCurrentTimestamp: false, Identity: column.identity, IdentityKind: column.identityKind,
+            IdentityMinimum: column.identity && column.identityMinimum ? Number(column.identityMinimum) : null,
+            IdentityMaximum: column.identity && column.identityMaximum ? Number(column.identityMaximum) : null,
+            IdentityIncrement: column.identity && column.identityIncrement ? Number(column.identityIncrement) : null,
+            IdentityCache: column.identity && column.identityCache ? Number(column.identityCache) : null,
+            IdentityCycle: column.identityCycle });
         });
         [...document.querySelectorAll(".dg-key-row")].forEach((row, index) => {
           const key = keyRowData(row);
           if (!key.columns.length) throw { responseJSON: { detail: t("designer.keyNeedsColumn", key.name || index + 1) } };
-          data[`Keys[${index}].Name`] = key.name || null;
-          data[`Keys[${index}].Kind`] = key.kind;
-          key.columns.forEach((column, columnIndex) => { data[`Keys[${index}].Columns[${columnIndex}]`] = column; });
+          data.Keys.push({ Name: key.name || null, Kind: key.kind, Columns: key.columns });
         });
         [...document.querySelectorAll(".dg-foreign-key-row")].forEach((row, index) => {
           const fk = foreignKeyRowData(row);
           if (!fk.referencedTable || !fk.mappings.length || fk.mappings.some(mapping => !mapping.local || !mapping.referenced)) throw { responseJSON: { detail: t("designer.fkIncomplete", fk.name || index + 1) } };
-          data[`ForeignKeys[${index}].Name`] = fk.name || null; data[`ForeignKeys[${index}].Comment`] = fk.comment || null; data[`ForeignKeys[${index}].ReferencedSchema`] = fk.referencedSchema; data[`ForeignKeys[${index}].ReferencedTable`] = fk.referencedTable;
-          fk.mappings.forEach((mapping, mappingIndex) => { data[`ForeignKeys[${index}].Columns[${mappingIndex}]`] = mapping.local; data[`ForeignKeys[${index}].ReferencedColumns[${mappingIndex}]`] = mapping.referenced; });
-          data[`ForeignKeys[${index}].OnUpdate`] = fk.onUpdate; data[`ForeignKeys[${index}].OnDelete`] = fk.onDelete; data[`ForeignKeys[${index}].Deferrable`] = fk.deferrable; data[`ForeignKeys[${index}].InitiallyDeferred`] = fk.initiallyDeferred;
+          data.ForeignKeys.push({ Name: fk.name || null, Comment: fk.comment || null,
+            ReferencedSchema: fk.referencedSchema, ReferencedTable: fk.referencedTable,
+            Columns: fk.mappings.map(mapping => mapping.local), ReferencedColumns: fk.mappings.map(mapping => mapping.referenced),
+            OnUpdate: fk.onUpdate, OnDelete: fk.onDelete, Deferrable: fk.deferrable, InitiallyDeferred: fk.initiallyDeferred });
         });
         [...document.querySelectorAll(".dg-index-row")].forEach((row, index) => {
           const item = indexRowData(row); if (!item.columns.length) throw { responseJSON: { detail: t("designer.indexNeedsColumn", item.name || index + 1) } };
-          data[`Indexes[${index}].Name`] = item.name; data[`Indexes[${index}].Comment`] = item.comment || null;
-          data[`Indexes[${index}].Unique`] = item.unique; data[`Indexes[${index}].NullsNotDistinct`] = item.nullsNotDistinct; data[`Indexes[${index}].Method`] = item.method;
-          data[`Indexes[${index}].Condition`] = item.condition || null; data[`Indexes[${index}].Tablespace`] = item.tablespace || null;
-          item.columns.forEach((column, columnIndex) => { data[`Indexes[${index}].Columns[${columnIndex}].Name`] = column.name; data[`Indexes[${index}].Columns[${columnIndex}].Order`] = column.order; data[`Indexes[${index}].Columns[${columnIndex}].Collation`] = column.collation || null; data[`Indexes[${index}].Columns[${columnIndex}].OperatorClass`] = column.operatorClass || null; });
-          item.includeColumns.forEach((column, columnIndex) => { data[`Indexes[${index}].IncludeColumns[${columnIndex}]`] = column; });
+          data.Indexes.push({ Name: item.name, Comment: item.comment || null, Unique: item.unique,
+            NullsNotDistinct: item.nullsNotDistinct, Method: item.method, Condition: item.condition || null,
+            Tablespace: item.tablespace || null, IncludeColumns: item.includeColumns,
+            Columns: item.columns.map(column => ({ Name: column.name, Order: column.order,
+              Collation: column.collation || null, OperatorClass: column.operatorClass || null })) });
         });
         [...document.querySelectorAll(".dg-check-row")].forEach((row, index) => {
           const check = checkRowData(row); if (!check.expression.trim()) throw { responseJSON: { detail: t("designer.checkNeedsExpression", check.name || index + 1) } };
-          data[`Checks[${index}].Name`] = check.name || null; data[`Checks[${index}].Expression`] = check.expression;
+          data.Checks.push({ Name: check.name || null, Expression: check.expression });
         });
         [...document.querySelectorAll(".dg-table-grant-row")].forEach((row, index) => {
           const role = row.querySelector("[data-grant-role]").value;
           const privileges = [...row.querySelectorAll("[data-grant-privilege]:checked")].map(input => input.value);
           if (!role || !privileges.length) throw { responseJSON: { detail: t("designer.grantIncomplete", index + 1) } };
-          data[`Grants[${index}].Role`] = role;
-          privileges.forEach((privilege, privilegeIndex) => { data[`Grants[${index}].Privileges[${privilegeIndex}]`] = privilege; });
+          data.Grants.push({ Role: role, Privileges: privileges });
         });
         if (form.elements.PartitionStrategy.value === "List") [...document.querySelectorAll(".dg-list-partition-row")].forEach((row,index)=>{
           const name=row.querySelector("[data-list-partition-name]").value.trim();const values=row.querySelector("[data-list-partition-values]").value.split(",").map(x=>x.trim()).filter(Boolean);
           if(!name||!values.length)throw{responseJSON:{detail:"Every LIST partition requires a name and at least one value."}};
-          data[`ListPartitions[${index}].Name`]=name;values.forEach((value,valueIndex)=>data[`ListPartitions[${index}].Values[${valueIndex}]`]=value);
+          data.ListPartitions.push({ Name: name, Values: values });
         });
-        const response = await post(definition ? $explorer.data("modify-table-url") : $explorer.data("create-table-url"), data);
+        const response = await jsonPost(definition ? $explorer.data("modify-table-url") : $explorer.data("create-table-url"), data);
         if (response.id) { closeModal(); trackOperation(response); }
         else await finish(response);
       } });

@@ -37,4 +37,5 @@
   <data name="maintenance.modeDependencies" xml:space="preserve"><value>{0} related table(s) and {1} foreign key(s) will be validated transactionally.</value></data>
   <data name="maintenance.modeCascadeFk" xml:space="preserve"><value>Citus will automatically cascade through {0} related table(s) and {1} foreign key(s).</value></data>
   <data name="maintenance.modeQueue" xml:space="preserve"><value>Create and queue conversion</value></data>
+  <data name="designer.columnNeedsName" xml:space="preserve"><value>Column {0} needs a name.</value></data>
 </root>

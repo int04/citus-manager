@@ -37,4 +37,5 @@
   <data name="maintenance.modeDependencies" xml:space="preserve"><value>{0} Table liên quan và {1} Foreign Key sẽ được kiểm tra trong transaction.</value></data>
   <data name="maintenance.modeCascadeFk" xml:space="preserve"><value>Citus sẽ tự động cascade qua {0} Table liên quan và {1} Foreign Key.</value></data>
   <data name="maintenance.modeQueue" xml:space="preserve"><value>Tạo và đưa conversion vào hàng đợi</value></data>
+  <data name="designer.columnNeedsName" xml:space="preserve"><value>Column {0} cần có tên.</value></data>
 </root>

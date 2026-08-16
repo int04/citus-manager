@@ -298,7 +298,7 @@ public sealed class DatabaseController(
         RunMutationAsync(clusterId, () => objects.CreateSchemaAsync(clusterId, request, ActorId(), cancellationToken), created: true);
 
     [HttpPost("Tables"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
-    public async Task<IActionResult> CreateTable(Guid clusterId, CreateTableRequest request, CancellationToken cancellationToken)
+    public async Task<IActionResult> CreateTable(Guid clusterId, [FromBody] CreateTableRequest request, CancellationToken cancellationToken)
     {
         if (request.PartitionStrategy is DatabasePartitionStrategy.List or DatabasePartitionStrategy.Hash)
             return await CreateDatabaseOperationAsync(() => operations.CreatePartitionedTableAsync(clusterId, request, ActorId(), cancellationToken));
@@ -306,7 +306,7 @@ public sealed class DatabaseController(
     }
 
     [HttpPost("Tables/Modify"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
-    public Task<IActionResult> ModifyTable(Guid clusterId, CreateTableRequest request, CancellationToken cancellationToken) =>
+    public Task<IActionResult> ModifyTable(Guid clusterId, [FromBody] CreateTableRequest request, CancellationToken cancellationToken) =>
         RunMutationAsync(clusterId, () => objects.ModifyTableAsync(clusterId, request, ActorId(), cancellationToken));
 
     [HttpPost("Views"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
@@ -705,7 +705,11 @@ public sealed class DatabaseController(
         Guid clusterId, Func<Task<DatabaseMutationResponse>> execute, bool created = false)
     {
         NoStore();
-        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        // A complex form-bound record can leave container entries marked invalid even when
+        // every leaf value bound successfully. In that state IsValid is false while there are
+        // no errors to report, producing a misleading ValidationProblemDetails { errors: {} }.
+        // Only reject mutations when binding or validation recorded an actionable error.
+        if (ModelState.ErrorCount > 0) return BadRequest(new ValidationProblemDetails(ModelState));
         try
         {
             var response = await execute();
@@ -718,7 +722,14 @@ public sealed class DatabaseController(
             return DatabaseMutationProblem(StatusCodes.Status422UnprocessableEntity,
                 text["Problem.DdlExecute.Title"], exception.MessageText, exception.SqlState);
         }
-        catch (ArgumentException) { return InvalidRequest(); }
+        // Mutation services use ArgumentException for bounded, user-correctable
+        // request validation. Preserve that safe message so the designer can show
+        // the field/domain rule that failed instead of the generic invalid-input text.
+        catch (ArgumentException exception)
+        {
+            return DatabaseMutationProblem(StatusCodes.Status400BadRequest,
+                text["Problem.Invalid.Title"], exception.Message);
+        }
         catch (KeyNotFoundException)
         {
             return NotFoundProblem();
