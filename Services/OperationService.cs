@@ -113,7 +113,9 @@ public sealed class OperationService(
         TimeSpan? elapsed = operation.StartedAt.HasValue
             ? (operation.CompletedAt ?? DateTimeOffset.UtcNow) - operation.StartedAt.Value : null;
         var canCancel = operation.Status is OperationStatus.AwaitingApproval or OperationStatus.Approved ||
-                        operation.Status == OperationStatus.Running && operation.Kind is OperationKind.CreateRangePartitions or OperationKind.InspectTable;
+                        operation.Status == OperationStatus.Running &&
+                        (operation.Kind is OperationKind.CreateRangePartitions or OperationKind.InspectTable ||
+                         operation.Kind == OperationKind.MergeRangePartitions && !operation.Steps.Any(x => x.Name == "merge-cutover-started"));
         return new(operation.Id, operation.Kind, operation.Risk, operation.Status, phase, current, total,
             processed, totalBytes, elapsed, canCancel, warning, operation.SafeError, steps,
             resultSchema, resultTable, exactRows, exactBytes);
@@ -127,7 +129,7 @@ public sealed class OperationService(
         var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
         var plan = NewPlan(OperationKind.CreateRangePartitions, inventory, range.Warnings, rangePartitions: range);
         return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.CreateRangePartitions,
-            OperationRisk.Write, plan, autoApprove: true, cancellationToken);
+            OperationRisk.Write, plan, cancellationToken);
     }
 
     public async Task<OperationResponse> CreatePartitionedTableAsync(
@@ -148,12 +150,12 @@ public sealed class OperationService(
         var warnings = new List<string>
         {
             $"This operation creates {count} logical child partitions after the parent and Citus layout.",
-            "Review shard × partition × placement × index relation count before approval."
+            "Review shard × partition × placement × index relation count before queueing."
         };
         var plan = NewPlan(OperationKind.CreatePartitionedTable, inventory, warnings,
             createPartitionedTable: new(request));
         return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.CreatePartitionedTable,
-            OperationRisk.Write, plan, autoApprove: true, cancellationToken);
+            OperationRisk.Write, plan, cancellationToken);
     }
 
     public async Task<OperationResponse> CreateMergePartitionsAsync(
@@ -163,7 +165,7 @@ public sealed class OperationService(
         var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
         var plan = NewPlan(OperationKind.MergeRangePartitions, inventory, merge.Warnings, mergePartitions: merge);
         return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.MergeRangePartitions,
-            OperationRisk.Impact, plan, autoApprove: false, cancellationToken);
+            OperationRisk.Impact, plan, cancellationToken);
     }
 
     public async Task<OperationResponse> CreateInspectTableAsync(
@@ -177,7 +179,7 @@ public sealed class OperationService(
         var inspect = new InspectTablePlan(request.Schema, request.Table, request.ExactRowCount, request.ExactPlacementSizes);
         var plan = NewPlan(OperationKind.InspectTable, inventory, ["Exact inspection can be expensive and remains cancellable."], inspectTable: inspect);
         return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.InspectTable,
-            OperationRisk.Read, plan, autoApprove: true, cancellationToken);
+            OperationRisk.Read, plan, cancellationToken);
     }
 
     public async Task<OperationResponse> CreateRebuildIndexAsync(
@@ -188,7 +190,7 @@ public sealed class OperationService(
         var plan = NewPlan(OperationKind.RebuildIndex, inventory, rebuild.Warnings, rebuildIndex: rebuild);
         return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.RebuildIndex,
             rebuild.Concurrently ? OperationRisk.Impact : OperationRisk.Destructive, plan,
-            autoApprove: rebuild.Concurrently, cancellationToken);
+            cancellationToken);
     }
 
     public async Task<OperationResponse> CreateChangeTableModeAsync(
@@ -198,7 +200,7 @@ public sealed class OperationService(
         var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
         var plan = NewPlan(OperationKind.ChangeTableMode, inventory, change.Warnings, changeTableMode: change);
         return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.ChangeTableMode,
-            OperationRisk.Impact, plan, autoApprove: false, cancellationToken);
+            OperationRisk.Impact, plan, cancellationToken);
     }
 
     public async Task<OperationResponse> CreateAsync(
@@ -244,13 +246,16 @@ public sealed class OperationService(
             ClusterId = clusterId,
             Kind = request.Kind,
             Risk = OperationSafety.RiskFor(request.Kind),
+            Status = OperationStatus.Approved,
             PlanJson = planJson,
             PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
-            RequestedBy = actorId
+            RequestedBy = actorId,
+            ApprovedBy = actorId,
+            ApprovedAt = DateTimeOffset.UtcNow
         };
         db.Operations.Add(operation);
         db.AuditEvents.Add(ClusterService.Audit(actorId, "operation.request", "operation", operation.Id,
-            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash }));
+            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, AutoApproved = true }));
         await db.SaveChangesAsync(cancellationToken);
         return Map(operation);
     }
@@ -313,13 +318,16 @@ public sealed class OperationService(
             ClusterId = clusterId,
             Kind = OperationKind.ConvertTable,
             Risk = OperationRisk.Impact,
+            Status = OperationStatus.Approved,
             PlanJson = planJson,
             PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
-            RequestedBy = actorId
+            RequestedBy = actorId,
+            ApprovedBy = actorId,
+            ApprovedAt = DateTimeOffset.UtcNow
         };
         db.Operations.Add(operation);
         db.AuditEvents.Add(ClusterService.Audit(actorId, "operation.request", "operation", operation.Id,
-            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, request.Schema, request.Table }));
+            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, request.Schema, request.Table, AutoApproved = true }));
         await db.SaveChangesAsync(cancellationToken);
         return Map(operation);
     }
@@ -330,7 +338,7 @@ public sealed class OperationService(
         if (operation.Status != OperationStatus.AwaitingApproval)
             throw new InvalidOperationException("Only an operation awaiting approval can be approved.");
         if (operation.RequestedBy == actorId && !CanRequesterApprove(operation))
-            throw new InvalidOperationException("Requester cannot approve their own operation.");
+            throw new InvalidOperationException("The requester is not permitted to queue this operation.");
         var competing = await db.Operations.AnyAsync(x => x.ClusterId == operation.ClusterId && x.Id != id &&
             (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running ||
              x.Status == OperationStatus.Cancelling), cancellationToken);
@@ -346,18 +354,8 @@ public sealed class OperationService(
         return Map(operation);
     }
 
-    private static bool CanRequesterApprove(ClusterOperation operation)
-    {
-        if (operation.Kind != OperationKind.RebuildIndex) return false;
-        try
-        {
-            return JsonSerializer.Deserialize<OperationPlan>(operation.PlanJson)?.RebuildIndex?.Concurrently == true;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
+    internal static bool CanRequesterApprove(ClusterOperation operation)
+        => Enum.IsDefined(operation.Kind);
 
     public async Task<OperationResponse> CancelAsync(Guid id, Guid actorId, CancellationToken cancellationToken)
     {
@@ -390,14 +388,14 @@ public sealed class OperationService(
         ChangeTableModePlan? changeTableMode = null,
         CreatePartitionedTablePlan? createPartitionedTable = null) =>
         new(kind, null, null, inventory.Capability.CitusVersion, inventory.Capability.Functions,
-            "[]", null, warnings, DateTimeOffset.UtcNow, PlanVersion: 2,
+            "[]", null, warnings, DateTimeOffset.UtcNow, PlanVersion: 3,
             RangePartitions: rangePartitions, MergePartitions: mergePartitions,
             RebuildIndex: rebuildIndex, InspectTable: inspectTable, ChangeTableMode: changeTableMode,
             CreatePartitionedTable: createPartitionedTable);
 
     private async Task<OperationResponse> SavePlannedOperationAsync(
         Guid clusterId, Guid actorId, OperationKind kind, OperationRisk risk, OperationPlan plan,
-        bool autoApprove, CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
     {
         var planJson = JsonSerializer.Serialize(plan);
         var operation = new ClusterOperation
@@ -405,16 +403,16 @@ public sealed class OperationService(
             ClusterId = clusterId,
             Kind = kind,
             Risk = risk,
-            Status = autoApprove ? OperationStatus.Approved : OperationStatus.AwaitingApproval,
+            Status = OperationStatus.Approved,
             PlanJson = planJson,
             PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
             RequestedBy = actorId,
-            ApprovedBy = autoApprove ? actorId : null,
-            ApprovedAt = autoApprove ? DateTimeOffset.UtcNow : null
+            ApprovedBy = actorId,
+            ApprovedAt = DateTimeOffset.UtcNow
         };
         db.Operations.Add(operation);
         db.AuditEvents.Add(ClusterService.Audit(actorId, "operation.request", "operation", operation.Id,
-            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, AutoApproved = autoApprove }));
+            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, AutoApproved = true }));
         await db.SaveChangesAsync(cancellationToken);
         return Map(operation);
     }

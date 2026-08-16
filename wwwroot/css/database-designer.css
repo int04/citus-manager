@@ -1036,3 +1036,40 @@
 .database-action-card.is-table-designer .dg-preview-splitter.is-dragging {
   background: color-mix(in srgb, var(--dg-active) 72%, var(--dg-popup-recessed));
 }
+
+/* Merge preflight acknowledgements need visible explanations, not opaque checkbox labels. */
+.database-impact-confirmation {
+  align-items: flex-start;
+  min-height: 3.5rem;
+  padding-block: .625rem;
+}
+
+.database-impact-confirmation > input {
+  flex: 0 0 auto;
+  margin-top: .125rem;
+}
+
+.database-impact-confirmation > span {
+  display: grid;
+  min-width: 0;
+  gap: .125rem;
+}
+
+.database-impact-confirmation strong {
+  color: #f1dda7;
+  font-size: .75rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+}
+
+.database-impact-confirmation small {
+  color: #c4b98f;
+  font-size: .625rem;
+  font-weight: 400;
+  line-height: 1rem;
+}
+
+.database-merge-preview{border:1px solid var(--line,#46535e);border-radius:8px;background:var(--surface-subtle,#1c232a);padding:10px;color:var(--text,#e5edf3)}
+.database-merge-preview header{display:flex;align-items:flex-start;gap:9px}.database-merge-preview header>div{display:grid;gap:2px}.database-merge-preview header i{margin-top:2px;color:#22c55e}.database-merge-preview header small,.database-merge-preview p,.database-merge-preview li span{color:var(--muted,#9eacb7)}
+.database-merge-preview p{margin:9px 0}.database-merge-preview ul{display:grid;gap:5px;max-height:150px;overflow:auto}.database-merge-preview li{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line,#46535e);padding-top:5px}
+.database-merge-preview.is-blocked{border-color:#b45309;background:rgb(180 83 9/.1)}.database-merge-preview.is-blocked header i{color:#f59e0b}

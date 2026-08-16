@@ -53,6 +53,38 @@ public sealed class OperationSafetyTests
         Assert.Throws<ArgumentException>(() => OperationSafety.ValidateRequest(request));
     }
 
+    [Theory]
+    [InlineData(OperationKind.AddWorker)]
+    [InlineData(OperationKind.Rebalance)]
+    [InlineData(OperationKind.DrainWorker)]
+    [InlineData(OperationKind.RemoveWorker)]
+    [InlineData(OperationKind.ConvertTable)]
+    [InlineData(OperationKind.CreatePartitionedTable)]
+    [InlineData(OperationKind.CreateRangePartitions)]
+    [InlineData(OperationKind.MergeRangePartitions)]
+    [InlineData(OperationKind.InspectTable)]
+    [InlineData(OperationKind.RebuildIndex)]
+    [InlineData(OperationKind.ChangeTableMode)]
+    public void Requester_can_queue_any_legacy_operation_they_were_allowed_to_create(OperationKind kind)
+    {
+        var operation = new ClusterOperation
+        {
+            Kind = kind,
+            PlanJson = "{}",
+            PlanHash = "test"
+        };
+
+        Assert.True(OperationService.CanRequesterApprove(operation));
+    }
+
+    [Fact]
+    public void New_operation_defaults_to_approved_queue_state()
+    {
+        var operation = new ClusterOperation { PlanJson = "{}", PlanHash = "test" };
+
+        Assert.Equal(OperationStatus.Approved, operation.Status);
+    }
+
     private static CreateOperationRequest Request(OperationKind kind, string? host, string? confirmation) => new()
     {
         Kind = kind,

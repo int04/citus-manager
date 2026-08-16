@@ -42,7 +42,7 @@ public sealed class ClusterOperation
     public ClusterProfile? Cluster { get; set; }
     public OperationKind Kind { get; set; }
     public OperationRisk Risk { get; set; }
-    public OperationStatus Status { get; set; } = OperationStatus.AwaitingApproval;
+    public OperationStatus Status { get; set; } = OperationStatus.Approved;
     public required string PlanJson { get; set; }
     public required string PlanHash { get; set; }
     public string? ResultJson { get; set; }

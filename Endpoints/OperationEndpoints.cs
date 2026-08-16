@@ -41,7 +41,7 @@ public static class OperationEndpoints
                 return TypedResults.Accepted($"/api/operations/{operation.Id}", operation);
             })
             .RequireAuthorization("Operator")
-            .WithName("CreateOperation").WithSummary("Create immutable preflight plan awaiting approval");
+            .WithName("CreateOperation").WithSummary("Create, approve, and queue an immutable preflight plan");
 
         group.MapPost("/clusters/{clusterId:guid}/table-conversions", async Task<Accepted<OperationResponse>> (
                 Guid clusterId, CreateTableConversionOperationRequest request, ClaimsPrincipal user,
@@ -58,8 +58,8 @@ public static class OperationEndpoints
         group.MapPost("/{id:guid}/approve", async Task<Ok<OperationResponse>> (
                 Guid id, ClaimsPrincipal user, IOperationService service, CancellationToken cancellationToken) =>
                 TypedResults.Ok(await service.ApproveAsync(id, EndpointUser.Id(user), cancellationToken)))
-            .RequireAuthorization("Admin")
-            .WithName("ApproveOperation").WithSummary("Approve another user's operation");
+            .RequireAuthorization("Operator")
+            .WithName("ApproveOperation").WithSummary("Queue a legacy operation awaiting approval");
 
         group.MapPost("/{id:guid}/cancel", async Task<Ok<OperationResponse>> (
                 Guid id, ClaimsPrincipal user, IOperationService service, CancellationToken cancellationToken) =>

@@ -58,6 +58,7 @@
      data-table-information-exact-url="@Url.Action("InspectTableExact", "Database", new { clusterId = Model.Cluster.Id })"
      data-range-preflight-url="@Url.Action("PreflightRangePartitions", "Database", new { clusterId = Model.Cluster.Id })"
      data-range-operation-url="@Url.Action("CreateRangePartitionsOperation", "Database", new { clusterId = Model.Cluster.Id })"
+     data-merge-preflight-url="@Url.Action("PreflightMergePartitions", "Database", new { clusterId = Model.Cluster.Id })"
      data-merge-operation-url="@Url.Action("CreateMergePartitionsOperation", "Database", new { clusterId = Model.Cluster.Id })"
      data-reindex-operation-url="@Url.Action("CreateRebuildIndexOperation", "Database", new { clusterId = Model.Cluster.Id })"
      data-table-mode-operation-url="@Url.Action("CreateTableModeOperation", "Database", new { clusterId = Model.Cluster.Id })"

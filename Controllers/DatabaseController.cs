@@ -406,7 +406,7 @@ public sealed class DatabaseController(
     {
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
-        try { return Ok(await maintenance.BuildMergePlanAsync(clusterId, request, cancellationToken)); }
+        try { return Ok(await maintenance.PreflightMergeAsync(clusterId, request, cancellationToken)); }
         catch (ArgumentException exception)
         { return DatabaseMutationProblem(400, text["Problem.Invalid.Title"], exception.Message); }
         catch (KeyNotFoundException) { return NotFoundProblem(); }

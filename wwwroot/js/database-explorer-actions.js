@@ -542,9 +542,30 @@
     const url = new URL(explorer.dataset.tableInformationUrl, location.origin); url.searchParams.set("schema", target.schema); url.searchParams.set("name", target.name);
     const response = await fetch(url); if (!response.ok) throw { responseJSON: { detail: await response.text() } }; const info = await response.json();
     const qualified = `${target.schema}.${target.name}`;
-    openModal({ title: t("maintenance.mergeTitle"), eyebrow: "IMPACT · APPROVAL REQUIRED", description: t("maintenance.mergeHelp"),
-      body: `<div class="database-partition-choice">${info.partitions.map(p=>`<label><input type="checkbox" name="Partitions" value="${html(p.name)}"><span><strong>${html(p.name)}</strong><small>${html(p.bound)} · ${Number(p.totalBytes).toLocaleString()} bytes</small></span></label>`).join("")}</div>${field("Target partition",input("TargetPartition",`${target.name}_merged`,"text","required maxlength=63"))}<label class="database-action-check database-impact-check"><input name="Closed" type="checkbox" required> Application no longer writes to these ranges</label><label class="database-action-check database-impact-check"><input name="Acknowledged" type="checkbox" required> Capacity, backup and recovery owner verified</label>${field(`Type ${qualified}`,input("TypedConfirmation","","text","required autocomplete=off"))}`,
-      button: "Create merge plan", danger: true, onSubmit: async()=>{const partitions=[...form.querySelectorAll('input[name="Partitions"]:checked')].map(x=>x.value);if(partitions.length<2)throw{responseJSON:{detail:"Select at least two adjacent partitions."}};const result=await jsonPost(explorer.dataset.mergeOperationUrl,{schema:target.schema,table:target.name,partitions,targetPartition:form.elements.TargetPartition.value,closedForWritesAcknowledged:form.elements.Closed.checked,externalCapacityAndBackupChecksAcknowledged:form.elements.Acknowledged.checked,typedConfirmation:form.elements.TypedConfirmation.value});closeModal();trackOperation(result);} });
+    let preflight = null;
+    const acknowledgement = (name, labelKey, helpKey) => `<label class="database-action-check database-impact-check database-impact-confirmation"><input name="${name}" type="checkbox" required><span><strong>${html(t(labelKey))}</strong><small>${html(t(helpKey))}</small></span></label>`;
+    openModal({ title: t("maintenance.mergeTitle"), eyebrow: t("maintenance.mergeAutoQueue"), description: t("maintenance.mergeHelp"),
+      body: `<div class="database-partition-choice">${info.partitions.map(p=>`<label><input type="checkbox" name="Partitions" value="${html(p.name)}"><span><strong>${html(p.name)}</strong><small>${html(p.bound)} · ${Number(p.totalBytes).toLocaleString()} bytes</small></span></label>`).join("")}</div>${field(t("maintenance.targetPartition"),input("TargetPartition",`${target.name}_merged`,"text","required maxlength=63"))}${acknowledgement("Closed", "maintenance.mergeClosedLabel", "maintenance.mergeClosedHelp")}${acknowledgement("Acknowledged", "maintenance.mergeRecoveryLabel", "maintenance.mergeRecoveryHelp")}${field(t("designer.typeToConfirm", qualified),input("TypedConfirmation","","text","required autocomplete=off"))}<div id="database-merge-preview" class="database-merge-preview hidden"></div>`,
+      button: t("maintenance.preview"), danger: true, onSubmit: async()=>{
+        const partitions=[...form.querySelectorAll('input[name="Partitions"]:checked')].map(x=>x.value);
+        if(partitions.length<2)throw{responseJSON:{detail:t("maintenance.selectAdjacent")}};
+        const body={schema:target.schema,table:target.name,partitions,targetPartition:form.elements.TargetPartition.value,closedForWritesAcknowledged:form.elements.Closed.checked,externalCapacityAndBackupChecksAcknowledged:form.elements.Acknowledged.checked,typedConfirmation:form.elements.TypedConfirmation.value};
+        if(!preflight){
+          preflight=await jsonPost(explorer.dataset.mergePreflightUrl,body);
+          const preview=document.getElementById("database-merge-preview");preview.classList.remove("hidden");
+          const sources=(preflight.sources||[]).map(source=>`<li><strong>${html(source.name)}</strong><span>${Number(source.estimatedRows).toLocaleString()} rows · ${Number(source.bytes).toLocaleString()} bytes</span></li>`).join("");
+          preview.classList.toggle("is-blocked",!preflight.canExecute);
+          const layout=preflight.citusVersion
+            ? preflight.mode === "Reference"
+              ? `${preflight.mode} · Citus ${preflight.citusVersion} · ${preflight.placementCount} replicated placements`
+              : `${preflight.mode} · Citus ${preflight.citusVersion} · ${preflight.shardCount} shards · ${preflight.placementCount} placements · colocation ${preflight.colocationId}`
+            : `${preflight.mode} · PostgreSQL local`;
+          preview.innerHTML=preflight.canExecute?`<header><i class="fa fa-check-circle"></i><div><strong>${html(t("maintenance.preflightReady"))}</strong><small>${html(layout)}</small></div></header><p>${html(t("maintenance.temporaryCapacity",Number(preflight.temporaryBytes).toLocaleString()))}</p><ul>${sources}</ul>`:`<header><i class="fa fa-ban"></i><div><strong>${html(t("maintenance.preflightBlocked"))}</strong><small>${html(preflight.blockedReason||t("action.databaseFailed"))}</small></div></header>`;
+          submit.textContent=t("maintenance.createMergeOperation");submit.disabled=!preflight.canExecute;return;
+        }
+        const result=await jsonPost(explorer.dataset.mergeOperationUrl,body);closeModal();trackOperation(result);
+      } });
+    form.addEventListener("input",()=>{if(preflight){preflight=null;submit.textContent=t("maintenance.preview");submit.disabled=false;document.getElementById("database-merge-preview")?.classList.add("hidden");}});
   }
 
   async function openRebuildIndex(schema, table, index) {

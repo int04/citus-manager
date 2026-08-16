@@ -8,7 +8,7 @@
 <div class="two-column">
     <section class="panel"><h2>@T["Approval"]</h2><dl class="detail-list"><div><dt>@T["RequestedBy"]</dt><dd><code>@Model.RequestedBy</code></dd></div><div><dt>@T["ApprovedBy"]</dt><dd><code>@(Model.ApprovedBy?.ToString() ?? T["Pending"])</code></dd></div><div><dt>@T["Started"]</dt><dd>@(Model.StartedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div><div><dt>@T["Completed"]</dt><dd>@(Model.CompletedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div></dl>
     <div class="form-actions">
-        @if (Model.Status == OperationStatus.AwaitingApproval && User.IsInRole("Admin")) { <form asp-action="Approve" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-primary" type="submit">@T["Approve"]</button></form> }
+        @if (Model.Status == OperationStatus.AwaitingApproval && (User.IsInRole("Admin") || User.IsInRole("Operator"))) { <form asp-action="Approve" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-primary" type="submit">@T["Approve"]</button></form> }
         @if (Model.Status is OperationStatus.AwaitingApproval or OperationStatus.Approved or OperationStatus.Running) { <form asp-action="Cancel" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-danger" type="submit">@T["Cancel"]</button></form> }
     </div></section>
     <section class="panel"><h2>@T["Plan"]</h2><pre class="json-block">@Pretty(Model.PlanJson)</pre></section>

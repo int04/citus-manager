@@ -37,7 +37,7 @@ public sealed class OperationsController(IOperationService operations, IStringLo
         }
     }
 
-    [HttpPost, Authorize(Policy = "Admin"), ValidateAntiForgeryToken]
+    [HttpPost, Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
     public async Task<IActionResult> Approve(Guid id, CancellationToken cancellationToken)
     {
         try

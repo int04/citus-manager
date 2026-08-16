@@ -102,7 +102,7 @@ public sealed class OperationExecutor(
                 operation.Id, exception.GetType().Name, (exception as PostgresException)?.SqlState);
             operation.Status = operation.Kind == OperationKind.RemoveWorker ||
                                (operation.Kind == OperationKind.ConvertTable && HasStep(operation, "table-preflight")) ||
-                               (operation.Kind == OperationKind.MergeRangePartitions && HasStep(operation, "merge-stage-created")) ||
+                               (operation.Kind == OperationKind.MergeRangePartitions && HasStep(operation, "merge-cutover-started")) ||
                                (operation.Kind == OperationKind.RebuildIndex &&
                                 operation.Steps.Any(x => x.Name == "reindex-started")) ||
                                (operation.Kind == OperationKind.ChangeTableMode && HasStep(operation, "mode-change-started"))
@@ -360,12 +360,28 @@ public sealed class OperationExecutor(
         }
         await SaveStepAsync(operation, "merge-preflight", "Succeeded",
             $"sources={merge.Partitions.Count}; estimated_rows={merge.EstimatedRows}; bytes={merge.Bytes}", cancellationToken);
-        await maintenance.ExecuteMergeAsync(cluster, merge, async (name, detail) =>
+        var completedItems = 0;
+        long processedBytes = 0;
+        var completed = await maintenance.ExecuteMergeAsync(cluster, merge, async (name, detail) =>
         {
             await SaveStepAsync(operation, name, "Succeeded", detail, cancellationToken);
-            operation.ResultJson = JsonSerializer.Serialize(new { processedBytes = merge.Bytes, totalBytes = merge.Bytes, warning = merge.Warnings.FirstOrDefault() });
+            if (name.StartsWith("merge-copy-", StringComparison.Ordinal) &&
+                int.TryParse(name["merge-copy-".Length..], out var parsed))
+            {
+                completedItems = parsed;
+                processedBytes = merge.Sources is not null ? merge.Sources.Take(completedItems).Sum(x => x.Bytes) : 0;
+            }
+            operation.ResultJson = JsonSerializer.Serialize(new { currentItems = completedItems, totalItems = merge.Partitions.Count,
+                processedBytes, totalBytes = merge.Bytes, warning = merge.Warnings.FirstOrDefault() });
             operation.Version++; await db.SaveChangesAsync(cancellationToken);
-        }, cancellationToken);
+        }, async () => await db.Operations.AsNoTracking().Where(x => x.Id == operation.Id)
+            .Select(x => x.Status == OperationStatus.Cancelling).SingleAsync(cancellationToken), cancellationToken);
+        if (!completed)
+        {
+            operation.Status = OperationStatus.Cancelled; operation.CompletedAt = DateTimeOffset.UtcNow; operation.Version++;
+            await SaveStepAsync(operation, "cancel", "Succeeded", "Cancelled before distributed merge cutover.", cancellationToken);
+            return;
+        }
         await CompleteAsync(operation, new { merge.Schema, merge.Table, merge.TargetPartition, sourcePartitionsRetained = true }, cancellationToken);
     }
 

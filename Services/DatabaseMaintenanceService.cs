@@ -20,7 +20,29 @@ public sealed record RangePartitionPlan(
 public sealed record MergePartitionPlan(
     string Schema, string Table, IReadOnlyList<string> Partitions, string TargetPartition,
     string CatalogFingerprint, long EstimatedRows, long Bytes, string FromBound, string ToBound,
-    string DatabaseTimeZone, bool Distributed, IReadOnlyList<string> Warnings);
+    string DatabaseTimeZone, bool Distributed, IReadOnlyList<string> Warnings,
+    int MergePlanVersion = 1, MergeDistributionLayoutPlan? DistributionLayout = null,
+    IReadOnlyList<MergePartitionSourcePlan>? Sources = null,
+    IReadOnlyList<string>? CopyColumns = null, bool HasIdentityAlways = false,
+    string? PartitionKey = null, string? PartitionKeyType = null,
+    string? StagingTable = null, string? RecoverySuffix = null,
+    DatabaseTableMode TableMode = DatabaseTableMode.Local,
+    MergeReferenceLayoutPlan? ReferenceLayout = null);
+
+public sealed record MergeDistributionLayoutPlan(
+    uint ParentOid, string CitusVersion, string DistributionColumn, string DistributionColumnType,
+    int ColocationId, int ShardCount, string ReplicationModel, int PlacementCount, string AccessMethod,
+    string PlacementSignature);
+
+public sealed record MergeReferenceLayoutPlan(
+    uint ParentOid, string CitusVersion, string ReplicationModel,
+    int ShardCount, int PlacementCount, int ActivePrimaryCount,
+    string AccessMethod, string PlacementSignature);
+
+public sealed record MergePartitionSourcePlan(
+    uint Oid, string Name, string Bound, string FromBound, string ToBound,
+    string AccessMethod, long EstimatedRows, long Bytes,
+    string IndexSignature = "", string ConstraintSignature = "");
 
 public sealed record RebuildIndexPlan(
     string Schema, string Table, string Index, bool Concurrently, string CatalogFingerprint,
@@ -52,7 +74,9 @@ public interface IDatabaseMaintenanceService
     Task<RangePartitionPlan> BuildRangePlanAsync(Guid clusterId, CreateRangePartitionsRequest request, CancellationToken cancellationToken);
     Task ExecuteRangePartitionAsync(ClusterProfile cluster, RangePartitionPlan plan, PartitionRangePreviewItemResponse item, CancellationToken cancellationToken);
     Task<MergePartitionPlan> BuildMergePlanAsync(Guid clusterId, MergeRangePartitionsRequest request, CancellationToken cancellationToken);
-    Task ExecuteMergeAsync(ClusterProfile cluster, MergePartitionPlan plan, Func<string, string, Task> checkpoint, CancellationToken cancellationToken);
+    Task<MergePartitionPreflightResponse> PreflightMergeAsync(Guid clusterId, MergeRangePartitionsRequest request, CancellationToken cancellationToken);
+    Task<bool> ExecuteMergeAsync(ClusterProfile cluster, MergePartitionPlan plan, Func<string, string, Task> checkpoint,
+        Func<Task<bool>> cancellationRequested, CancellationToken cancellationToken);
     Task<RebuildIndexPlan> BuildReindexPlanAsync(Guid clusterId, RebuildIndexRequest request, CancellationToken cancellationToken);
     Task ExecuteReindexAsync(ClusterProfile cluster, RebuildIndexPlan plan,
         Func<string, string, Task>? checkpoint, CancellationToken cancellationToken);
@@ -337,26 +361,141 @@ public sealed partial class DatabaseMaintenanceService(
         var latest = parsed[^1].Bound!.To;
         if (latest > DateTimeOffset.UtcNow.AddHours(-24)) throw new ArgumentException("Selected partitions are inside the 24-hour closed-window.");
         var fingerprint = await ReadFingerprintAsync(cluster, request.Schema, request.Table, cancellationToken);
-        var warnings = new List<string> { "Sources are retained after cutover and require a separate cleanup operation." };
+        var warnings = new List<string> { "Sources are retained with recovery names after cutover and require a separate cleanup operation." };
+        var catalog = await ReadMergeCatalogAsync(connection, request.Schema, request.Table, selected.Select(x => x.Name).ToArray(), cancellationToken);
+        if (catalog.Sources.Any(x => x.HasChildren)) throw new InvalidOperationException("Only direct leaf RANGE partitions can be merged.");
+        if (catalog.Sources.Select(x => x.AccessMethod).Distinct(StringComparer.Ordinal).Count() != 1)
+            throw new InvalidOperationException("Selected partitions must use the same access method.");
+        if (catalog.Sources.Any(x => !x.IndexesValid) || catalog.Sources.Select(x => x.IndexSignature).Distinct(StringComparer.Ordinal).Count() != 1 ||
+            catalog.Sources.Select(x => x.ConstraintSignature).Distinct(StringComparer.Ordinal).Count() != 1)
+            throw new InvalidOperationException("Selected partitions must have identical valid index and constraint layouts.");
+        if (catalog.Sources.Select(x => x.PlacementSignature).Distinct(StringComparer.Ordinal).Count() != 1)
+            throw new InvalidOperationException("Selected partitions do not have identical shard placement layouts.");
+        MergeDistributionLayoutPlan? layout = null;
+        MergeReferenceLayoutPlan? referenceLayout = null;
         if (info.Mode == DatabaseTableMode.Distributed)
-            warnings.Add("Distributed merge remains capability-gated and requires identical colocation and shard layout.");
+        {
+            var major = ParseCitusMajor(catalog.CitusVersion);
+            if (major != 14) throw new InvalidOperationException($"Distributed partition merge is integration-tested only for Citus 14.x; installed version is {catalog.CitusVersion}.");
+            if (!catalog.HasCreateDistributedTable) throw new InvalidOperationException("Installed Citus lacks the required create_distributed_table signature.");
+            if (string.IsNullOrWhiteSpace(catalog.DistributionColumn)) throw new InvalidOperationException("The parent distribution column could not be resolved.");
+            foreach (var child in catalog.Sources)
+            {
+                if (!child.Distributed || child.ColocationId != catalog.ColocationId || child.ShardCount != catalog.ShardCount ||
+                    !string.Equals(child.ReplicationModel, catalog.ReplicationModel, StringComparison.Ordinal) ||
+                    !string.Equals(child.DistributionColumn, catalog.DistributionColumn, StringComparison.Ordinal) ||
+                    child.PlacementCount != catalog.PlacementCount)
+                    throw new InvalidOperationException($"Partition {child.Name} does not match the parent Citus colocation, shard, replication, or placement layout.");
+            }
+            layout = new(catalog.ParentOid, catalog.CitusVersion, catalog.DistributionColumn!, catalog.DistributionColumnType!,
+                catalog.ColocationId, catalog.ShardCount, catalog.ReplicationModel ?? string.Empty,
+                catalog.PlacementCount, catalog.Sources[0].AccessMethod, catalog.Sources[0].PlacementSignature);
+            warnings.Add("A colocated distributed staging table will be created; selected source partitions remain available after cutover.");
+        }
+        else if (info.Mode == DatabaseTableMode.Reference)
+        {
+            var major = ParseCitusMajor(catalog.CitusVersion);
+            if (major != 14) throw new InvalidOperationException($"Reference partition merge is integration-tested only for Citus 14.x; installed version is {catalog.CitusVersion}.");
+            if (!catalog.HasCreateReferenceTable) throw new InvalidOperationException("Installed Citus lacks the required create_reference_table signature.");
+            if (catalog.ParentPartMethod != "n") throw new InvalidOperationException("The parent is not registered as a Citus reference table.");
+            if (catalog.ActivePrimaryCount <= 0) throw new InvalidOperationException("No active Citus worker is available for reference-table replication.");
+            foreach (var child in catalog.Sources)
+            {
+                if (!child.Reference || child.ShardCount != 1 || !child.AllPlacementsActive ||
+                    !string.Equals(child.ReplicationModel, catalog.ReplicationModel, StringComparison.Ordinal) ||
+                    child.PlacementCount != catalog.ActivePrimaryCount)
+                    throw new InvalidOperationException($"Partition {child.Name} is not a fully replicated Citus reference partition on every active worker.");
+            }
+            referenceLayout = new(catalog.ParentOid, catalog.CitusVersion, catalog.ReplicationModel ?? string.Empty,
+                1, catalog.ActivePrimaryCount, catalog.ActivePrimaryCount,
+                catalog.Sources[0].AccessMethod, catalog.Sources[0].PlacementSignature);
+            warnings.Add("A Citus reference staging table will be replicated to every active worker; selected source partitions remain available after cutover.");
+        }
+        var sourcePlans = parsed.Select(entry =>
+        {
+            var sourceCatalog = catalog.Sources.Single(x => x.Name == entry.Item.Name);
+            return new MergePartitionSourcePlan(sourceCatalog.Oid, entry.Item.Name, entry.Item.Bound,
+                entry.Bound!.From.ToString("O", CultureInfo.InvariantCulture), entry.Bound.To.ToString("O", CultureInfo.InvariantCulture),
+                sourceCatalog.AccessMethod, entry.Item.ExactRows ?? entry.Item.EstimatedRows,
+                entry.Item.ExactTotalBytes ?? entry.Item.TotalBytes,
+                sourceCatalog.IndexSignature, sourceCatalog.ConstraintSignature);
+        }).ToList();
+        var operationTag = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{request.Schema}.{request.Table}:{request.TargetPartition}:{fingerprint}")))[..10].ToLowerInvariant();
+        var staging = BuildMergeObjectName(request.TargetPartition, "cmstg", operationTag);
+        var recoverySuffix = $"cmold_{operationTag}";
+        if (await RelationExistsAsync(connection, request.Schema, request.TargetPartition, cancellationToken))
+            throw new InvalidOperationException("Target partition name already exists.");
+        if (await RelationExistsAsync(connection, request.Schema, staging, cancellationToken))
+            throw new InvalidOperationException("A staging relation for this merge already exists. Review the previous operation before retrying.");
+        for (var index = 0; index < sourcePlans.Count; index++)
+        {
+            var recoveryName = BuildMergeObjectName(sourcePlans[index].Name, recoverySuffix, (index + 1).ToString(CultureInfo.InvariantCulture));
+            if (await RelationExistsAsync(connection, request.Schema, recoveryName, cancellationToken))
+                throw new InvalidOperationException($"Recovery relation name {recoveryName} already exists.");
+        }
         return new(request.Schema, request.Table, request.Partitions, request.TargetPartition, fingerprint,
-            selected.Sum(x => x.EstimatedRows), selected.Sum(x => x.TotalBytes),
+            sourcePlans.Sum(x => x.EstimatedRows), sourcePlans.Sum(x => x.Bytes),
             parsed[0].Item.Bound, parsed[^1].Item.Bound, databaseTimeZone,
-            info.Mode == DatabaseTableMode.Distributed, warnings);
+            info.Mode == DatabaseTableMode.Distributed, warnings, 3, layout, sourcePlans,
+            catalog.CopyColumns, catalog.HasIdentityAlways, catalog.PartitionKey, catalog.PartitionKeyType,
+            staging, recoverySuffix, info.Mode, referenceLayout);
     }
 
-    public async Task ExecuteMergeAsync(
-        ClusterProfile cluster, MergePartitionPlan plan, Func<string, string, Task> checkpoint,
-        CancellationToken cancellationToken)
+    public async Task<MergePartitionPreflightResponse> PreflightMergeAsync(
+        Guid clusterId, MergeRangePartitionsRequest request, CancellationToken cancellationToken)
     {
-        if (plan.Distributed)
-            throw new InvalidOperationException("Installed Citus merge capability was not proven safe for this distributed partition tree.");
+        var info = await GetTableInformationAsync(clusterId, request.Schema, request.Table, cancellationToken);
+        try
+        {
+            var plan = await BuildMergePlanAsync(clusterId, request, cancellationToken);
+            return new(plan.Schema, plan.Table, info.Mode, true, null, info.DistributionColumn, info.ShardCount,
+                info.ColocationId, info.ReplicationModel, plan.DistributionLayout?.PlacementCount ?? plan.ReferenceLayout?.PlacementCount ?? 0,
+                plan.DistributionLayout?.CitusVersion ?? plan.ReferenceLayout?.CitusVersion ?? string.Empty, plan.EstimatedRows, plan.Bytes,
+                checked(plan.Bytes * 2), plan.Sources!.Select(x => new MergePartitionSourceResponse(
+                    x.Name, x.Bound, x.AccessMethod, x.EstimatedRows, x.Bytes)).ToList(), plan.Warnings);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            return new(request.Schema, request.Table, info.Mode, false, exception.Message, info.DistributionColumn,
+                info.ShardCount, info.ColocationId, info.ReplicationModel, 0, string.Empty, 0, 0, 0, [], []);
+        }
+        catch (PostgresException exception)
+        {
+            return new(request.Schema, request.Table, info.Mode, false,
+                $"Citus/PostgreSQL preflight failed (SQLSTATE {exception.SqlState}): {exception.MessageText}",
+                info.DistributionColumn, info.ShardCount, info.ColocationId, info.ReplicationModel,
+                0, string.Empty, 0, 0, 0, [], []);
+        }
+        catch (NpgsqlException)
+        {
+            return new(request.Schema, request.Table, info.Mode, false,
+                "Could not read the Citus partition layout. Verify coordinator connectivity and retry.",
+                info.DistributionColumn, info.ShardCount, info.ColocationId, info.ReplicationModel,
+                0, string.Empty, 0, 0, 0, [], []);
+        }
+    }
+
+    public async Task<bool> ExecuteMergeAsync(
+        ClusterProfile cluster, MergePartitionPlan plan, Func<string, string, Task> checkpoint,
+        Func<Task<bool>> cancellationRequested, CancellationToken cancellationToken)
+    {
+        if (plan.Distributed && (plan.MergePlanVersion < 2 || plan.DistributionLayout is null || plan.Sources is null ||
+                                 plan.CopyColumns is null || string.IsNullOrWhiteSpace(plan.StagingTable)))
+            throw new InvalidOperationException("This distributed merge plan predates safe layout snapshots. Create a new operation.");
+        if (!plan.Distributed && plan.MergePlanVersion < 3)
+            throw new InvalidOperationException("This merge plan predates explicit Local/Reference mode snapshots. Create a new operation.");
+        if (plan.TableMode == DatabaseTableMode.Reference &&
+            (plan.MergePlanVersion < 3 || plan.ReferenceLayout is null || plan.Sources is null ||
+             plan.CopyColumns is null || string.IsNullOrWhiteSpace(plan.StagingTable)))
+            throw new InvalidOperationException("This reference merge plan predates safe replica snapshots. Create a new operation.");
         await using var connection = connections.Create(cluster); await connection.OpenAsync(cancellationToken);
         var fingerprint = await ReadFingerprintAsync(connection, plan.Schema, plan.Table, cancellationToken);
         if (!string.Equals(fingerprint, plan.CatalogFingerprint, StringComparison.Ordinal))
-            throw new InvalidOperationException("Partition catalog changed after approval.");
+            throw new InvalidOperationException("Partition catalog changed after the merge plan was created.");
+        if (plan.Distributed || plan.TableMode == DatabaseTableMode.Reference)
+            return await ExecuteDistributedMergeAsync(connection, plan, checkpoint, cancellationRequested, cancellationToken);
         var source = plan.Partitions.Select(x => Qualified(plan.Schema, x)).ToArray();
+        var sourceMetrics = await ReadMergeSourceMetricsAsync(connection, plan, false, null, checkpoint, cancellationToken);
         var staging = plan.TargetPartition + "__cm_stage";
         DatabaseObjectDdlSafety.ValidateIdentifier(staging, nameof(plan.TargetPartition));
         var first = ParseRangeBound(plan.FromBound, plan.DatabaseTimeZone) ?? throw new InvalidOperationException("Approved lower bound is invalid.");
@@ -386,6 +525,10 @@ public sealed partial class DatabaseMaintenanceService(
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
+        var mergedMetrics = await ReadMergeRelationMetricsAsync(connection, plan.Schema, plan.TargetPartition, false, null, cancellationToken);
+        ValidateFinalMergeMetrics(sourceMetrics, mergedMetrics);
+        await checkpoint("merge-final-metrics", FormatFinalMergeMetrics(sourceMetrics, mergedMetrics, "postgresql_total"));
+        return true;
     }
 
     public async Task<RebuildIndexPlan> BuildReindexPlanAsync(
@@ -1141,14 +1284,428 @@ public sealed partial class DatabaseMaintenanceService(
         catch (InvalidTimeZoneException) { return instant.ToUniversalTime(); }
     }
 
-    private static async Task<string> ReadFingerprintAsync(NpgsqlConnection connection, string schema, string table, CancellationToken token)
+    private async Task<bool> ExecuteDistributedMergeAsync(
+        NpgsqlConnection connection, MergePartitionPlan plan, Func<string, string, Task> checkpoint,
+        Func<Task<bool>> cancellationRequested, CancellationToken token)
+    {
+        var distributedLayout = plan.DistributionLayout;
+        var referenceLayout = plan.ReferenceLayout;
+        var isReference = plan.TableMode == DatabaseTableMode.Reference;
+        var sources = plan.Sources!;
+        var staging = plan.StagingTable!;
+        var columns = string.Join(",", plan.CopyColumns!.Select(Quote));
+        var identityOverride = plan.HasIdentityAlways ? " OVERRIDING SYSTEM VALUE" : string.Empty;
+        var accessMethod = Quote(isReference ? referenceLayout!.AccessMethod : distributedLayout!.AccessMethod);
+        var sizeFunction = await ReadCompatibleSizeFunctionAsync(connection,
+            ["citus_total_relation_size", "citus_table_size"], token);
+        var sizeScope = sizeFunction?.EndsWith(".citus_total_relation_size", StringComparison.Ordinal) == true
+            ? "citus_total"
+            : sizeFunction is null ? "unavailable" : "citus_table_data_only";
+        var sourceMetrics = await ReadMergeSourceMetricsAsync(connection, plan, true, sizeFunction, checkpoint, token);
+        await ExecuteAsync(connection,
+            $"CREATE TABLE {Qualified(plan.Schema, staging)} (LIKE {Qualified(plan.Schema, plan.Table)} INCLUDING ALL) USING {accessMethod}",
+            token);
+        await checkpoint("merge-stage-created", $"Created {plan.Schema}.{staging}.");
+
+        await using (var distribute = new NpgsqlCommand(isReference
+            ? "SELECT create_reference_table($1::regclass)"
+            : "SELECT create_distributed_table($1::regclass,$2,colocate_with=>$3)", connection)
+            { CommandTimeout = options.MergeCommandTimeoutSeconds })
+        {
+            distribute.Parameters.AddWithValue($"{plan.Schema}.{staging}");
+            if (!isReference)
+            {
+                distribute.Parameters.AddWithValue(distributedLayout!.DistributionColumn);
+                distribute.Parameters.AddWithValue($"{plan.Schema}.{plan.Table}");
+            }
+            await distribute.ExecuteNonQueryAsync(token);
+        }
+        if (isReference)
+        {
+            await ValidateReferenceLayoutAsync(connection, plan.Schema, staging, referenceLayout!, token);
+            await checkpoint("merge-stage-reference", $"reference replicas={referenceLayout!.PlacementCount}; active_workers={referenceLayout.ActivePrimaryCount}");
+        }
+        else
+        {
+            await ValidateDistributedLayoutAsync(connection, plan.Schema, staging, distributedLayout!, token);
+            await checkpoint("merge-stage-distributed", $"colocation={distributedLayout!.ColocationId}; shards={distributedLayout.ShardCount}; placements={distributedLayout.PlacementCount}");
+        }
+
+        var firstSource = sources[0];
+        await using (var explain = new NpgsqlCommand(
+            $"EXPLAIN (FORMAT JSON) INSERT INTO {Qualified(plan.Schema, staging)} ({columns}){identityOverride} SELECT {columns} FROM {Qualified(plan.Schema, firstSource.Name)}",
+            connection) { CommandTimeout = options.CommandTimeoutSeconds })
+            _ = await explain.ExecuteScalarAsync(token);
+        await checkpoint("merge-copy-plan", "Citus accepted the colocated INSERT … SELECT plan.");
+
+        long processedBytes = 0;
+        for (var index = 0; index < sources.Count; index++)
+        {
+            if (await cancellationRequested())
+            {
+                await ExecuteAsync(connection, $"DROP TABLE {Qualified(plan.Schema, staging)}", token);
+                await checkpoint("merge-cancel-cleanup", "Citus staging table removed; source partitions were not changed.");
+                return false;
+            }
+            var source = sources[index];
+            var from = DatabaseObjectDdlSafety.QuoteLiteral(source.FromBound);
+            var to = DatabaseObjectDdlSafety.QuoteLiteral(source.ToBound);
+            await using var copyTransaction = await connection.BeginTransactionAsync(token);
+            try
+            {
+                await ExecuteAsync(connection,
+                    $"DELETE FROM {Qualified(plan.Schema, staging)} WHERE {Quote(plan.PartitionKey!)} >= {from}::{plan.PartitionKeyType} AND {Quote(plan.PartitionKey!)} < {to}::{plan.PartitionKeyType}",
+                    token, copyTransaction);
+                await ExecuteAsync(connection,
+                    $"INSERT INTO {Qualified(plan.Schema, staging)} ({columns}){identityOverride} SELECT {columns} FROM {Qualified(plan.Schema, source.Name)}",
+                    token, copyTransaction);
+                await copyTransaction.CommitAsync(token);
+            }
+            catch
+            {
+                await copyTransaction.RollbackAsync(CancellationToken.None);
+                throw;
+            }
+            var sourceMetric = sourceMetrics.Single(x => x.Name == source.Name);
+            var copiedMetric = await ValidateCopiedRangeAsync(connection, plan, source, sourceMetric, token);
+            processedBytes += source.Bytes;
+            await checkpoint($"merge-copy-{index + 1}",
+                $"partition={source.Name}; item={index + 1}/{sources.Count}; source_rows={sourceMetric.Count}; staging_rows={copiedMetric.Count}; source_bytes={FormatNullableBytes(sourceMetric.Bytes)}; processed_bytes={processedBytes}");
+        }
+
+        await checkpoint("merge-validation", "Exact row counts and two row-hash aggregates match for every source range.");
+        await using var cutover = await connection.BeginTransactionAsync(token);
+        try
+        {
+            await using (var settings = new NpgsqlCommand("SELECT set_config('lock_timeout',$1,true), pg_advisory_xact_lock(hashtextextended($2,0))", connection, cutover))
+            {
+                settings.Parameters.AddWithValue($"{options.MergeLockTimeoutSeconds}s");
+                settings.Parameters.AddWithValue($"citus-manager:merge:{plan.Schema}.{plan.Table}");
+                await settings.ExecuteNonQueryAsync(token);
+            }
+            await checkpoint("merge-cutover-started", "Cancel disabled; waiting for the parent maintenance lock.");
+            await ExecuteAsync(connection, $"LOCK TABLE {Qualified(plan.Schema, plan.Table)} IN ACCESS EXCLUSIVE MODE", token, cutover);
+            var currentFingerprint = await ReadFingerprintAsync(connection, plan.Schema, plan.Table, token, cutover);
+            if (!string.Equals(currentFingerprint, plan.CatalogFingerprint, StringComparison.Ordinal))
+                throw new InvalidOperationException("Partition catalog changed before cutover.");
+            foreach (var source in sources)
+                await ExecuteAsync(connection, $"ALTER TABLE {Qualified(plan.Schema, plan.Table)} DETACH PARTITION {Qualified(plan.Schema, source.Name)}", token, cutover);
+            for (var index = 0; index < sources.Count; index++)
+            {
+                var recoveryName = BuildMergeObjectName(sources[index].Name, plan.RecoverySuffix!, (index + 1).ToString(CultureInfo.InvariantCulture));
+                await ExecuteAsync(connection, $"ALTER TABLE {Qualified(plan.Schema, sources[index].Name)} RENAME TO {Quote(recoveryName)}", token, cutover);
+            }
+            var first = DatabaseObjectDdlSafety.QuoteLiteral(sources[0].FromBound);
+            var last = DatabaseObjectDdlSafety.QuoteLiteral(sources[^1].ToBound);
+            await ExecuteAsync(connection,
+                $"ALTER TABLE {Qualified(plan.Schema, plan.Table)} ATTACH PARTITION {Qualified(plan.Schema, staging)} FOR VALUES FROM ({first}::{plan.PartitionKeyType}) TO ({last}::{plan.PartitionKeyType})",
+                token, cutover);
+            await ExecuteAsync(connection, $"ALTER TABLE {Qualified(plan.Schema, staging)} RENAME TO {Quote(plan.TargetPartition)}", token, cutover);
+            await cutover.CommitAsync(token);
+        }
+        catch
+        {
+            await cutover.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        await ValidateAttachedTargetAsync(connection, plan, token);
+        var mergedMetrics = await ReadMergeRelationMetricsAsync(connection, plan.Schema, plan.TargetPartition,
+            true, sizeFunction, token);
+        ValidateFinalMergeMetrics(sourceMetrics, mergedMetrics);
+        await checkpoint("merge-cutover", isReference
+            ? "Merged reference partition attached; detached sources retained with recovery names."
+            : "Merged distributed partition attached; detached sources retained with recovery names.");
+        await checkpoint("merge-final-metrics", FormatFinalMergeMetrics(sourceMetrics, mergedMetrics, sizeScope));
+        await checkpoint("merge-post-validation", "Partition bound, Citus layout, shards, placements, indexes, constraints, exact row count, and row hashes validated.");
+        return true;
+    }
+
+    private async Task ValidateDistributedLayoutAsync(NpgsqlConnection connection, string schema, string table,
+        MergeDistributionLayoutPlan expected, CancellationToken token)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT dp.colocationid, dp.repmodel::text,
+                   column_to_column_name(dp.logicalrelid,dp.partkey),
+                   count(DISTINCT s.shardid)::int, count(p.placementid)::int,
+                   COALESCE(md5(string_agg(COALESCE(s.shardminvalue,'')||':'||COALESCE(s.shardmaxvalue,'')||':'||COALESCE(p.groupid,0)::text,',' ORDER BY s.shardminvalue,s.shardmaxvalue,p.groupid)),md5(''))
+            FROM pg_dist_partition dp
+            LEFT JOIN pg_dist_shard s ON s.logicalrelid=dp.logicalrelid
+            LEFT JOIN pg_dist_placement p ON p.shardid=s.shardid
+            WHERE dp.logicalrelid=to_regclass(format('%I.%I',$1,$2))
+            GROUP BY dp.colocationid,dp.repmodel,dp.logicalrelid,dp.partkey
+            """, connection) { CommandTimeout = options.CommandTimeoutSeconds };
+        command.Parameters.AddWithValue(schema); command.Parameters.AddWithValue(table);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token) || reader.GetInt32(0) != expected.ColocationId ||
+            reader.GetString(1) != expected.ReplicationModel || reader.GetString(2) != expected.DistributionColumn ||
+            reader.GetInt32(3) != expected.ShardCount || reader.GetInt32(4) != expected.PlacementCount ||
+            reader.GetString(5) != expected.PlacementSignature)
+            throw new InvalidOperationException("Distributed staging layout does not match the parent table.");
+    }
+
+    private async Task ValidateReferenceLayoutAsync(NpgsqlConnection connection, string schema, string table,
+        MergeReferenceLayoutPlan expected, CancellationToken token)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT dp.partmethod::text, dp.repmodel::text,
+                   count(DISTINCT s.shardid)::int, count(p.placementid)::int,
+                   (SELECT count(*)::int FROM pg_dist_node dn WHERE dn.isactive AND dn.noderole='primary' AND dn.groupid<>0),
+                   COALESCE(md5(string_agg(COALESCE(s.shardminvalue,'')||':'||COALESCE(s.shardmaxvalue,'')||':'||COALESCE(p.groupid,0)::text,',' ORDER BY s.shardminvalue,s.shardmaxvalue,p.groupid)),md5(''))
+            FROM pg_dist_partition dp
+            LEFT JOIN pg_dist_shard s ON s.logicalrelid=dp.logicalrelid
+            LEFT JOIN pg_dist_placement p ON p.shardid=s.shardid
+            WHERE dp.logicalrelid=to_regclass(format('%I.%I',$1,$2))
+            GROUP BY dp.partmethod,dp.repmodel
+            """, connection) { CommandTimeout = options.CommandTimeoutSeconds };
+        command.Parameters.AddWithValue(schema); command.Parameters.AddWithValue(table);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token) || reader.GetString(0) != "n" ||
+            reader.GetString(1) != expected.ReplicationModel || reader.GetInt32(2) != expected.ShardCount ||
+            reader.GetInt32(3) != expected.PlacementCount || reader.GetInt32(4) != expected.ActivePrimaryCount ||
+            reader.GetString(5) != expected.PlacementSignature)
+            throw new InvalidOperationException("Reference staging layout is not fully replicated to the expected active workers.");
+    }
+
+    private async Task<MergeRelationMetrics> ValidateCopiedRangeAsync(NpgsqlConnection connection, MergePartitionPlan plan,
+        MergePartitionSourcePlan source, MergeRelationMetrics sourceValidation, CancellationToken token)
+    {
+        var from = DatabaseObjectDdlSafety.QuoteLiteral(source.FromBound);
+        var to = DatabaseObjectDdlSafety.QuoteLiteral(source.ToBound);
+        var predicate = $"{Quote(plan.PartitionKey!)} >= {from}::{plan.PartitionKeyType} AND {Quote(plan.PartitionKey!)} < {to}::{plan.PartitionKeyType}";
+        var targetValidation = await ReadMergeValidationAsync(connection, Qualified(plan.Schema, plan.StagingTable!), predicate, token);
+        if (sourceValidation.Count != targetValidation.Count || sourceValidation.HashA != targetValidation.HashA ||
+            sourceValidation.HashB != targetValidation.HashB)
+            throw new InvalidOperationException($"Validation failed after copying partition {source.Name}.");
+        return new(source.Name, targetValidation.Count, targetValidation.HashA, targetValidation.HashB, null);
+    }
+
+    private async Task<IReadOnlyList<MergeRelationMetrics>> ReadMergeSourceMetricsAsync(
+        NpgsqlConnection connection, MergePartitionPlan plan, bool citusManaged, string? sizeFunction,
+        Func<string, string, Task> checkpoint, CancellationToken token)
+    {
+        var sources = plan.Sources ?? throw new InvalidOperationException("Merge source snapshots are missing.");
+        var metrics = new List<MergeRelationMetrics>(sources.Count);
+        await checkpoint("merge-source-inventory", $"partitions={sources.Count}; measuring exact rows, hashes, and physical size.");
+        for (var index = 0; index < sources.Count; index++)
+        {
+            var source = sources[index];
+            var metric = await ReadMergeRelationMetricsAsync(connection, plan.Schema, source.Name, citusManaged, sizeFunction, token);
+            metrics.Add(metric);
+            await checkpoint($"merge-source-metrics-{index + 1}",
+                $"partition={source.Name}; item={index + 1}/{sources.Count}; exact_rows={metric.Count}; total_bytes={FormatNullableBytes(metric.Bytes)}");
+        }
+        await checkpoint("merge-source-summary",
+            $"partitions={metrics.Count}; exact_rows={metrics.Sum(x => x.Count)}; total_bytes={FormatNullableBytes(SumNullableBytes(metrics))}");
+        return metrics;
+    }
+
+    private async Task<MergeRelationMetrics> ReadMergeRelationMetricsAsync(
+        NpgsqlConnection connection, string schema, string relation, bool citusManaged,
+        string? sizeFunction, CancellationToken token)
+    {
+        var validation = await ReadMergeValidationAsync(connection, Qualified(schema, relation), null, token);
+        long? bytes = null;
+        if (!citusManaged)
+        {
+            await using var size = new NpgsqlCommand("SELECT pg_total_relation_size($1::regclass)::bigint", connection)
+            { CommandTimeout = options.MergeCommandTimeoutSeconds };
+            size.Parameters.AddWithValue($"{Quote(schema)}.{Quote(relation)}");
+            bytes = Convert.ToInt64(await size.ExecuteScalarAsync(token), CultureInfo.InvariantCulture);
+        }
+        else if (sizeFunction is not null)
+        {
+            await using var size = new NpgsqlCommand($"SELECT {sizeFunction}($1::regclass)::bigint", connection)
+            { CommandTimeout = options.MergeCommandTimeoutSeconds };
+            size.Parameters.AddWithValue($"{Quote(schema)}.{Quote(relation)}");
+            var value = await size.ExecuteScalarAsync(token);
+            if (value is not null and not DBNull) bytes = Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+        return new(relation, validation.Count, validation.HashA, validation.HashB, bytes);
+    }
+
+    private static void ValidateFinalMergeMetrics(IReadOnlyList<MergeRelationMetrics> sources, MergeRelationMetrics merged)
+    {
+        if (merged.Count != sources.Sum(x => x.Count) || merged.HashA != sources.Sum(x => x.HashA) ||
+            merged.HashB != sources.Sum(x => x.HashB))
+            throw new InvalidOperationException("Final merged partition count or row hashes do not match the retained source partitions.");
+    }
+
+    private static string FormatFinalMergeMetrics(
+        IReadOnlyList<MergeRelationMetrics> sources, MergeRelationMetrics merged, string sizeScope)
+    {
+        var sourceRows = sources.Sum(x => x.Count);
+        var sourceBytes = SumNullableBytes(sources);
+        var sizeDelta = sourceBytes.HasValue && merged.Bytes.HasValue ? merged.Bytes.Value - sourceBytes.Value : (long?)null;
+        return $"source_partitions={sources.Count}; source_rows={sourceRows}; source_total_bytes={FormatNullableBytes(sourceBytes)}; " +
+               $"merged_partition={merged.Name}; merged_rows={merged.Count}; merged_total_bytes={FormatNullableBytes(merged.Bytes)}; " +
+               $"row_delta={merged.Count - sourceRows}; size_delta_bytes={FormatNullableBytes(sizeDelta)}; size_scope={sizeScope}";
+    }
+
+    private static long? SumNullableBytes(IReadOnlyList<MergeRelationMetrics> metrics) =>
+        metrics.All(x => x.Bytes.HasValue) ? metrics.Sum(x => x.Bytes!.Value) : null;
+
+    private static string FormatNullableBytes(long? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "unavailable";
+
+    private async Task<(long Count, decimal HashA, decimal HashB)> ReadMergeValidationAsync(
+        NpgsqlConnection connection, string relation, string? predicate, CancellationToken token)
+    {
+        var where = predicate is null ? string.Empty : $" WHERE {predicate}";
+        await using var command = new NpgsqlCommand(
+            $"SELECT count(*)::bigint, COALESCE(sum(hashtextextended(to_jsonb(v)::text,0)::numeric),0), COALESCE(sum(hashtextextended(to_jsonb(v)::text,1)::numeric),0) FROM {relation} v{where}",
+            connection) { CommandTimeout = options.MergeCommandTimeoutSeconds };
+        await using var reader = await command.ExecuteReaderAsync(token);
+        await reader.ReadAsync(token);
+        return (reader.GetInt64(0), reader.GetFieldValue<decimal>(1), reader.GetFieldValue<decimal>(2));
+    }
+
+    private async Task ValidateAttachedTargetAsync(NpgsqlConnection connection, MergePartitionPlan plan, CancellationToken token)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT count(*)=1 AND bool_and(i.inhparent=to_regclass(format('%I.%I',$1,$2)))
+            FROM pg_inherits i WHERE i.inhrelid=to_regclass(format('%I.%I',$1,$3))
+            """, connection);
+        command.Parameters.AddWithValue(plan.Schema); command.Parameters.AddWithValue(plan.Table); command.Parameters.AddWithValue(plan.TargetPartition);
+        if (await command.ExecuteScalarAsync(token) is not true) throw new InvalidOperationException("Merged target is not attached to the expected parent.");
+        if (plan.TableMode == DatabaseTableMode.Reference)
+            await ValidateReferenceLayoutAsync(connection, plan.Schema, plan.TargetPartition, plan.ReferenceLayout!, token);
+        else
+            await ValidateDistributedLayoutAsync(connection, plan.Schema, plan.TargetPartition, plan.DistributionLayout!, token);
+        var signatures = await ReadRelationSignaturesAsync(connection, plan.Schema, plan.TargetPartition, token);
+        var expected = plan.Sources![0];
+        if (!signatures.Valid || signatures.IndexSignature != expected.IndexSignature || signatures.ConstraintSignature != expected.ConstraintSignature)
+            throw new InvalidOperationException("Merged target index or constraint layout does not match the source partitions.");
+    }
+
+    private async Task<(string IndexSignature, bool Valid, string ConstraintSignature)> ReadRelationSignaturesAsync(
+        NpgsqlConnection connection, string schema, string table, CancellationToken token)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT COALESCE((SELECT md5(string_agg(i.indisunique::text||':'||i.indisprimary::text||':'||i.indkey::text||':'||
+                     COALESCE(pg_get_expr(i.indpred,i.indrelid),''),',' ORDER BY i.indkey::text,pg_get_expr(i.indpred,i.indrelid)))
+                     FROM pg_index i WHERE i.indrelid=c.oid),md5('')),
+                   COALESCE((SELECT bool_and(i.indisvalid) FROM pg_index i WHERE i.indrelid=c.oid),true),
+                   COALESCE((SELECT md5(string_agg(con.contype::text||':'||con.conkey::text||':'||COALESCE(pg_get_expr(con.conbin,con.conrelid),''),',' ORDER BY con.contype,con.conkey::text))
+                     FROM pg_constraint con WHERE con.conrelid=c.oid),md5(''))
+            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2
+            """, connection);
+        command.Parameters.AddWithValue(schema); command.Parameters.AddWithValue(table);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) throw new InvalidOperationException("Merged target relation was not found.");
+        return (reader.GetString(0), reader.GetBoolean(1), reader.GetString(2));
+    }
+
+    internal static string BuildMergeObjectName(string basis, string marker, string tag)
+    {
+        var suffix = $"__{marker}_{tag}";
+        var maxBasisBytes = 63 - Encoding.UTF8.GetByteCount(suffix);
+        var builder = new StringBuilder(); var bytes = 0;
+        foreach (var rune in basis.EnumerateRunes())
+        {
+            var width = rune.Utf8SequenceLength; if (bytes + width > maxBasisBytes) break;
+            builder.Append(rune); bytes += width;
+        }
+        return builder + suffix;
+    }
+
+    internal static int ParseCitusMajor(string version)
+    {
+        var match = Regex.Match(version, @"^\s*(?:Citus\s+)?(\d+)(?:\.\d+)?", RegexOptions.IgnoreCase);
+        return match.Success ? int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : 0;
+    }
+
+    private static async Task<bool> RelationExistsAsync(NpgsqlConnection connection, string schema, string name, CancellationToken token)
+    {
+        await using var command = new NpgsqlCommand("SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2)", connection);
+        command.Parameters.AddWithValue(schema); command.Parameters.AddWithValue(name);
+        return await command.ExecuteScalarAsync(token) is true;
+    }
+
+    private async Task<MergeCatalog> ReadMergeCatalogAsync(NpgsqlConnection connection, string schema, string table,
+        IReadOnlyList<string> selected, CancellationToken token)
+    {
+        const string parentSql = """
+            SELECT c.oid, citus_version(), column_to_column_name(dp.logicalrelid,dp.partkey),
+                   format_type(a.atttypid,a.atttypmod), dp.colocationid, dp.repmodel::text,
+                   count(DISTINCT s.shardid)::int, count(p.placementid)::int,
+                   EXISTS(SELECT 1 FROM pg_proc WHERE proname='create_distributed_table' AND pg_get_function_identity_arguments(oid) ILIKE '%distribution_column%'),
+                   pa.attname, format_type(pa.atttypid,pa.atttypmod), current_setting('TimeZone'),
+                   COALESCE(dp.partmethod::text,''),
+                   EXISTS(SELECT 1 FROM pg_proc WHERE proname='create_reference_table' AND pg_get_function_identity_arguments(oid) ILIKE '%table_name%'),
+                   (SELECT count(*)::int FROM pg_dist_node dn WHERE dn.isactive AND dn.noderole='primary' AND dn.groupid<>0)
+            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            JOIN pg_partitioned_table pt ON pt.partrelid=c.oid AND pt.partstrat='r' AND array_length(pt.partattrs,1)=1
+            JOIN pg_attribute pa ON pa.attrelid=c.oid AND pa.attnum=pt.partattrs[0]
+            LEFT JOIN pg_dist_partition dp ON dp.logicalrelid=c.oid
+            LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=column_to_column_name(dp.logicalrelid,dp.partkey)
+            LEFT JOIN pg_dist_shard s ON s.logicalrelid=c.oid LEFT JOIN pg_dist_placement p ON p.shardid=s.shardid
+            WHERE n.nspname=$1 AND c.relname=$2
+            GROUP BY c.oid,dp.logicalrelid,dp.partkey,dp.partmethod,a.atttypid,a.atttypmod,dp.colocationid,dp.repmodel,pa.attname,pa.atttypid,pa.atttypmod
+            """;
+        uint parentOid; string citusVersion, partitionKey, partitionKeyType, timezone, parentPartMethod; string? distributionColumn, distributionType, replication;
+        int colocation, shards, placements, activePrimaryCount; bool hasFunction, hasCreateReferenceTable;
+        await using (var command = new NpgsqlCommand(parentSql, connection))
+        {
+            command.Parameters.AddWithValue(schema); command.Parameters.AddWithValue(table);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            if (!await reader.ReadAsync(token)) throw new ArgumentException("Table must be a single-column RANGE partitioned table.");
+            parentOid=reader.GetFieldValue<uint>(0); citusVersion=reader.GetString(1);
+            distributionColumn=reader.IsDBNull(2)?null:reader.GetString(2); distributionType=reader.IsDBNull(3)?null:reader.GetString(3);
+            colocation=reader.IsDBNull(4)?0:reader.GetInt32(4); replication=reader.IsDBNull(5)?null:reader.GetString(5);
+            shards=reader.GetInt32(6); placements=reader.GetInt32(7); hasFunction=reader.GetBoolean(8);
+            partitionKey=reader.GetString(9); partitionKeyType=reader.GetString(10); timezone=reader.GetString(11);
+            parentPartMethod=reader.GetString(12); hasCreateReferenceTable=reader.GetBoolean(13); activePrimaryCount=reader.GetInt32(14);
+        }
+        var children = new List<MergeChildCatalog>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT child.oid,child.relname,pg_get_expr(child.relpartbound,child.oid,true),COALESCE(am.amname,'heap'),
+                   EXISTS(SELECT 1 FROM pg_inherits nested WHERE nested.inhparent=child.oid),
+                   COALESCE(dp.partmethod::text,''),column_to_column_name(dp.logicalrelid,dp.partkey),COALESCE(dp.colocationid,0),COALESCE(dp.repmodel::text,''),
+                   count(DISTINCT s.shardid)::int,count(p.placementid)::int,
+                   COALESCE((SELECT md5(string_agg(i.indisunique::text||':'||i.indisprimary::text||':'||i.indkey::text||':'||
+                     COALESCE(pg_get_expr(i.indpred,i.indrelid),''),',' ORDER BY i.indkey::text,pg_get_expr(i.indpred,i.indrelid))) FROM pg_index i WHERE i.indrelid=child.oid),md5('')),
+                   COALESCE((SELECT bool_and(i.indisvalid) FROM pg_index i WHERE i.indrelid=child.oid),true),
+                   COALESCE((SELECT md5(string_agg(con.contype::text||':'||con.conkey::text||':'||COALESCE(pg_get_expr(con.conbin,con.conrelid),''),',' ORDER BY con.contype,con.conkey::text)) FROM pg_constraint con WHERE con.conrelid=child.oid),md5('')),
+                   COALESCE(md5(string_agg(COALESCE(s.shardminvalue,'')||':'||COALESCE(s.shardmaxvalue,'')||':'||COALESCE(p.groupid,0)::text,',' ORDER BY s.shardminvalue,s.shardmaxvalue,p.groupid)),md5('')),
+                   COALESCE(bool_and(active_node.nodeid IS NOT NULL),false)
+            FROM pg_inherits i JOIN pg_class child ON child.oid=i.inhrelid LEFT JOIN pg_am am ON am.oid=child.relam
+            LEFT JOIN pg_dist_partition dp ON dp.logicalrelid=child.oid LEFT JOIN pg_dist_shard s ON s.logicalrelid=child.oid
+            LEFT JOIN pg_dist_placement p ON p.shardid=s.shardid
+            LEFT JOIN pg_dist_node active_node ON active_node.groupid=p.groupid AND active_node.isactive AND active_node.noderole='primary'
+            WHERE i.inhparent=$1 AND child.relname=ANY($2)
+            GROUP BY child.oid,child.relname,child.relpartbound,am.amname,dp.logicalrelid,dp.partmethod,dp.partkey,dp.colocationid,dp.repmodel
+            ORDER BY child.relname
+            """, connection))
+        {
+            command.Parameters.AddWithValue(NpgsqlTypes.NpgsqlDbType.Oid, parentOid);
+            command.Parameters.AddWithValue(selected.ToArray());
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) children.Add(new(reader.GetFieldValue<uint>(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),
+                reader.GetBoolean(4),reader.GetString(5),reader.IsDBNull(6)?null:reader.GetString(6),reader.GetInt32(7),reader.GetString(8),reader.GetInt32(9),reader.GetInt32(10),
+                reader.GetString(11),reader.GetBoolean(12),reader.GetString(13),reader.GetString(14),reader.GetBoolean(15)));
+        }
+        if (children.Count != selected.Count) throw new KeyNotFoundException("One or more selected direct partitions were not found.");
+        if (shards == 0 && children.Count > 0) shards=children[0].ShardCount;
+        if (placements == 0 && children.Count > 0) placements=children[0].PlacementCount;
+        var copyColumns = new List<string>(); var identityAlways=false;
+        await using (var command = new NpgsqlCommand("SELECT attname,attidentity::text,attgenerated::text FROM pg_attribute WHERE attrelid=$1 AND attnum>0 AND NOT attisdropped ORDER BY attnum", connection))
+        {
+            command.Parameters.AddWithValue(NpgsqlTypes.NpgsqlDbType.Oid,parentOid);
+            await using var reader=await command.ExecuteReaderAsync(token);
+            while(await reader.ReadAsync(token)){ if (reader.GetString(2).Length==0) copyColumns.Add(reader.GetString(0)); if(reader.GetString(1)=="a") identityAlways=true; }
+        }
+        return new(parentOid,citusVersion,distributionColumn,distributionType,colocation,shards,replication,placements,hasFunction,
+            hasCreateReferenceTable,parentPartMethod,activePrimaryCount,partitionKey,partitionKeyType,timezone,children,copyColumns,identityAlways);
+    }
+
+    private static async Task<string> ReadFingerprintAsync(NpgsqlConnection connection, string schema, string table, CancellationToken token,
+        NpgsqlTransaction? transaction = null)
     {
         await using var command = new NpgsqlCommand("""
             SELECT md5(c.oid::text || ':' || c.relfilenode::text || ':' || COALESCE(pg_get_partkeydef(c.oid),'') || ':' ||
               COALESCE((SELECT string_agg(child.oid::text || pg_get_expr(child.relpartbound,child.oid,true),',' ORDER BY child.oid)
                         FROM pg_inherits i JOIN pg_class child ON child.oid=i.inhrelid WHERE i.inhparent=c.oid),''))
             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2
-            """, connection);
+            """, connection, transaction);
         command.Parameters.AddWithValue(schema); command.Parameters.AddWithValue(table);
         return (string?)await command.ExecuteScalarAsync(token) ?? throw new KeyNotFoundException("Table not found.");
     }
@@ -1163,6 +1720,19 @@ public sealed partial class DatabaseMaintenanceService(
 
     private sealed record ExistingRange(string Name, DateTimeOffset From, DateTimeOffset To);
     private sealed record ParsedRange(DateTimeOffset From, DateTimeOffset To);
+    private sealed record MergeRelationMetrics(string Name, long Count, decimal HashA, decimal HashB, long? Bytes);
+    private sealed record MergeChildCatalog(uint Oid,string Name,string Bound,string AccessMethod,bool HasChildren,string PartMethod,
+        string? DistributionColumn,int ColocationId,string ReplicationModel,int ShardCount,int PlacementCount,
+        string IndexSignature,bool IndexesValid,string ConstraintSignature,string PlacementSignature,bool AllPlacementsActive)
+    {
+        public bool Distributed => PartMethod.Length > 0 && PartMethod != "n";
+        public bool Reference => PartMethod == "n";
+    }
+    private sealed record MergeCatalog(uint ParentOid,string CitusVersion,string? DistributionColumn,string? DistributionColumnType,
+        int ColocationId,int ShardCount,string? ReplicationModel,int PlacementCount,bool HasCreateDistributedTable,
+        bool HasCreateReferenceTable,string ParentPartMethod,int ActivePrimaryCount,
+        string PartitionKey,string PartitionKeyType,string TimeZone,IReadOnlyList<MergeChildCatalog> Sources,
+        IReadOnlyList<string> CopyColumns,bool HasIdentityAlways);
     private sealed record RangeCatalog(string Key, string KeyType, string TimeZone, string Fingerprint,
         int ShardCount, int PlacementCount, int IndexCount, IReadOnlyList<ExistingRange> Bounds);
 

@@ -61,7 +61,7 @@ GET {{baseUrl}}/api/clusters/{{clusterId}}/activity
 ### Read metric samples
 GET {{baseUrl}}/api/clusters/{{clusterId}}/metrics?take=1000
 
-### Create rebalance plan; does not execute before another Admin approves
+### Create and automatically queue a rebalance plan
 POST {{baseUrl}}/api/operations/clusters/{{clusterId}}
 Content-Type: application/json
 
@@ -118,7 +118,7 @@ GET {{baseUrl}}/Clusters/{{clusterId}}/Database/Tree
 ### Read database action metadata and Citus capabilities
 GET {{baseUrl}}/Clusters/{{clusterId}}/Database/ActionMetadata
 
-### Approve as a different Admin
+### Queue a legacy operation that still has AwaitingApproval status
 POST {{baseUrl}}/api/operations/{{operationId}}/approve
 
 ### Request safe cancel/stop

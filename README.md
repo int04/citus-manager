@@ -1,6 +1,6 @@
 # Citus Manager
 
-Control-plane ASP.NET Core cho nhiều self-hosted Citus database. UI thay lệnh thủ công cho inventory, add worker, rebalance, drain và remove worker với preflight, approval hai người, checkpoint, audit.
+Control-plane ASP.NET Core cho nhiều self-hosted Citus database. UI thay lệnh thủ công cho inventory, add worker, rebalance, drain và remove worker với preflight, auto-queue theo quyền, checkpoint và audit.
 
 ## Yêu cầu
 
@@ -35,7 +35,7 @@ dotnet ef database update
 dotnet run
 ```
 
-Mở `/Account/Setup`, tạo Admin đầu tiên; sau đó tạo Admin thứ hai trong **Users & roles**. Requester không thể tự approve operation.
+Mở `/Account/Setup` và tạo Admin đầu tiên. User có quyền tạo operation sẽ tự đưa operation đó vào hàng đợi; không cần Admin thứ hai.
 
 Development có `Database:AutoCreateSchema=true`, app tự chạy migrations. Production mặc định tắt; apply migration trong controlled deployment.
 
@@ -43,7 +43,7 @@ Development có `Database:AutoCreateSchema=true`, app tự chạy migrations. Pr
 
 - `Viewer`: dashboard, topology, database explorer/SQL, metrics, activity, alerts.
 - `Operator`: thêm profile, tạo operation plan, acknowledge alert, request cancel.
-- `Admin`: quản lý user/profile, approve operation của người khác, audit.
+- `Admin`: quản lý user/profile và audit; các operation được phép tạo sẽ tự vào hàng đợi.
 
 ## Database explorer
 
@@ -54,7 +54,7 @@ SQL console chỉ chạy trên coordinator, cho mọi user đã đăng nhập v�
 ## Safety invariants
 
 - Capability scan theo database/version/function signature; feature thiếu → chặn.
-- Mọi topology mutation: immutable plan → Admin khác approve → live preflight → runner.
+- Mọi topology mutation: immutable plan → auto-queue theo quyền → live preflight → runner.
 - Một impact operation/cluster nhờ PostgreSQL advisory lock.
 - Add worker không tự rebalance.
 - Drain cancel không trả shards đã chuyển.

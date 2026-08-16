@@ -26,6 +26,8 @@ public sealed class DatabaseExplorerOptions
     public int RowInspectionTimeoutSeconds { get; set; } = 10;
     public int MaxInspectionRowCharacters { get; set; } = 1_048_576;
     public int ConversionCommandTimeoutSeconds { get; set; } = 3600;
+    public int MergeCommandTimeoutSeconds { get; set; } = 0;
+    public int MergeLockTimeoutSeconds { get; set; } = 30;
 }
 
 public interface IDatabaseExplorerService

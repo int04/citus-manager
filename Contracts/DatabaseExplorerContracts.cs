@@ -408,6 +408,17 @@ public sealed record MergeRangePartitionsRequest
     [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
 }
 
+/// <summary>One source partition included in a merge preflight.</summary>
+public sealed record MergePartitionSourceResponse(
+    string Name, string Bound, string AccessMethod, long EstimatedRows, long Bytes);
+
+/// <summary>Capability and Citus layout returned before a RANGE merge is queued.</summary>
+public sealed record MergePartitionPreflightResponse(
+    string Schema, string Table, DatabaseTableMode Mode, bool CanExecute, string? BlockedReason,
+    string? DistributionColumn, int ShardCount, int ColocationId, string? ReplicationModel,
+    int PlacementCount, string CitusVersion, long EstimatedRows, long Bytes, long TemporaryBytes,
+    IReadOnlyList<MergePartitionSourceResponse> Sources, IReadOnlyList<string> Warnings);
+
 /// <summary>Request for inspecting a table asynchronously when exact metrics are required.</summary>
 public sealed record InspectTableOperationRequest
 {
