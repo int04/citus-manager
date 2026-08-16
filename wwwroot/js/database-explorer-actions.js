@@ -350,13 +350,16 @@
 
   function columnRowData(row) {
     return { name: row.dataset.columnName || "", dataType: row.dataset.columnType || "text", nullable: row.dataset.columnNullable !== "false",
-      primaryKey: row.dataset.columnPrimary === "true", defaultLiteral: row.dataset.columnDefault || "", currentTimestamp: row.dataset.columnCurrentTimestamp === "true" };
+      primaryKey: row.dataset.columnPrimary === "true", comment: row.dataset.columnComment || "", defaultExpression: row.dataset.columnDefaultExpression || "",
+      identity: row.dataset.columnIdentity === "true", identityKind: row.dataset.columnIdentityKind || "ByDefault",
+      identityMinimum: row.dataset.columnIdentityMinimum || "", identityMaximum: row.dataset.columnIdentityMaximum || "",
+      identityIncrement: row.dataset.columnIdentityIncrement || "1", identityCache: row.dataset.columnIdentityCache || "1", identityCycle: row.dataset.columnIdentityCycle === "true" };
   }
   function tableColumnRows() { return [...document.querySelectorAll(".database-column-row")]; }
   function tableColumnNames() { return tableColumnRows().map(row => columnRowData(row).name.trim()).filter(Boolean); }
   function renderColumnSummary(row) {
     const column = columnRowData(row);
-    row.innerHTML = `<span class="dg-column-icon ${column.primaryKey ? "is-primary" : ""}" aria-hidden="true"></span><span><strong>${html(column.name || "column_name")}</strong><small>${html(column.dataType)}${column.nullable ? "" : " · not null"}</small></span>${column.primaryKey ? '<span class="dg-key-kind-badge">PK</span>' : ""}`;
+    row.innerHTML = `<span class="dg-column-icon ${column.primaryKey ? "is-primary" : ""}" aria-hidden="true"></span><span><strong>${html(column.name || "column_name")}</strong><small>${html(column.dataType)}${column.nullable ? "" : " · not null"}${column.identity ? " · identity" : ""}</small></span>${column.primaryKey ? '<span class="dg-key-kind-badge">PK</span>' : ""}`;
   }
   function refreshColumnCount() {
     document.getElementById("database-column-count")?.replaceChildren(document.createTextNode(String(tableColumnRows().length)));
@@ -368,15 +371,29 @@
     document.getElementById("database-column-editor")?.classList.remove("hidden");
     const column = columnRowData(row);
     document.getElementById("database-column-name").value = column.name;
+    document.getElementById("database-column-comment").value = column.comment;
     document.getElementById("database-column-type").value = column.dataType;
-    document.getElementById("database-column-nullable").checked = column.nullable;
+    document.getElementById("database-column-not-null").checked = !column.nullable;
     document.getElementById("database-column-primary").checked = column.primaryKey;
-    document.getElementById("database-column-default").value = column.defaultLiteral;
-    document.getElementById("database-column-now").checked = column.currentTimestamp;
+    document.getElementById("database-column-default-expression").value = column.defaultExpression;
+    document.getElementById("database-column-identity").checked = column.identity;
+    document.getElementById("database-column-identity-kind").value = column.identityKind;
+    document.getElementById("database-column-identity-min").value = column.identityMinimum;
+    document.getElementById("database-column-identity-max").value = column.identityMaximum;
+    document.getElementById("database-column-identity-step").value = column.identityIncrement;
+    document.getElementById("database-column-identity-cache").value = column.identityCache;
+    document.getElementById("database-column-identity-cycle").checked = column.identityCycle;
+    toggleIdentityEditor(column.identity);
     document.querySelector("[data-column-editor-title]").textContent = column.name || "column_name";
     refreshColumnControls();
   }
   function activeColumnRow() { return document.querySelector(".database-column-row.is-active"); }
+  function toggleIdentityEditor(enabled) {
+    document.getElementById("database-column-identity-options")?.classList.toggle("is-disabled", !enabled);
+    document.querySelectorAll("[data-identity-option]").forEach(control => { control.disabled = !enabled; });
+    const defaultExpression = document.getElementById("database-column-default-expression");
+    if (defaultExpression) defaultExpression.disabled = enabled;
+  }
   function renameColumnReferences(previousName, nextName) {
     if (!previousName || previousName === nextName) return;
     document.querySelectorAll(".dg-key-row").forEach(row => { const key = keyRowData(row); key.columns = key.columns.map(column => column === previousName ? nextName : column); row.dataset.keyColumns = JSON.stringify(key.columns); });
@@ -389,11 +406,20 @@
     const previousName = row.dataset.columnName || "", nextName = document.getElementById("database-column-name").value.trim();
     renameColumnReferences(previousName, nextName);
     row.dataset.columnName = nextName;
+    row.dataset.columnComment = document.getElementById("database-column-comment").value;
     row.dataset.columnType = document.getElementById("database-column-type").value;
-    row.dataset.columnNullable = document.getElementById("database-column-nullable").checked;
+    row.dataset.columnNullable = !document.getElementById("database-column-not-null").checked;
     row.dataset.columnPrimary = document.getElementById("database-column-primary").checked;
-    row.dataset.columnDefault = document.getElementById("database-column-default").value;
-    row.dataset.columnCurrentTimestamp = document.getElementById("database-column-now").checked;
+    row.dataset.columnDefaultExpression = document.getElementById("database-column-default-expression").value.trim();
+    row.dataset.columnIdentity = document.getElementById("database-column-identity").checked;
+    row.dataset.columnIdentityKind = document.getElementById("database-column-identity-kind").value;
+    row.dataset.columnIdentityMinimum = document.getElementById("database-column-identity-min").value;
+    row.dataset.columnIdentityMaximum = document.getElementById("database-column-identity-max").value;
+    row.dataset.columnIdentityIncrement = document.getElementById("database-column-identity-step").value;
+    row.dataset.columnIdentityCache = document.getElementById("database-column-identity-cache").value;
+    row.dataset.columnIdentityCycle = document.getElementById("database-column-identity-cycle").checked;
+    if (row.dataset.columnIdentity === "true") { row.dataset.columnNullable = "false"; document.getElementById("database-column-not-null").checked = true; row.dataset.columnDefaultExpression = ""; document.getElementById("database-column-default-expression").value = ""; }
+    toggleIdentityEditor(row.dataset.columnIdentity === "true");
     if (row.dataset.columnPrimary === "true") {
       document.querySelectorAll(".dg-key-row[data-key-kind='Primary']").forEach(keyRow => { keyRow.dataset.keyKind = "Unique"; renderKeySummary(keyRow); });
       const activeKey = activeKeyRow(); if (activeKey) selectKeyRow(activeKey);
@@ -432,8 +458,15 @@
     row.dataset.columnType = initial.dataType || metadata.columnTypes[0]?.name || "text";
     row.dataset.columnNullable = initial.nullable === false ? "false" : "true";
     row.dataset.columnPrimary = initial.primaryKey ? "true" : "false";
-    row.dataset.columnDefault = initial.defaultLiteral || "";
-    row.dataset.columnCurrentTimestamp = initial.currentTimestamp ? "true" : "false";
+    row.dataset.columnComment = initial.comment || "";
+    row.dataset.columnDefaultExpression = initial.defaultExpression || "";
+    row.dataset.columnIdentity = initial.identity ? "true" : "false";
+    row.dataset.columnIdentityKind = initial.identityKind || "ByDefault";
+    row.dataset.columnIdentityMinimum = initial.identityMinimum ?? "1";
+    row.dataset.columnIdentityMaximum = initial.identityMaximum ?? "";
+    row.dataset.columnIdentityIncrement = initial.identityIncrement ?? "1";
+    row.dataset.columnIdentityCache = initial.identityCache ?? "1";
+    row.dataset.columnIdentityCycle = initial.identityCycle ? "true" : "false";
     renderColumnSummary(row);
     row.addEventListener("click", () => selectColumnRow(row));
     row.addEventListener("keydown", event => {
@@ -452,6 +485,12 @@
     const names = tableColumnNames();
     select.innerHTML = `<option value="">Chọn column…</option>${names.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}`;
     if (names.includes(current)) select.value = current;
+    const partition = document.querySelector("[name=PartitionKey]");
+    if (partition) {
+      const partitionCurrent = partition.value;
+      partition.innerHTML = `<option value="">Select column…</option>${names.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}`;
+      if (names.includes(partitionCurrent)) partition.value = partitionCurrent;
+    }
     syncDesignerColumnSelectors(names);
   }
 
@@ -849,11 +888,10 @@
     document.getElementById("database-remove-column").addEventListener("click", removeActiveColumn);
     document.getElementById("database-move-column-up").addEventListener("click", () => moveColumn(-1));
     document.getElementById("database-move-column-down").addEventListener("click", () => moveColumn(1));
-    ["database-column-name", "database-column-type", "database-column-nullable", "database-column-primary", "database-column-default", "database-column-now"].forEach(id => {
+    ["database-column-name", "database-column-comment", "database-column-type", "database-column-not-null", "database-column-primary", "database-column-default-expression",
+      "database-column-identity-kind", "database-column-identity", "database-column-identity-min", "database-column-identity-max", "database-column-identity-step", "database-column-identity-cache", "database-column-identity-cycle"].forEach(id => {
       document.getElementById(id).addEventListener("input", updateColumnFromEditor); document.getElementById(id).addEventListener("change", updateColumnFromEditor);
     });
-    document.getElementById("database-column-default").addEventListener("input", event => { if (event.target.value) document.getElementById("database-column-now").checked = false; updateColumnFromEditor(); });
-    document.getElementById("database-column-now").addEventListener("change", event => { if (event.target.checked) document.getElementById("database-column-default").value = ""; updateColumnFromEditor(); });
     document.getElementById("database-add-key").addEventListener("click", () => addKeyRow());
     document.getElementById("database-empty-add-key").addEventListener("click", () => addKeyRow());
     document.getElementById("database-remove-key").addEventListener("click", removeActiveKey);
@@ -913,14 +951,78 @@
     document.getElementById("database-remove-index").disabled = true;
     document.getElementById("database-remove-check").disabled = true;
     refreshColumnControls();
+    document.getElementById("database-add-table-grant").addEventListener("click", () => addTableGrantRow(metadata));
+  }
+  function addTableGrantRow(metadata) {
+    const row = document.createElement("div");
+    row.className = "dg-table-grant-row";
+    const roles = metadata.roles?.length ? metadata.roles : [];
+    row.innerHTML = `<select data-grant-role aria-label="Grant role" required><option value="">Select role…</option>${roles.map(role => `<option value="${html(role)}">${html(role)}</option>`).join("")}</select><div>${["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"].map(privilege => `<label><input type="checkbox" data-grant-privilege value="${privilege}" ${privilege === "SELECT" ? "checked" : ""}>${privilege}</label>`).join("")}</div><button type="button" aria-label="Remove grant">×</button>`;
+    row.querySelector("button").addEventListener("click", () => { row.remove(); updateTableSqlPreview(); });
+    row.addEventListener("input", updateTableSqlPreview); row.addEventListener("change", updateTableSqlPreview);
+    const list = document.getElementById("database-table-grants");
+    list.querySelector(".dg-grants-empty")?.remove();
+    list.appendChild(row);
+    row.querySelector("select").focus(); updateTableSqlPreview();
   }
   function bindTableMode() {
     const update = () => {
-      const distributed = document.querySelector("[name=Mode]").value === "Distributed";
+      const mode = document.querySelector("[name=Mode]").value;
+      const distributed = mode === "Distributed";
       document.getElementById("database-distribution-options").classList.toggle("hidden", !distributed);
       document.querySelector("[name=DistributionColumn]").required = distributed;
+      const persistence = document.querySelector("[name=Persistence]");
+      const unlogged = persistence.querySelector("option[value=Unlogged]");
+      unlogged.disabled = mode !== "Local";
+      if (unlogged.disabled && persistence.value === "Unlogged") persistence.value = "Persistent";
+      const partitionStrategy = document.querySelector("[name=PartitionStrategy]");
+      if (mode === "Reference" && partitionStrategy.value !== "None") partitionStrategy.value = "None";
+      document.getElementById("database-partition-key-row").classList.toggle("is-disabled", partitionStrategy.value === "None");
+      document.querySelector("[name=PartitionKey]").disabled = partitionStrategy.value === "None";
+      document.querySelector("[name=PartitionKey]").required = partitionStrategy.value !== "None";
     };
     document.querySelector("[name=Mode]").addEventListener("change", update); update();
+    document.querySelector("[name=PartitionStrategy]").addEventListener("change", update);
+  }
+
+  function bindSqlPreviewSplitter() {
+    const designer = document.querySelector(".dg-table-designer");
+    const splitter = document.getElementById("database-sql-preview-splitter");
+    const preview = document.querySelector(".dg-sql-preview");
+    if (!designer || !splitter || !preview) return;
+    const minimum = 120;
+    const setHeight = value => {
+      const maximum = Math.max(minimum, designer.clientHeight - 220);
+      const height = Math.round(Math.min(maximum, Math.max(minimum, value)));
+      designer.style.setProperty("--dg-preview-height", `${height}px`);
+      splitter.setAttribute("aria-valuemin", String(minimum));
+      splitter.setAttribute("aria-valuemax", String(maximum));
+      splitter.setAttribute("aria-valuenow", String(height));
+    };
+    let startY = 0, startHeight = 0, dragging = false;
+    splitter.addEventListener("pointerdown", event => {
+      if (event.button !== 0) return;
+      dragging = true; startY = event.clientY; startHeight = preview.getBoundingClientRect().height;
+      splitter.classList.add("is-dragging"); splitter.setPointerCapture(event.pointerId); event.preventDefault();
+    });
+    splitter.addEventListener("pointermove", event => { if (dragging) setHeight(startHeight + startY - event.clientY); });
+    const stop = event => {
+      if (!dragging) return;
+      dragging = false; splitter.classList.remove("is-dragging");
+      if (splitter.hasPointerCapture(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
+    };
+    splitter.addEventListener("pointerup", stop); splitter.addEventListener("pointercancel", stop);
+    splitter.addEventListener("dblclick", () => setHeight(190));
+    splitter.addEventListener("keydown", event => {
+      const current = preview.getBoundingClientRect().height;
+      if (event.key === "ArrowUp") setHeight(current + 24);
+      else if (event.key === "ArrowDown") setHeight(current - 24);
+      else if (event.key === "Home") setHeight(minimum);
+      else if (event.key === "End") setHeight(designer.clientHeight - 220);
+      else return;
+      event.preventDefault();
+    });
+    setHeight(preview.getBoundingClientRect().height || 190);
   }
 
   function updateTableSqlPreview() {
@@ -934,8 +1036,18 @@
     const primary = rows.map(columnRowData).filter(column => column.primaryKey).map(column => column.name).filter(Boolean);
     const definitions = rows.map(row => {
       const column = columnRowData(row), name = column.name || "column_name", type = column.dataType, nullable = column.nullable;
-      const literal = column.defaultLiteral, current = column.currentTimestamp, isPrimary = column.primaryKey;
-      return `  ${quoteId(name)} ${type}${nullable && !isPrimary ? "" : " NOT NULL"}${current ? " DEFAULT CURRENT_TIMESTAMP" : literal ? ` DEFAULT ${quoteLiteral(literal)}::${type}` : ""}`;
+      const isPrimary = column.primaryKey;
+      const identityOptions = [];
+      if (column.identityMinimum) identityOptions.push(`MINVALUE ${column.identityMinimum}`);
+      if (column.identityMaximum) identityOptions.push(`MAXVALUE ${column.identityMaximum}`);
+      if (column.identityIncrement) identityOptions.push(`INCREMENT BY ${column.identityIncrement}`);
+      if (column.identityCache) identityOptions.push(`CACHE ${column.identityCache}`);
+      if (column.identityCycle) identityOptions.push("CYCLE");
+      const identity = column.identity
+        ? ` GENERATED ${column.identityKind === "Always" ? "ALWAYS" : "BY DEFAULT"} AS IDENTITY${identityOptions.length ? ` (${identityOptions.join(" ")})` : ""}`
+        : "";
+      const defaultExpression = !column.identity && column.defaultExpression ? ` DEFAULT ${column.defaultExpression}` : "";
+      return `  ${quoteId(name)} ${type}${nullable && !isPrimary && !column.identity ? "" : " NOT NULL"}${identity}${defaultExpression}`;
     });
     if (primary.length) definitions.push(`  PRIMARY KEY (${primary.map(quoteId).join(", ")})`);
     document.querySelectorAll(".dg-key-row").forEach(row => {
@@ -954,7 +1066,14 @@
       const check = checkRowData(row);
       definitions.push(`  ${check.name ? `CONSTRAINT ${quoteId(check.name)} ` : ""}CHECK (${check.expression.trim() || "expression"})`);
     });
-    let sql = `CREATE TABLE ${quoteId(schema)}.${quoteId(table)} (\n${definitions.join(",\n")}\n);`;
+    const persistence = form.elements.Persistence?.value === "Unlogged" ? "UNLOGGED " : "";
+    let sql = `CREATE ${persistence}TABLE ${quoteId(schema)}.${quoteId(table)} (\n${definitions.join(",\n")}\n)`;
+    const partitionStrategy = form.elements.PartitionStrategy?.value;
+    if (partitionStrategy && partitionStrategy !== "None") sql += ` PARTITION BY ${partitionStrategy.toUpperCase()} (${quoteId(form.elements.PartitionKey?.value || "partition_key")})`;
+    if (form.elements.AccessMethod?.value) sql += ` USING ${quoteId(form.elements.AccessMethod.value)}`;
+    if (form.elements.FillFactor?.value) sql += ` WITH (fillfactor = ${Number(form.elements.FillFactor.value)})`;
+    if (form.elements.Tablespace?.value) sql += ` TABLESPACE ${quoteId(form.elements.Tablespace.value)}`;
+    sql += ";";
     document.querySelectorAll(".dg-index-row").forEach(row => {
       const index = indexRowData(row);
       sql += `\n\nCREATE ${index.unique ? "UNIQUE " : ""}INDEX ${quoteId(index.name || "index_name")} ON ${quoteId(schema)}.${quoteId(table)} USING ${index.method.toLowerCase()} (${(index.columns.length ? index.columns : ["column_name"]).map(quoteId).join(", ")});`;
@@ -969,18 +1088,17 @@
       if (shards) options.push(`shard_count => ${Number(shards)}`);
       sql += `\n\nSELECT create_distributed_table(\n  '${schema.replaceAll("'", "''")}.${table.replaceAll("'", "''")}',\n  '${distribution.replaceAll("'", "''")}',\n  ${options.join(",\n  ")}\n);`;
     }
-    const keywords = new Set(["CREATE", "TABLE", "PRIMARY", "KEY", "NOT", "NULL", "DEFAULT", "CURRENT_TIMESTAMP", "SELECT", "CONSTRAINT", "UNIQUE", "FOREIGN", "REFERENCES", "CHECK", "INDEX", "ON", "USING", "UPDATE", "DELETE", "ACTION", "CASCADE", "RESTRICT", "SET"]);
-    const types = new Set(["BIGINT", "INTEGER", "INT", "TEXT", "BOOLEAN", "UUID", "JSON", "JSONB", "TIMESTAMP", "TIMESTAMPTZ", "NUMERIC"]);
-    preview.innerHTML = sql.split(/('(?:''|[^'])*'|\b[A-Za-z_][A-Za-z_0-9]*\b)/g).map(token => {
-      if (token.startsWith("'")) return `<span class="dg-sql-string">${html(token)}</span>`;
-      const upper = token.toUpperCase();
-      if (keywords.has(upper)) return `<span class="dg-sql-keyword">${html(token)}</span>`;
-      if (types.has(upper)) return `<span class="dg-sql-type">${html(token)}</span>`;
-      if (token.startsWith("create_") || token === "colocate_with" || token === "shard_count")
-        return `<span class="dg-sql-function">${html(token)}</span>`;
-      return html(token);
-    }).join("");
+    if (form.elements.Comment?.value) sql += `\n\nCOMMENT ON TABLE ${quoteId(schema)}.${quoteId(table)} IS ${quoteLiteral(form.elements.Comment.value)};`;
+    document.querySelectorAll(".dg-table-grant-row").forEach(row => {
+      const role = row.querySelector("[data-grant-role]").value || "role";
+      const privileges = [...row.querySelectorAll("[data-grant-privilege]:checked")].map(input => input.value);
+      if (privileges.length) sql += `\n\nGRANT ${privileges.join(", ")} ON TABLE ${quoteId(schema)}.${quoteId(table)} TO ${quoteId(role)};`;
+    });
+    if (form.elements.Owner?.value) sql += `\n\nALTER TABLE ${quoteId(schema)}.${quoteId(table)} OWNER TO ${quoteId(form.elements.Owner.value)};`;
+    preview.textContent = sql;
     document.querySelector("[data-designer-table-name]")?.replaceChildren(document.createTextNode(table));
+    document.querySelector("[data-table-root-title]")?.replaceChildren(document.createTextNode(table));
+    document.querySelector("[data-designer-table-context]")?.replaceChildren(document.createTextNode(`${schema} · ${form.elements.Persistence?.value || "Persistent"} · ${mode || "Local"}`));
   }
 
   async function openCreate(type, target) {
@@ -1017,15 +1135,18 @@
     const modeOptions = [`<option value="Local">Local</option>`,
       `<option value="Reference" ${metadata.canCreateReferenceTable ? "" : "disabled"}>Reference${metadata.canCreateReferenceTable ? "" : " (unsupported)"}</option>`,
       `<option value="Distributed" ${metadata.canCreateDistributedTable ? "" : "disabled"}>Distributed${metadata.canCreateDistributedTable ? "" : " (unsupported)"}</option>`].join("");
+    const installedAccessMethods = [...new Set(metadata.tableAccessMethods || [])];
+    const accessMethodOptions = installedAccessMethods.map(method => `<option value="${html(method)}">${html(method)}</option>`).join("");
+    const unavailableKnownMethods = ["heap", "columnar"].filter(method => !installedAccessMethods.includes(method));
     openModal({ title: "Create Table", eyebrow: `POSTGRESQL · CITUS ${metadata.citusVersion || "N/A"}`,
       description: "Thiết kế table, columns và Citus placement. SQL preview cập nhật ngay khi chỉnh sửa.", variant: "table",
       body: `<div class="dg-table-designer">
         <aside class="dg-designer-sidebar" aria-label="Table object sections">
           <div class="dg-designer-toolbar"><button type="button" aria-label="Thêm object">+</button><button type="button" disabled aria-label="Xóa object">−</button><span></span><button type="button" aria-label="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z"/></svg></button></div>
-          <div class="dg-designer-object"><span class="dg-table-glyph" aria-hidden="true"></span><span><strong data-designer-table-name>table_name</strong><small>${html(schema)} · coordinator</small></span></div>
+          <button type="button" class="dg-designer-object is-active" role="tab" aria-selected="true" data-designer-section="table"><span class="dg-table-glyph" aria-hidden="true"></span><span><strong data-designer-table-name>table_name</strong><small><span data-designer-table-context>${html(schema)} · Local</span> · coordinator</small></span></button>
           <nav class="dg-designer-tree" role="tablist" aria-label="Table definition">
             <div class="dg-designer-tree-group">
-              <button type="button" class="is-active" role="tab" aria-selected="true" data-designer-section="columns"><span class="dg-folder-glyph"></span>Columns <span id="database-column-count" class="dg-tree-count">0</span></button>
+              <button type="button" role="tab" aria-selected="false" data-designer-section="columns"><span class="dg-folder-glyph"></span>Columns <span id="database-column-count" class="dg-tree-count">0</span></button>
               <div id="database-column-list" class="dg-object-tree-list dg-designer-tree-children" role="listbox" aria-label="Table columns"></div>
             </div>
             <div class="dg-designer-tree-group">
@@ -1038,23 +1159,51 @@
           </nav>
         </aside>
         <section class="dg-designer-main">
-          <div class="dg-object-identity">
-            ${field("Schema", schemaSelect(metadata.schemas, schema))}
-            ${field("Name", input("Name", "table_name", "text", "required maxlength=63 autocomplete=off"))}
-            ${field("Persistence", `<select name="Mode">${modeOptions}</select>`)}
-          </div>
           <div class="dg-designer-panels">
-            <section data-designer-panel="columns" class="dg-designer-panel">
+            <section data-designer-panel="table" class="dg-designer-panel">
+              <div class="dg-table-root-editor">
+                <header class="dg-table-root-heading"><span class="dg-table-glyph" aria-hidden="true"></span><strong data-table-root-title>table_name</strong><span>table</span></header>
+                <div class="dg-table-root-properties">
+                  <label><span>Name</span>${input("Name", "table_name", "text", "required maxlength=63 autocomplete=off")}</label>
+                  <label><span>Schema</span>${schemaSelect(metadata.schemas, schema)}</label>
+                  <label><span>Comment</span><textarea name="Comment" rows="2" maxlength="4000" placeholder="Optional table description"></textarea></label>
+                  <label><span>Persistence</span><span class="dg-inline-property"><select name="Persistence"><option value="Persistent">PERSISTENT</option><option value="Unlogged">UNLOGGED</option></select><label class="dg-disabled-option" title="WITH OIDS was removed in PostgreSQL 12"><input name="WithOids" type="checkbox" disabled> With OIDs <small>unsupported</small></label></span></label>
+                  <label><span>Table mode</span><select name="Mode">${modeOptions}</select></label>
+                  <div id="database-distribution-options" class="dg-table-citus-options hidden">
+                    <header><strong>Distributed placement</strong><small>Citus options</small></header>
+                    <div>${field("Distribution column", '<select name="DistributionColumn"></select>')}${field("Colocate with", `<select name="ColocateWith"><option value="">none</option>${metadata.distributedTables.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}</select>`)}${field("Shard count", input("ShardCount", "", "number", "min=1 max=4096 placeholder='server default'"))}</div>
+                  </div>
+                  <label><span>Partition Expression</span><select name="PartitionStrategy"><option value="None">None</option><option value="Range">RANGE</option><option value="List">LIST</option><option value="Hash">HASH</option></select></label>
+                  <label id="database-partition-key-row" class="is-disabled"><span>Partition Key</span><select name="PartitionKey" disabled></select></label>
+                  <label><span>Options</span><span class="dg-option-input"><small>fillfactor</small><input name="FillFactor" type="number" min="10" max="100" placeholder="server default"></span></label>
+                  <label><span>Access Method</span><span class="dg-property-stack"><select name="AccessMethod"><option value="">server default</option><optgroup label="Installed table methods">${accessMethodOptions}</optgroup>${unavailableKnownMethods.length ? `<optgroup label="Unavailable on this server" disabled>${unavailableKnownMethods.map(method => `<option>${method} (not installed)</option>`).join("")}</optgroup>` : ""}</select><small>Table methods từ server. btree/hash/GIN/GiST/BRIN nằm trong Index Designer.</small></span></label>
+                  <label><span>Tablespace</span><select name="Tablespace"><option value="">server default</option>${(metadata.tablespaces || []).map(item => `<option value="${html(item)}">${html(item)}</option>`).join("")}</select></label>
+                  <label><span>Owner</span><select name="Owner"><option value="">current user</option>${(metadata.roles || []).map(role => `<option value="${html(role)}">${html(role)}</option>`).join("")}</select></label>
+                </div>
+                <section class="dg-table-grants"><header><div><strong>Grants</strong><small>Applied before optional owner transfer</small></div><button type="button" id="database-add-table-grant" aria-label="Add table grant">+ Add grant</button></header><div id="database-table-grants"><div class="dg-grants-empty">Nothing to show</div></div></section>
+              </div>
+            </section>
+            <section data-designer-panel="columns" class="dg-designer-panel hidden">
               <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Column Designer</strong><small>PostgreSQL column properties</small></div><div><button type="button" id="database-add-column" class="dg-toolbar-button">+ Add</button><button type="button" id="database-remove-column" class="dg-toolbar-button is-danger">− Remove</button><button type="button" id="database-move-column-up" class="dg-toolbar-button">↑</button><button type="button" id="database-move-column-down" class="dg-toolbar-button">↓</button></div></div>
               <div id="database-column-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No column selected</strong><p>Add a column, then configure its name, catalog type, nullability and default.</p><button type="button" id="database-empty-add-column" class="dg-toolbar-button">+ Add column</button></div>
               <div id="database-column-editor" class="dg-object-editor hidden">
                 <header class="dg-key-editor-heading"><span class="dg-column-icon" aria-hidden="true"></span><strong data-column-editor-title>column_name</strong><span>column</span></header>
-                <div class="dg-property-grid">
-                  <label><span>Name</span><input id="database-column-name" required maxlength="63" autocomplete="off" placeholder="column_name"></label>
-                  <label><span>Data type</span><select id="database-column-type">${metadata.columnTypes.map(type => `<option value="${html(type.name)}">${html(type.displayName)}</option>`).join("")}</select></label>
-                  <fieldset class="dg-option-group"><legend>Constraints</legend><label><input id="database-column-nullable" type="checkbox" checked> Nullable</label><label><input id="database-column-primary" type="checkbox"> Primary key</label></fieldset>
-                  <label><span>Default literal <em>optional</em></span><input id="database-column-default" maxlength="4000" placeholder="value"></label>
-                  <fieldset class="dg-option-group"><legend>Default preset</legend><label><input id="database-column-now" type="checkbox"> CURRENT_TIMESTAMP</label></fieldset>
+                <div class="dg-column-property-form">
+                  <label class="dg-column-property-row"><span>Name</span><input id="database-column-name" required maxlength="63" autocomplete="off" placeholder="column_name"></label>
+                  <label class="dg-column-property-row"><span>Comment</span><textarea id="database-column-comment" maxlength="4000" rows="2" placeholder="Optional column description"></textarea></label>
+                  <label class="dg-column-property-row"><span>Data Type</span><select id="database-column-type">${metadata.columnTypes.map(type => `<option value="${html(type.name)}">${html(type.displayName)}</option>`).join("")}</select></label>
+                  <div class="dg-column-toggle-row"><span></span><div><label><input id="database-column-not-null" type="checkbox"> Not Null</label><label><input id="database-column-primary" type="checkbox"> Primary key</label></div></div>
+                  <label class="dg-column-property-row"><span>Default Expression</span><input id="database-column-default-expression" maxlength="4000" list="database-default-expression-presets" autocomplete="off" placeholder="CURRENT_TIMESTAMP or literal"><datalist id="database-default-expression-presets"><option value="CURRENT_TIMESTAMP"><option value="CURRENT_DATE"><option value="now()"><option value="gen_random_uuid()"><option value="uuid_generate_v4()"><option value="TRUE"><option value="FALSE"><option value="NULL"></datalist></label>
+                  <label class="dg-column-property-row dg-column-identity-kind"><span>Identity Kind</span><select id="database-column-identity-kind" data-identity-option><option value="ByDefault">BY_DEFAULT</option><option value="Always">ALWAYS</option></select></label>
+                  <div class="dg-column-toggle-row"><span></span><div><label><input id="database-column-identity" type="checkbox"> Identity</label></div></div>
+                  <div id="database-column-identity-options" class="dg-identity-options is-disabled">
+                    <label><span>Min</span><input id="database-column-identity-min" data-identity-option type="number" step="1" value="1"></label>
+                    <label><span>Max</span><input id="database-column-identity-max" data-identity-option type="number" step="1" placeholder="default"></label>
+                    <label><span>Step</span><input id="database-column-identity-step" data-identity-option type="number" step="1" value="1"></label>
+                    <label><span>Cache Size</span><input id="database-column-identity-cache" data-identity-option type="number" min="1" step="1" value="1"></label>
+                    <label class="dg-identity-cycle"><span></span><span><input id="database-column-identity-cycle" data-identity-option type="checkbox"> Cycled</span></label>
+                  </div>
+                  <p class="dg-column-form-note">Identity uses a PostgreSQL sequence. Reference/distributed tables require <code>bigint</code>.</p>
                 </div>
               </div>
             </section>
@@ -1131,25 +1280,33 @@
               </div>
             </section>
           </div>
-          <div id="database-distribution-options" class="dg-distribution-panel hidden">
-            ${field("Distribution column", '<select name="DistributionColumn"></select>')}
-            ${field("Colocate with", `<select name="ColocateWith"><option value="">none</option>${metadata.distributedTables.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}</select>`)}
-            ${field("Shard count", input("ShardCount", "", "number", "min=1 max=4096 placeholder='server default'"))}
-          </div>
         </section>
+        <div id="database-sql-preview-splitter" class="dg-preview-splitter" role="separator" aria-label="Resize SQL Preview" aria-orientation="horizontal" tabindex="0"><span aria-hidden="true"></span></div>
         <section class="dg-sql-preview" aria-label="SQL Preview">
-          <header><span class="dg-preview-caret">⌄</span><strong>SQL Preview</strong><small>generated · read-only</small></header>
+          <header><span class="dg-preview-caret">⌄</span><strong>SQL Preview</strong><small>generated · read-only · kéo thanh trên để resize</small></header>
           <pre><code id="database-sql-preview"></code></pre>
         </section>
       </div>`, button: "Create",
       onSubmit: async () => {
         const data = { Schema: form.elements.Schema.value, Name: form.elements.Name.value, Mode: form.elements.Mode.value,
+          Comment: form.elements.Comment.value || null, Persistence: form.elements.Persistence.value, WithOids: false,
+          PartitionStrategy: form.elements.PartitionStrategy.value, PartitionKey: form.elements.PartitionStrategy.value === "None" ? null : form.elements.PartitionKey.value || null,
+          FillFactor: form.elements.FillFactor.value ? Number(form.elements.FillFactor.value) : null,
+          AccessMethod: form.elements.AccessMethod.value || null, Tablespace: form.elements.Tablespace.value || null, Owner: form.elements.Owner.value || null,
           DistributionColumn: form.elements.DistributionColumn?.value || null, ColocateWith: form.elements.ColocateWith?.value || null,
           ShardCount: form.elements.ShardCount?.value ? Number(form.elements.ShardCount.value) : null };
         [...document.querySelectorAll(".database-column-row")].forEach((row, index) => {
           const column = columnRowData(row);
           data[`Columns[${index}].Name`] = column.name; data[`Columns[${index}].DataType`] = column.dataType; data[`Columns[${index}].Nullable`] = column.nullable;
-          data[`Columns[${index}].PrimaryKey`] = column.primaryKey; data[`Columns[${index}].DefaultLiteral`] = column.defaultLiteral || null; data[`Columns[${index}].DefaultCurrentTimestamp`] = column.currentTimestamp;
+          data[`Columns[${index}].PrimaryKey`] = column.primaryKey; data[`Columns[${index}].Comment`] = column.comment || null;
+          data[`Columns[${index}].DefaultExpression`] = column.identity ? null : column.defaultExpression || null;
+          data[`Columns[${index}].DefaultLiteral`] = null; data[`Columns[${index}].DefaultCurrentTimestamp`] = false;
+          data[`Columns[${index}].Identity`] = column.identity; data[`Columns[${index}].IdentityKind`] = column.identityKind;
+          data[`Columns[${index}].IdentityMinimum`] = column.identity && column.identityMinimum ? Number(column.identityMinimum) : null;
+          data[`Columns[${index}].IdentityMaximum`] = column.identity && column.identityMaximum ? Number(column.identityMaximum) : null;
+          data[`Columns[${index}].IdentityIncrement`] = column.identity && column.identityIncrement ? Number(column.identityIncrement) : null;
+          data[`Columns[${index}].IdentityCache`] = column.identity && column.identityCache ? Number(column.identityCache) : null;
+          data[`Columns[${index}].IdentityCycle`] = column.identityCycle;
         });
         [...document.querySelectorAll(".dg-key-row")].forEach((row, index) => {
           const key = keyRowData(row);
@@ -1174,12 +1331,21 @@
           const check = checkRowData(row); if (!check.expression.trim()) throw { responseJSON: { detail: `Check ${check.name || index + 1} cần expression.` } };
           data[`Checks[${index}].Name`] = check.name || null; data[`Checks[${index}].Expression`] = check.expression;
         });
+        [...document.querySelectorAll(".dg-table-grant-row")].forEach((row, index) => {
+          const role = row.querySelector("[data-grant-role]").value;
+          const privileges = [...row.querySelectorAll("[data-grant-privilege]:checked")].map(input => input.value);
+          if (!role || !privileges.length) throw { responseJSON: { detail: `Grant ${index + 1} cần role và ít nhất một privilege.` } };
+          data[`Grants[${index}].Role`] = role;
+          privileges.forEach((privilege, privilegeIndex) => { data[`Grants[${index}].Privileges[${privilegeIndex}]`] = privilege; });
+        });
         await finish(await post($explorer.data("create-table-url"), data));
       } });
     bindDesignerSections(metadata);
     addColumnRow(metadata, { name: "id", nullable: false });
     form.elements.Name.addEventListener("input", () => { updateAutoObjectNames(); updateTableSqlPreview(); });
     bindTableMode();
+    bindSqlPreviewSplitter();
+    document.querySelector("[data-designer-section='table']")?.click();
     fields.oninput = updateTableSqlPreview;
     fields.onchange = updateTableSqlPreview;
     updateTableSqlPreview();

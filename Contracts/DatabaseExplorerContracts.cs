@@ -62,6 +62,9 @@ public sealed record DatabaseActionMetadataResponse(
     IReadOnlyList<string> Schemas,
     IReadOnlyList<DatabaseTypeResponse> ColumnTypes,
     IReadOnlyList<string> DistributedTables,
+    IReadOnlyList<string> TableAccessMethods,
+    IReadOnlyList<string> Tablespaces,
+    IReadOnlyList<string> Roles,
     bool CanCreateReferenceTable,
     bool CanCreateDistributedTable,
     string? CitusVersion);
@@ -85,11 +88,23 @@ public sealed record CreateTableColumnRequest
 {
     [Required, MaxLength(63)] public required string Name { get; init; }
     [Required, MaxLength(128)] public required string DataType { get; init; }
+    [MaxLength(4000)] public string? Comment { get; init; }
     public bool Nullable { get; init; } = true;
     public bool PrimaryKey { get; init; }
     [MaxLength(4000)] public string? DefaultLiteral { get; init; }
     public bool DefaultCurrentTimestamp { get; init; }
+    [MaxLength(4000)] public string? DefaultExpression { get; init; }
+    public bool Identity { get; init; }
+    public DatabaseIdentityKind IdentityKind { get; init; } = DatabaseIdentityKind.ByDefault;
+    public long? IdentityMinimum { get; init; }
+    public long? IdentityMaximum { get; init; }
+    public long? IdentityIncrement { get; init; } = 1;
+    [Range(1, long.MaxValue)] public long? IdentityCache { get; init; } = 1;
+    public bool IdentityCycle { get; init; }
 }
+
+/// <summary>PostgreSQL identity generation mode.</summary>
+public enum DatabaseIdentityKind { ByDefault, Always }
 
 /// <summary>Kind of table key created by the structured table designer.</summary>
 public enum DatabaseKeyKind
@@ -116,6 +131,19 @@ public enum DatabaseReferentialAction
     Cascade,
     SetNull,
     SetDefault
+}
+
+/// <summary>Physical persistence of a new PostgreSQL table.</summary>
+public enum DatabaseTablePersistence { Persistent, Unlogged }
+
+/// <summary>Supported declarative partition strategies.</summary>
+public enum DatabasePartitionStrategy { None, Range, List, Hash }
+
+/// <summary>One role grant applied atomically after table creation.</summary>
+public sealed record CreateTableGrantRequest
+{
+    [Required, MaxLength(63)] public required string Role { get; init; }
+    [MinLength(1), MaxLength(7)] public required IReadOnlyList<string> Privileges { get; init; }
 }
 
 /// <summary>Primary or unique key definition in CREATE TABLE.</summary>
@@ -170,6 +198,16 @@ public sealed record CreateTableRequest
     [MaxLength(64)] public IReadOnlyList<CreateTableForeignKeyRequest> ForeignKeys { get; init; } = [];
     [MaxLength(128)] public IReadOnlyList<CreateTableIndexRequest> Indexes { get; init; } = [];
     [MaxLength(128)] public IReadOnlyList<CreateTableCheckRequest> Checks { get; init; } = [];
+    [MaxLength(4000)] public string? Comment { get; init; }
+    public DatabaseTablePersistence Persistence { get; init; } = DatabaseTablePersistence.Persistent;
+    public bool WithOids { get; init; }
+    public DatabasePartitionStrategy PartitionStrategy { get; init; }
+    [MaxLength(63)] public string? PartitionKey { get; init; }
+    [Range(10, 100)] public int? FillFactor { get; init; }
+    [MaxLength(63)] public string? AccessMethod { get; init; }
+    [MaxLength(63)] public string? Tablespace { get; init; }
+    [MaxLength(63)] public string? Owner { get; init; }
+    [MaxLength(64)] public IReadOnlyList<CreateTableGrantRequest> Grants { get; init; } = [];
     public DatabaseTableMode Mode { get; init; } = DatabaseTableMode.Local;
     [MaxLength(63)] public string? DistributionColumn { get; init; }
     [MaxLength(255)] public string? ColocateWith { get; init; }

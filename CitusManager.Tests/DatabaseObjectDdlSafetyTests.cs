@@ -103,6 +103,102 @@ public sealed class DatabaseObjectDdlSafetyTests
         Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
     }
 
+    [Fact]
+    public void With_oids_is_rejected_for_supported_postgresql_versions()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with { DistributionColumn = null, WithOids = true };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Partitioned_unique_key_requires_partition_key()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            PartitionStrategy = DatabasePartitionStrategy.Range,
+            PartitionKey = "tenant_id",
+            Keys = [new() { Kind = DatabaseKeyKind.Unique, Columns = ["id"] }]
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Unlogged_distributed_table_is_rejected()
+    {
+        var request = Table(DatabaseTableMode.Distributed, "tenant_id") with { Persistence = DatabaseTablePersistence.Unlogged };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Theory]
+    [InlineData("CURRENT_TIMESTAMP")]
+    [InlineData("gen_random_uuid()")]
+    [InlineData("'guest'")]
+    [InlineData("42")]
+    public void Approved_default_expressions_pass(string expression)
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Columns = [new() { Name = "id", DataType = "bigint", Nullable = false, DefaultExpression = expression }]
+        };
+        DatabaseObjectDdlSafety.ValidateCreateTable(request);
+    }
+
+    [Theory]
+    [InlineData("nextval('unsafe')")]
+    [InlineData("1; DROP TABLE users")]
+    [InlineData("now() -- comment")]
+    public void Arbitrary_default_expressions_are_rejected(string expression)
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Columns = [new() { Name = "id", DataType = "bigint", Nullable = false, DefaultExpression = expression }]
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Identity_column_requires_not_null()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Columns = [new() { Name = "id", DataType = "bigint", Nullable = true, Identity = true }]
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Identity_column_rejects_default_and_invalid_sequence_options()
+    {
+        var withDefault = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Columns = [new() { Name = "id", DataType = "bigint", Nullable = false, Identity = true, DefaultExpression = "42" }]
+        };
+        var invalidRange = withDefault with
+        {
+            Columns = [new() { Name = "id", DataType = "bigint", Nullable = false, Identity = true, IdentityMinimum = 10, IdentityMaximum = 1 }]
+        };
+        var zeroStep = withDefault with
+        {
+            Columns = [new() { Name = "id", DataType = "bigint", Nullable = false, Identity = true, IdentityIncrement = 0 }]
+        };
+
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(withDefault));
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(invalidRange));
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(zeroStep));
+    }
+
+    [Theory]
+    [InlineData("SELECT")]
+    [InlineData("REFERENCES")]
+    [InlineData("TRIGGER")]
+    public void Table_privileges_are_closed_tokens(string privilege) =>
+        Assert.Equal(privilege, DatabaseObjectDdlSafety.TablePrivilegeSql(privilege));
+
     [Theory]
     [InlineData(DatabaseReferentialAction.NoAction, "NO ACTION")]
     [InlineData(DatabaseReferentialAction.SetNull, "SET NULL")]
