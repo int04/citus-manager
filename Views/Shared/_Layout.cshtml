@@ -10,6 +10,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
     <title>@ViewData["Title"] · Citus Manager</title>
+    <link rel="stylesheet" href="~/lib/font-awesome/css/font-awesome.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     @* Tailwind source is kept beside the markup for maintainability. Runtime compilation is disabled;
        regenerate wwwroot/css/site.css after changing this block. *@
@@ -280,21 +281,27 @@
             .database-workspace-content { @@apply h-full min-h-0 overflow-hidden; }
             .database-simple-workspace { @@apply h-full overflow-auto p-3; }
             .database-data-workspace { @@apply flex h-full min-h-0 flex-col overflow-hidden bg-white dark:bg-[#22282e]; }
-            .database-grid-toolbar { @@apply flex min-h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#aeb9c2] bg-[#e4e8eb] px-1.5 text-[10px] dark:border-white/10 dark:bg-[#1b2127]; }
+            .database-grid-toolbar { @@apply relative z-50 flex min-h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#aeb9c2] bg-[#e4e8eb] px-1.5 text-[10px] dark:border-white/10 dark:bg-[#1b2127]; }
             .database-grid-toolbar button, .database-grid-toolbar select, .database-grid-toolbar input { @@apply min-h-7 shrink-0 rounded-sm border border-transparent bg-transparent px-2 text-[10px] hover:border-[#aab7c0] hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:border-white/15 dark:hover:bg-white/[.06]; }
+            .database-grid-toolbar .fa { @@apply min-w-3 text-center text-[11px]; }
+            .database-grid-toolbar button .fa + span, .database-grid-toolbar summary .fa + span { @@apply ml-1.5; }
             .database-grid-toolbar input { @@apply w-14 bg-white text-center dark:bg-black/20; }
             .database-grid-toolbar select { @@apply bg-white dark:bg-black/20; }
             .database-toolbar-separator { @@apply mx-1 h-5 w-px shrink-0 bg-[#b5c0c7] dark:bg-white/10; }
             .database-toolbar-spacer { @@apply flex-1; }
             .database-toolbar-menu { @@apply relative shrink-0; }
             .database-toolbar-menu summary { @@apply flex min-h-7 cursor-pointer list-none items-center rounded-sm px-2 text-[10px] hover:bg-white/70 dark:hover:bg-white/[.06]; }
-            .database-toolbar-menu[open] > div { @@apply fixed z-40 mt-1 flex min-w-36 flex-col rounded-sm border border-[#9ba9b2] bg-white p-1 shadow-xl dark:border-white/15 dark:bg-[#171d23]; }
+            .database-toolbar-menu[open] > div { @@apply fixed z-[60] mt-1 flex min-w-36 flex-col rounded-sm border border-[#9ba9b2] bg-white p-1 shadow-xl dark:border-white/15 dark:bg-[#171d23]; }
             .database-toolbar-menu[open] > div button { @@apply w-full justify-start text-left; }
             .database-range-menu summary { @@apply min-w-20 justify-center font-mono font-semibold text-[#36576a] dark:text-sky-200; }
             .database-range-menu[open] > div { @@apply min-w-40; }
             .database-range-menu[open] > div p { @@apply px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-slate-500; }
             .database-range-menu[open] > div hr { @@apply my-1 border-t border-[#d2d9dd] dark:border-white/10; }
             .database-range-menu[open] > div button.is-active { @@apply bg-sky-100 font-semibold text-sky-800 dark:bg-sky-400/15 dark:text-sky-200; }
+            .database-custom-page-size { @@apply mt-1 flex items-center gap-1 border-t border-[#d2d9dd] px-1 pt-1 dark:border-white/10; }
+            .database-custom-page-size span { @@apply px-1 text-[9px] text-slate-500; }
+            .database-custom-page-size input { @@apply min-w-0 flex-1 bg-white font-mono dark:bg-black/20; }
+            .database-custom-page-size button { @@apply w-8! justify-center! px-1!; }
             .database-total-count { @@apply font-mono; }
             .database-column-menu { @@apply max-h-72 overflow-y-auto; }
             .database-column-menu label { @@apply flex min-h-7 cursor-pointer items-center gap-2 whitespace-nowrap px-2 text-[10px] hover:bg-sky-50 dark:hover:bg-sky-400/10; }
@@ -310,6 +317,7 @@
             .database-workspace-grid-scroll { @@apply min-h-0 flex-1 overflow-auto overscroll-contain; scrollbar-color: #8c9aa3 transparent; scrollbar-width: thin; }
             .database-workspace-grid { @@apply table-fixed border-separate border-spacing-0 font-mono text-[11px]; width: max-content; min-width: 100%; }
             .database-workspace-grid th, .database-workspace-grid td { @@apply relative h-9 max-h-24 overflow-hidden border-r border-b border-[#c6d0d6] px-2 text-left align-middle dark:border-white/[.08]; }
+            .database-workspace-grid th, .database-workspace-grid td { user-select: none; -webkit-user-select: none; }
             .database-workspace-grid thead th { @@apply sticky top-0 z-20 bg-[#dfe4e7] text-[#2e4655] dark:bg-[#30373e] dark:text-slate-200; }
             .database-workspace-grid thead th > span { @@apply block truncate font-medium; }
             .database-workspace-grid thead .database-column-title { @@apply flex min-w-0 items-center gap-1; }
@@ -325,6 +333,7 @@
             .database-workspace-grid tbody tr:nth-child(even) td { @@apply bg-[#f0f3f5] dark:bg-white/[.018]; }
             .database-workspace-grid td { @@apply cursor-cell whitespace-nowrap bg-white text-[#263b48] dark:bg-[#22282e] dark:text-slate-200; }
             .database-workspace-grid td.is-selected { @@apply bg-sky-200 text-sky-950 ring-1 ring-inset ring-sky-500 dark:bg-sky-500/25 dark:text-sky-100; }
+            .database-workspace-grid tbody tr td.is-selected { @@apply bg-sky-200 text-sky-950 ring-1 ring-inset ring-sky-500 dark:bg-sky-500/25 dark:text-sky-100; }
             .database-workspace-grid td.is-pending { @@apply bg-amber-100 ring-1 ring-inset ring-amber-400 dark:bg-amber-400/15; }
             .database-workspace-grid tr.is-deleted td { @@apply bg-red-100/80 text-red-700 line-through dark:bg-red-500/10 dark:text-red-300; }
             .database-workspace-grid tr.is-inserted td { @@apply bg-emerald-50 dark:bg-emerald-500/[.07]; }
@@ -334,6 +343,7 @@
             .database-workspace-grid thead .database-row-number { @@apply z-30; position: sticky; top: 0; left: 0; }
             .database-column-resizer { @@apply absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-sky-500; }
             .database-cell-editor { @@apply absolute inset-0 z-10 h-full w-full border-2 border-sky-500 bg-white px-2 font-mono text-[11px] outline-none dark:bg-[#11161c]; }
+            .database-cell-editor { user-select: text; -webkit-user-select: text; }
             .database-readonly-note { @@apply shrink-0 border-t border-[#bdc7cd] bg-[#eef1f3] px-3 py-1 text-[9px] text-[#637783] dark:border-white/10 dark:bg-[#1b2127] dark:text-slate-500; }
             .database-workspace-status { @@apply flex min-h-8 shrink-0 items-center justify-between gap-4 overflow-hidden border-t border-[#343b42] bg-[#20262c] px-2 text-[9px] text-slate-400; }
             .database-workspace-path { @@apply flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap; }
@@ -806,6 +816,7 @@
                 .database-tree-scroll { @@apply max-h-none; }
                 .pma-context-bar { @@apply items-start; }
                 .pma-page-size { @@apply ml-auto min-h-11; }
+                .database-grid-toolbar button, .database-grid-toolbar select, .database-toolbar-menu summary { @@apply min-h-11; }
                 .database-result, .sql-console { @@apply p-2; }
             }
             .empty-state { @@apply rounded-xl border border-dashed border-slate-300 bg-white/50 p-10 text-center text-sm text-slate-500 dark:border-white/15 dark:bg-white/[.02] dark:text-slate-400; }
