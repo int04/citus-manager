@@ -65,7 +65,14 @@ public sealed record ChangeTableModePlan(
     string Schema, string Table, DatabaseTableMode SourceMode, DatabaseTableMode TargetMode,
     string? DistributionColumn, string? ColocateWith, int? ShardCount, bool CascadeToColocated,
     string CatalogFingerprint, long EstimatedRows, long Bytes, string CapabilityName,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings, bool CascadeViaForeignKeys = false,
+    string? ForeignKeyFingerprint = null,
+    IReadOnlyList<TableModeDependencyPlan>? Dependencies = null, int ModePlanVersion = 1,
+    int ForeignKeyConstraintCount = 0);
+
+public sealed record TableModeDependencyPlan(
+    uint Oid, string Schema, string Table, bool CitusManaged, int ColocationId,
+    bool ReferencesTarget, bool ReferencedByTarget, int ForeignKeyCount);
 
 public interface IDatabaseMaintenanceService
 {
@@ -81,7 +88,8 @@ public interface IDatabaseMaintenanceService
     Task ExecuteReindexAsync(ClusterProfile cluster, RebuildIndexPlan plan,
         Func<string, string, Task>? checkpoint, CancellationToken cancellationToken);
     Task<ChangeTableModePlan> BuildModePlanAsync(Guid clusterId, ChangeTableModeRequest request, CancellationToken cancellationToken);
-    Task ExecuteModeChangeAsync(ClusterProfile cluster, ChangeTableModePlan plan, CancellationToken cancellationToken);
+    Task ExecuteModeChangeAsync(ClusterProfile cluster, ChangeTableModePlan plan,
+        Func<string, string, Task>? checkpoint, CancellationToken cancellationToken);
     Task<ExactTableMetricsResult> InspectExactAsync(ClusterProfile cluster, InspectTablePlan plan, CancellationToken cancellationToken);
     Task<string> ReadFingerprintAsync(ClusterProfile cluster, string schema, string table, CancellationToken cancellationToken);
 }
@@ -655,6 +663,9 @@ public sealed partial class DatabaseMaintenanceService(
         var signatures = new List<string>();
         await using (var signatureReader = await signatureCommand.ExecuteReaderAsync(cancellationToken))
             while (await signatureReader.ReadAsync(cancellationToken)) signatures.Add(signatureReader.GetString(0));
+        var dependencies = await ReadTableModeDependenciesAsync(connection, request.Schema, request.Table, cancellationToken);
+        var foreignKeyConstraintCount = await ReadTableModeForeignKeyCountAsync(connection, request.Schema, request.Table, cancellationToken);
+        var dependencyFingerprint = ComputeTableModeDependencyFingerprint(dependencies, foreignKeyConstraintCount);
         var requiredArguments = new List<string>();
         if (capability == "alter_distributed_table")
         {
@@ -665,22 +676,55 @@ public sealed partial class DatabaseMaintenanceService(
         }
         if (requiredArguments.Any(required => !signatures.Any(signature => signature.Contains(required, StringComparison.OrdinalIgnoreCase))))
             throw new InvalidOperationException($"Installed {capability} signature does not support every requested option.");
+        var cascadeViaForeignKeys = false;
+        var cascadeToColocated = request.CascadeToColocated;
+        var warnings = new List<string> { "Table-mode changes may move data; cancellation is guaranteed only before the Citus command starts." };
+        if (foreignKeyConstraintCount > 0 && capability is ("undistribute_table" or "citus_add_local_table_to_metadata"))
+        {
+            if (!signatures.Any(signature => signature.Contains("cascade_via_foreign_keys", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException($"{dependencies.Count} foreign-key related table(s) were found, but installed {capability} lacks cascade_via_foreign_keys.");
+            cascadeViaForeignKeys = true;
+            warnings.Add($"Foreign-key cascade will include {dependencies.Count} related table(s) and {foreignKeyConstraintCount} constraint(s); their catalog state is snapshotted before execution.");
+        }
+        if (foreignKeyConstraintCount > 0 && capability == "alter_distributed_table")
+        {
+            var incompatible = dependencies.Where(x => !x.CitusManaged || x.ColocationId != info.ColocationId).ToList();
+            if (incompatible.Count > 0)
+                throw new InvalidOperationException("Foreign-key related tables are not all Citus-managed in the same colocation group; automatic distributed-layout cascade is unsafe.");
+            cascadeToColocated = true;
+            warnings.Add($"Distributed layout change will cascade to the FK-connected colocated group ({dependencies.Count} related table(s)).");
+        }
+        else if (foreignKeyConstraintCount > 0)
+        {
+            warnings.Add($"Citus will validate {dependencies.Count} foreign-key related table(s) during conversion; any incompatible constraint rolls back the operation.");
+        }
         if (request.TargetMode == DatabaseTableMode.Distributed)
             DatabaseObjectDdlSafety.ValidateIdentifier(request.DistributionColumn ?? info.DistributionColumn ?? string.Empty, nameof(request.DistributionColumn));
         var fingerprint = await ReadFingerprintAsync(connection, request.Schema, request.Table, cancellationToken);
         return new(request.Schema, request.Table, info.Mode, request.TargetMode,
-            request.DistributionColumn, request.ColocateWith, request.ShardCount, request.CascadeToColocated,
+            request.DistributionColumn, request.ColocateWith, request.ShardCount, cascadeToColocated,
             fingerprint, info.EstimatedRows, info.TotalBytes, capability,
-            ["Table-mode changes may move data; cancellation is guaranteed only before the Citus command starts."]);
+            warnings, cascadeViaForeignKeys, dependencyFingerprint, dependencies, 2, foreignKeyConstraintCount);
     }
 
-    public async Task ExecuteModeChangeAsync(ClusterProfile cluster, ChangeTableModePlan plan, CancellationToken cancellationToken)
+    public async Task ExecuteModeChangeAsync(ClusterProfile cluster, ChangeTableModePlan plan,
+        Func<string, string, Task>? checkpoint, CancellationToken cancellationToken)
     {
         if (!string.Equals(await ReadFingerprintAsync(cluster, plan.Schema, plan.Table, cancellationToken), plan.CatalogFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("Table catalog changed after approval.");
         await using var connection = connections.Create(cluster); await connection.OpenAsync(cancellationToken);
+        var currentDependencies = await ReadTableModeDependenciesAsync(connection, plan.Schema, plan.Table, cancellationToken);
+        var currentForeignKeyConstraintCount = await ReadTableModeForeignKeyCountAsync(connection, plan.Schema, plan.Table, cancellationToken);
+        if (plan.ModePlanVersion < 2 || plan.Dependencies is null || plan.ForeignKeyFingerprint is null)
+            throw new InvalidOperationException("This table-mode plan predates foreign-key dependency snapshots. Create a new operation.");
+        if (!string.Equals(ComputeTableModeDependencyFingerprint(currentDependencies, currentForeignKeyConstraintCount), plan.ForeignKeyFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException("Foreign-key dependency graph changed after the operation was planned.");
+        if (checkpoint is not null)
+            await checkpoint("mode-fk-preflight",
+                $"related_tables={currentDependencies.Count}; foreign_keys={currentForeignKeyConstraintCount}; cascade_via_foreign_keys={plan.CascadeViaForeignKeys}; cascade_to_colocated={plan.CascadeToColocated}");
         var relation = $"{plan.Schema}.{plan.Table}";
-        await using var command = new NpgsqlCommand { Connection = connection, CommandTimeout = options.ConversionCommandTimeoutSeconds };
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand { Connection = connection, Transaction = transaction, CommandTimeout = options.ConversionCommandTimeoutSeconds };
         if (plan.TargetMode == DatabaseTableMode.Distributed && plan.SourceMode == DatabaseTableMode.Distributed)
         {
             var arguments = new List<string> { "$1::regclass" }; command.Parameters.AddWithValue(relation);
@@ -702,10 +746,53 @@ public sealed partial class DatabaseMaintenanceService(
         else if (plan.TargetMode == DatabaseTableMode.Reference)
         { command.CommandText = "SELECT create_reference_table($1::regclass)"; command.Parameters.AddWithValue(relation); }
         else if (plan.TargetMode == DatabaseTableMode.ManagedLocal)
-        { command.CommandText = "SELECT citus_add_local_table_to_metadata($1::regclass)"; command.Parameters.AddWithValue(relation); }
+        {
+            command.Parameters.AddWithValue(relation);
+            if (plan.CascadeViaForeignKeys)
+            {
+                command.CommandText = "SELECT citus_add_local_table_to_metadata($1::regclass,cascade_via_foreign_keys=>$2)";
+                command.Parameters.AddWithValue(true);
+            }
+            else command.CommandText = "SELECT citus_add_local_table_to_metadata($1::regclass)";
+        }
         else
-        { command.CommandText = "SELECT undistribute_table($1::regclass)"; command.Parameters.AddWithValue(relation); }
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        {
+            command.Parameters.AddWithValue(relation);
+            if (plan.CascadeViaForeignKeys)
+            {
+                command.CommandText = "SELECT undistribute_table($1::regclass,cascade_via_foreign_keys=>$2)";
+                command.Parameters.AddWithValue(true);
+            }
+            else command.CommandText = "SELECT undistribute_table($1::regclass)";
+        }
+        try
+        {
+            if (checkpoint is not null)
+                await checkpoint("mode-change-command-dispatched", $"capability={plan.CapabilityName}; transaction_open=true");
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            var resultingDependencies = await ReadTableModeDependenciesAsync(connection, plan.Schema, plan.Table, cancellationToken, transaction);
+            var resultingForeignKeyConstraintCount = await ReadTableModeForeignKeyCountAsync(connection, plan.Schema, plan.Table, cancellationToken, transaction);
+            ValidateTableModeDependencyTopology(plan.Dependencies, resultingDependencies);
+            if (resultingForeignKeyConstraintCount != plan.ForeignKeyConstraintCount)
+                throw new InvalidOperationException("Foreign-key constraint count changed during table-mode conversion.");
+            if (plan.CascadeViaForeignKeys && plan.TargetMode == DatabaseTableMode.Local && resultingDependencies.Any(x => x.CitusManaged))
+                throw new InvalidOperationException("Citus did not undistribute every foreign-key related table.");
+            if (plan.CascadeViaForeignKeys && plan.TargetMode == DatabaseTableMode.ManagedLocal && resultingDependencies.Any(x => !x.CitusManaged))
+                throw new InvalidOperationException("Citus did not register every foreign-key related table in metadata.");
+            await ValidateTableModeResultAsync(connection, plan, cancellationToken, transaction);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            if (checkpoint is not null)
+                await checkpoint("mode-change-rolled-back", "Transaction rolled back; original table modes and foreign keys were retained.");
+            throw;
+        }
+        if (checkpoint is not null)
+            await checkpoint("mode-change-committed", "Citus mode transition transaction committed.");
+        if (checkpoint is not null)
+            await checkpoint("mode-fk-validation", $"foreign_keys_preserved=true; related_tables={plan.Dependencies.Count}");
     }
 
     public async Task<ExactTableMetricsResult> InspectExactAsync(
@@ -881,6 +968,115 @@ public sealed partial class DatabaseMaintenanceService(
     {
         await using var connection = connections.Create(cluster); await connection.OpenAsync(cancellationToken);
         return await ReadFingerprintAsync(connection, schema, table, cancellationToken);
+    }
+
+    private async Task<List<TableModeDependencyPlan>> ReadTableModeDependenciesAsync(
+        NpgsqlConnection connection, string schema, string table, CancellationToken token,
+        NpgsqlTransaction? transaction = null)
+    {
+        await using var command = new NpgsqlCommand("""
+            WITH RECURSIVE target AS (
+                SELECT to_regclass(format('%I.%I',$1,$2))::oid AS oid
+            ), connected(oid) AS (
+                SELECT oid FROM target WHERE oid IS NOT NULL
+                UNION
+                SELECT CASE WHEN fk.conrelid=connected.oid THEN fk.confrelid ELSE fk.conrelid END
+                FROM connected
+                JOIN pg_constraint fk ON fk.contype='f'
+                  AND (fk.conrelid=connected.oid OR fk.confrelid=connected.oid)
+            )
+            SELECT relation.oid, namespace.nspname, relation.relname,
+                   distributed.logicalrelid IS NOT NULL, COALESCE(distributed.colocationid,0),
+                   EXISTS(SELECT 1 FROM pg_constraint fk,target
+                          WHERE fk.contype='f' AND fk.conrelid=relation.oid AND fk.confrelid=target.oid),
+                   EXISTS(SELECT 1 FROM pg_constraint fk,target
+                          WHERE fk.contype='f' AND fk.conrelid=target.oid AND fk.confrelid=relation.oid),
+                   (SELECT count(*)::int FROM pg_constraint fk
+                    WHERE fk.contype='f' AND (fk.conrelid=relation.oid OR fk.confrelid=relation.oid))
+            FROM connected
+            JOIN target ON connected.oid<>target.oid
+            JOIN pg_class relation ON relation.oid=connected.oid
+            JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+            LEFT JOIN pg_dist_partition distributed ON distributed.logicalrelid=relation.oid
+            WHERE relation.relkind IN ('r','p')
+            ORDER BY namespace.nspname,relation.relname
+            """, connection, transaction) { CommandTimeout = options.CommandTimeoutSeconds };
+        command.Parameters.AddWithValue(schema);
+        command.Parameters.AddWithValue(table);
+        var result = new List<TableModeDependencyPlan>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+            result.Add(new(reader.GetFieldValue<uint>(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3),
+                reader.GetInt32(4), reader.GetBoolean(5), reader.GetBoolean(6), reader.GetInt32(7)));
+        return result;
+    }
+
+    private async Task<int> ReadTableModeForeignKeyCountAsync(
+        NpgsqlConnection connection, string schema, string table, CancellationToken token,
+        NpgsqlTransaction? transaction = null)
+    {
+        await using var command = new NpgsqlCommand("""
+            WITH RECURSIVE connected(oid) AS (
+                SELECT to_regclass(format('%I.%I',$1,$2))::oid
+                UNION
+                SELECT CASE WHEN fk.conrelid=connected.oid THEN fk.confrelid ELSE fk.conrelid END
+                FROM connected
+                JOIN pg_constraint fk ON fk.contype='f'
+                  AND (fk.conrelid=connected.oid OR fk.confrelid=connected.oid)
+            )
+            SELECT count(*)::int
+            FROM pg_constraint fk
+            WHERE fk.contype='f' AND fk.conrelid IN (SELECT oid FROM connected)
+                                  AND fk.confrelid IN (SELECT oid FROM connected)
+            """, connection, transaction) { CommandTimeout = options.CommandTimeoutSeconds };
+        command.Parameters.AddWithValue(schema);
+        command.Parameters.AddWithValue(table);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(token), CultureInfo.InvariantCulture);
+    }
+
+    private static string ComputeTableModeDependencyFingerprint(
+        IReadOnlyList<TableModeDependencyPlan> dependencies, int foreignKeyConstraintCount)
+    {
+        var snapshot = $"foreign_keys={foreignKeyConstraintCount}\n" + string.Join("\n", dependencies.OrderBy(x => x.Oid).Select(x =>
+            $"{x.Oid}:{x.Schema}.{x.Table}:{x.CitusManaged}:{x.ColocationId}:{x.ReferencesTarget}:{x.ReferencedByTarget}:{x.ForeignKeyCount}"));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(snapshot))).ToLowerInvariant();
+    }
+
+    private static void ValidateTableModeDependencyTopology(
+        IReadOnlyList<TableModeDependencyPlan> expected, IReadOnlyList<TableModeDependencyPlan> actual)
+    {
+        static string Key(TableModeDependencyPlan item) =>
+            $"{item.Oid}:{item.Schema}.{item.Table}:{item.ReferencesTarget}:{item.ReferencedByTarget}:{item.ForeignKeyCount}";
+        if (!expected.Select(Key).OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(
+                actual.Select(Key).OrderBy(x => x, StringComparer.Ordinal), StringComparer.Ordinal))
+            throw new InvalidOperationException("Foreign-key constraints changed during table-mode conversion.");
+    }
+
+    private async Task ValidateTableModeResultAsync(
+        NpgsqlConnection connection, ChangeTableModePlan plan, CancellationToken token, NpgsqlTransaction transaction)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT distributed.logicalrelid IS NOT NULL, COALESCE(distributed.partmethod::text,'')
+            FROM pg_class relation
+            JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+            LEFT JOIN pg_dist_partition distributed ON distributed.logicalrelid=relation.oid
+            WHERE namespace.nspname=$1 AND relation.relname=$2
+            """, connection, transaction) { CommandTimeout = options.CommandTimeoutSeconds };
+        command.Parameters.AddWithValue(plan.Schema);
+        command.Parameters.AddWithValue(plan.Table);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) throw new InvalidOperationException("Converted table was not found.");
+        var citusManaged = reader.GetBoolean(0);
+        var partMethod = reader.GetString(1);
+        var valid = plan.TargetMode switch
+        {
+            DatabaseTableMode.Local => !citusManaged,
+            DatabaseTableMode.ManagedLocal => citusManaged,
+            DatabaseTableMode.Reference => citusManaged && partMethod == "n",
+            DatabaseTableMode.Distributed => citusManaged && partMethod.Length > 0 && partMethod != "n",
+            _ => false
+        };
+        if (!valid) throw new InvalidOperationException("Converted table mode does not match the approved target mode.");
     }
 
     private async Task<ClusterProfile> GetClusterAsync(Guid id, CancellationToken token) =>

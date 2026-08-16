@@ -1975,6 +1975,7 @@
         const metadata = await getMetadata();
         const qualified = `${target.schema}.${target.name}`;
         const current = String(target.tableMode || "local").toLowerCase();
+        let modePreflight = null;
         const modeOptions = current === "local"
           ? '<option value="ManagedLocal">Citus-managed Local</option><option value="Reference">Reference</option><option value="Distributed">Distributed</option>'
           : current === "distributed"
@@ -1988,17 +1989,31 @@
             field("Shard count", input("ShardCount", "", "number", "min=1 max=4096 placeholder='server default'")) +
             '<label class="database-action-check"><input name="CascadeToColocated" type="checkbox"/> Apply shard/layout change to colocated tables</label>' +
             `<label class="database-action-check database-impact-check"><input name="Acknowledged" type="checkbox" required/> ${t("designer.convertAcknowledgement")}</label>` +
-            field(t("designer.typeToConfirm", qualified), input("TypedConfirmation", "", "text", "required autocomplete=off")), button: t("designer.createConversionPlan"),
-          onSubmit: async () => {
+            field(t("designer.typeToConfirm", qualified), input("TypedConfirmation", "", "text", "required autocomplete=off")) +
+            '<div id="database-mode-preflight" class="database-merge-preview hidden"></div>', button: t("maintenance.preview"),
+           onSubmit: async () => {
             if (form.elements.TypedConfirmation.value !== qualified) throw { responseJSON: { detail: t("action.exactConfirmation", qualified) } };
             const distributed = form.elements.TargetMode.value === "Distributed";
-            const result = await jsonPost(explorer.dataset.tableModeOperationUrl, { schema: target.schema, table: target.name,
+            const payload = { schema: target.schema, table: target.name,
               targetMode: form.elements.TargetMode.value, distributionColumn: distributed ? form.elements.DistributionColumn.value || null : null,
               colocateWith: distributed ? form.elements.ColocateWith.value || null : null,
               shardCount: distributed && form.elements.ShardCount.value ? Number(form.elements.ShardCount.value) : null,
               cascadeToColocated: form.elements.CascadeToColocated.checked,
               externalCapacityAndBackupChecksAcknowledged: form.elements.Acknowledged.checked,
-              typedConfirmation: form.elements.TypedConfirmation.value });
+              typedConfirmation: form.elements.TypedConfirmation.value };
+            if (!modePreflight) {
+              modePreflight = await jsonPost(explorer.dataset.tableModePreflightUrl, payload);
+              const preview = document.getElementById("database-mode-preflight");
+              const dependencies = modePreflight.dependencies || [];
+              preview.classList.remove("hidden");
+              preview.innerHTML = `<header><i class="fa fa-check-circle"></i><div><strong>${html(t("maintenance.modePreflight"))}</strong><small>${html(`${modePreflight.sourceMode} → ${modePreflight.targetMode}`)}</small></div></header>` +
+                `<p>${html(modePreflight.cascadeViaForeignKeys ? t("maintenance.modeCascadeFk", dependencies.length, modePreflight.foreignKeyConstraintCount) : t("maintenance.modeDependencies", dependencies.length, modePreflight.foreignKeyConstraintCount))}</p>` +
+                (dependencies.length ? `<ul>${dependencies.map(item => `<li><strong>${html(`${item.schema}.${item.table}`)}</strong><span>${item.citusManaged ? "Citus" : "PostgreSQL Local"} · FK ${item.foreignKeyCount}</span></li>`).join("")}</ul>` : "") +
+                `<p>${(modePreflight.warnings || []).map(html).join("<br>")}</p>`;
+              submit.textContent = t("maintenance.modeQueue");
+              return;
+            }
+            const result = await jsonPost(explorer.dataset.tableModeOperationUrl, payload);
             closeModal(); trackOperation(result);
           } });
         const colocatePicker = bindColocationPicker(metadata.distributedTables, () => target.schema || "public");
@@ -2010,6 +2025,12 @@
           form.elements.DistributionColumn.required = distributed && current !== "distributed";
         });
         mode.dispatchEvent(new Event("change"));
+        form.addEventListener("input", () => {
+          if (!modePreflight) return;
+          modePreflight = null;
+          submit.textContent = t("maintenance.preview");
+          document.getElementById("database-mode-preflight")?.classList.add("hidden");
+        });
       }
     } catch (xhr) {
       showToast(problemText(xhr));

@@ -63,4 +63,37 @@ public sealed class DistributedMergePlanTests
         Assert.Equal(DatabaseTableMode.Reference, restored.TableMode);
         Assert.Equal(3, restored.ReferenceLayout?.PlacementCount);
     }
+
+    [Fact]
+    public void Table_mode_plan_keeps_foreign_key_cascade_snapshot()
+    {
+        var dependency = new TableModeDependencyPlan(27, "public", "orders", true, 4, true, false, 1);
+        var plan = new ChangeTableModePlan("public", "tenants", DatabaseTableMode.Distributed,
+            DatabaseTableMode.Local, null, null, null, false, "catalog", 100, 4096,
+            "undistribute_table", ["warning"], true, "fk-fingerprint", [dependency], 2, 1);
+
+        var restored = JsonSerializer.Deserialize<ChangeTableModePlan>(JsonSerializer.Serialize(plan));
+
+        Assert.NotNull(restored);
+        Assert.True(restored.CascadeViaForeignKeys);
+        Assert.Equal(2, restored.ModePlanVersion);
+        Assert.Equal(1, restored.ForeignKeyConstraintCount);
+        Assert.Equal("orders", Assert.Single(restored.Dependencies!).Table);
+    }
+
+    [Fact]
+    public void Legacy_table_mode_plan_requires_a_new_dependency_snapshot()
+    {
+        const string json = """
+            {"Schema":"public","Table":"tenants","SourceMode":3,"TargetMode":1,
+             "CascadeToColocated":false,"CatalogFingerprint":"catalog","EstimatedRows":1,"Bytes":10,
+             "CapabilityName":"undistribute_table","Warnings":[]}
+            """;
+
+        var restored = JsonSerializer.Deserialize<ChangeTableModePlan>(json);
+
+        Assert.NotNull(restored);
+        Assert.Equal(1, restored.ModePlanVersion);
+        Assert.Null(restored.Dependencies);
+    }
 }

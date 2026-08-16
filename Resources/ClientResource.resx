@@ -33,4 +33,8 @@
   <data name="maintenance.preflightReady" xml:space="preserve"><value>Citus merge preflight passed</value></data>
   <data name="maintenance.preflightBlocked" xml:space="preserve"><value>Merge cannot be queued</value></data>
   <data name="maintenance.temporaryCapacity" xml:space="preserve"><value>Estimated temporary capacity: {0} bytes. Verify actual free disk and WAL headroom on every placement.</value></data>
+  <data name="maintenance.modePreflight" xml:space="preserve"><value>Table-mode dependency preflight passed</value></data>
+  <data name="maintenance.modeDependencies" xml:space="preserve"><value>{0} related table(s) and {1} foreign key(s) will be validated transactionally.</value></data>
+  <data name="maintenance.modeCascadeFk" xml:space="preserve"><value>Citus will automatically cascade through {0} related table(s) and {1} foreign key(s).</value></data>
+  <data name="maintenance.modeQueue" xml:space="preserve"><value>Create and queue conversion</value></data>
 </root>

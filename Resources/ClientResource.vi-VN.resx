@@ -33,4 +33,8 @@
   <data name="maintenance.preflightReady" xml:space="preserve"><value>Citus merge đã vượt qua preflight</value></data>
   <data name="maintenance.preflightBlocked" xml:space="preserve"><value>Không thể đưa merge vào hàng đợi</value></data>
   <data name="maintenance.temporaryCapacity" xml:space="preserve"><value>Dung lượng tạm ước tính: {0} bytes. Cần kiểm tra disk trống và WAL headroom thực tế trên mọi placement.</value></data>
+  <data name="maintenance.modePreflight" xml:space="preserve"><value>Dependency preflight cho Table Mode đã hoàn tất</value></data>
+  <data name="maintenance.modeDependencies" xml:space="preserve"><value>{0} Table liên quan và {1} Foreign Key sẽ được kiểm tra trong transaction.</value></data>
+  <data name="maintenance.modeCascadeFk" xml:space="preserve"><value>Citus sẽ tự động cascade qua {0} Table liên quan và {1} Foreign Key.</value></data>
+  <data name="maintenance.modeQueue" xml:space="preserve"><value>Tạo và đưa conversion vào hàng đợi</value></data>
 </root>

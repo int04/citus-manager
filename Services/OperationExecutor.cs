@@ -105,7 +105,8 @@ public sealed class OperationExecutor(
                                (operation.Kind == OperationKind.MergeRangePartitions && HasStep(operation, "merge-cutover-started")) ||
                                (operation.Kind == OperationKind.RebuildIndex &&
                                 operation.Steps.Any(x => x.Name == "reindex-started")) ||
-                               (operation.Kind == OperationKind.ChangeTableMode && HasStep(operation, "mode-change-started"))
+                               (operation.Kind == OperationKind.ChangeTableMode && HasStep(operation, "mode-change-command-dispatched") &&
+                                !HasStep(operation, "mode-change-rolled-back") && !HasStep(operation, "mode-change-committed"))
                 ? OperationStatus.RecoveryRequired
                 : OperationStatus.Failed;
             operation.SafeError = exception switch
@@ -478,7 +479,8 @@ public sealed class OperationExecutor(
         }
         await SaveStepAsync(operation, "mode-change-started", "Running",
             $"{change.SourceMode} → {change.TargetMode}; capability={change.CapabilityName}", cancellationToken);
-        await maintenance.ExecuteModeChangeAsync(cluster, change, cancellationToken);
+        await maintenance.ExecuteModeChangeAsync(cluster, change, async (name, detail) =>
+            await SaveStepAsync(operation, name, "Succeeded", detail, cancellationToken), cancellationToken);
         await SaveStepAsync(operation, "mode-change-command", "Succeeded", "Citus command completed.", cancellationToken);
         await CompleteAsync(operation, new { change.Schema, change.Table, change.SourceMode, change.TargetMode }, cancellationToken);
     }
