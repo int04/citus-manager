@@ -6,6 +6,16 @@ namespace CitusManager.Tests;
 
 public sealed class DatabaseControllerAuthorizationTests
 {
+    [Fact]
+    public void InspectRow_IsViewerAccessibleAndAntiforgeryProtected()
+    {
+        var method = typeof(DatabaseController).GetMethod(nameof(DatabaseController.InspectRow));
+
+        Assert.NotNull(method);
+        Assert.Empty(method!.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true));
+        Assert.NotEmpty(method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.ValidateAntiForgeryTokenAttribute), true));
+    }
+
     [Theory]
     [InlineData(nameof(DatabaseController.CreateSchema), "Operator")]
     [InlineData(nameof(DatabaseController.CreateTable), "Operator")]

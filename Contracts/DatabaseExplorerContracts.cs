@@ -447,6 +447,55 @@ public sealed record DatabaseCellResponse(string? Value, bool IsNull, bool IsTru
 /// <summary>Stable identity and optimistic concurrency token for one row.</summary>
 public sealed record DatabaseRowIdentity(IReadOnlyDictionary<string, string?> Keys, string Fingerprint);
 
+/// <summary>Lazy request for operational details about one workspace row.</summary>
+public sealed record InspectWorkspaceRowRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(255)] public required string ObjectName { get; init; }
+    public int? NodeId { get; init; }
+    public DatabaseRowIdentity? Identity { get; init; }
+}
+
+/// <summary>One full row value returned by the inspector.</summary>
+public sealed record DatabaseInspectedValueResponse(
+    string Name, string DataType, string? Value, bool IsNull, bool IsTruncated);
+
+/// <summary>One relation in the PostgreSQL partition lineage.</summary>
+public sealed record DatabasePartitionInspectionResponse(
+    string Schema, string Name, int Depth, string? Strategy, string? KeyDefinition,
+    string? Bound, bool IsLeaf, bool IsDefault, string? AccessMethod, long? TotalBytes);
+
+/// <summary>One Citus shard placement and its topology node.</summary>
+public sealed record DatabasePlacementInspectionResponse(
+    long? ShardId, long? PlacementId, string? PlacementState, long? ShardBytes,
+    int? NodeId, int? GroupId, string Host, int Port, string Role, bool IsActive,
+    bool HasMetadata, bool MetadataSynced, bool ShouldHaveShards,
+    string? Rack, string? NodeCluster, string? PhysicalRelation);
+
+/// <summary>Resolved or candidate Citus shard information.</summary>
+public sealed record DatabaseShardInspectionResponse(
+    bool IsExact, string Status, long? ShardId, string? MinimumValue, string? MaximumValue,
+    IReadOnlyList<long> CandidateShardIds, IReadOnlyList<DatabasePlacementInspectionResponse> Placements);
+
+/// <summary>Optional PostgreSQL tuple details for an exactly resolved row.</summary>
+public sealed record DatabaseRowInternalsResponse(
+    long? TableOid, string? PhysicalTable, string? Ctid, string? Xmin, string? Xmax,
+    int? RowBytes, string? Fingerprint);
+
+/// <summary>Read-only row, partition, shard and server diagnostics.</summary>
+public sealed record DatabaseRowInspectionResponse(
+    string Database, string Schema, string ObjectName, DatabaseObjectKind ObjectKind,
+    DatabaseTableMode TableMode, string TargetLabel, bool RowResolved, string? ResolutionReason,
+    string Persistence, string? AccessMethod, string Owner, string? Tablespace,
+    long EstimatedRows, long? TotalBytes, string ReplicaIdentity,
+    string? DistributionMethod, string? DistributionColumn, string? DistributionValue,
+    long? ColocationId, string? ReplicationModel,
+    IReadOnlyList<DatabaseInspectedValueResponse> Values,
+    IReadOnlyList<DatabasePartitionInspectionResponse> Partitions,
+    DatabaseShardInspectionResponse? Shard,
+    DatabaseRowInternalsResponse? Internals,
+    IReadOnlyList<string> Warnings);
+
 /// <summary>One row returned to the workspace grid.</summary>
 public sealed record DatabaseRowResponse(DatabaseRowIdentity? Identity, IReadOnlyList<DatabaseCellResponse> Cells);
 

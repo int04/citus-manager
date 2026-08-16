@@ -13,6 +13,7 @@ namespace CitusManager.Controllers;
 public sealed class DatabaseController(
     IDatabaseExplorerService explorer,
     IDatabaseWorkspaceService workspaces,
+    IDatabaseRowInspectionService rowInspector,
     IDatabaseObjectService objects,
     IOperationService operations) : Controller
 {
@@ -37,6 +38,25 @@ public sealed class DatabaseController(
         catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
         catch (PostgresException exception) { return WorkspaceQueryProblem(exception); }
         catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không thể tải dữ liệu", "PostgreSQL từ chối query workspace."); }
+    }
+
+    [HttpPost("Rows/Inspect"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> InspectRow(
+        Guid clusterId, [FromBody] InspectWorkspaceRowRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await rowInspector.InspectAsync(clusterId, request, cancellationToken)); }
+        catch (DBConcurrencyException)
+        { return DatabaseMutationProblem(409, "Row đã thay đổi", "Refresh workspace rồi mở lại chi tiết row."); }
+        catch (ArgumentException exception)
+        { return DatabaseMutationProblem(400, "Row identity không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException)
+        { return DatabaseMutationProblem(404, "Không tìm thấy row hoặc object", "Refresh workspace rồi thử lại."); }
+        catch (PostgresException exception)
+        { return DatabaseMutationProblem(422, "Không thể đọc chi tiết row", "PostgreSQL từ chối catalog query.", exception.SqlState); }
+        catch (NpgsqlException)
+        { return DatabaseMutationProblem(422, "Không thể đọc chi tiết row", "Database từ chối yêu cầu."); }
     }
 
     [HttpPost("Rows/Count"), ValidateAntiForgeryToken]

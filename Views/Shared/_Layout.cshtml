@@ -377,10 +377,14 @@
             .database-workspace-grid tr.is-inserted td.is-selected { @@apply bg-sky-200 text-sky-950 ring-1 ring-inset ring-sky-500 dark:bg-sky-500/25 dark:text-sky-100; }
             .database-workspace-grid tbody tr.is-row-resized td { @@apply whitespace-pre-wrap break-words align-top; overflow-wrap: anywhere; }
             .database-workspace-grid tbody tr.is-row-resized td > span { @@apply block max-h-full overflow-auto py-1; user-select: text; -webkit-user-select: text; }
-            .database-row-number { @@apply sticky left-0 z-10 w-12 min-w-12 max-w-12 bg-[#e2e7ea] text-center font-normal text-[#667985] dark:bg-[#292f35] dark:text-slate-500; }
+            .database-row-number { @@apply sticky left-0 z-10 w-[58px] min-w-[58px] max-w-[58px] bg-[#e2e7ea] text-center font-normal text-[#667985] dark:bg-[#292f35] dark:text-slate-500; }
             .database-workspace-grid tbody > tr > .database-row-number { position: sticky; left: 0; z-index: 25; background-color: #e2e7ea; background-clip: padding-box; box-shadow: 1px 0 0 #aeb9c2; }
             .database-workspace-grid tbody > tr.is-active-row > .database-row-number { @@apply bg-sky-100 font-semibold text-sky-800 dark:bg-sky-500/20 dark:text-sky-200; box-shadow: inset 3px 0 0 #38bdf8, 1px 0 0 #aeb9c2; }
             .database-workspace-grid tbody > tr > .database-row-number > span { @@apply block; }
+            .database-row-number-content { @@apply flex h-full min-h-7 items-center justify-center gap-1; }
+            .database-row-number-content > span { @@apply min-w-4 truncate text-center; }
+            .database-row-number-content > button { @@apply grid size-6 shrink-0 place-items-center rounded-sm text-sky-600 opacity-55 transition hover:bg-sky-100 hover:text-sky-800 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-300 dark:hover:bg-sky-400/15 dark:hover:text-sky-100; }
+            .database-row-number-content > button .fa { @@apply text-[11px]; }
             .database-row-resizer { @@apply absolute -bottom-0.5 left-0 z-30 h-1.5 w-full cursor-row-resize bg-transparent hover:bg-sky-500; touch-action: none; }
             [data-theme="dark"] .database-workspace-grid tbody > tr > .database-row-number { background-color: #292f35; box-shadow: 1px 0 0 rgba(255,255,255,.1); }
             [data-theme="dark"] .database-workspace-grid tbody > tr.is-active-row > .database-row-number { background-color: rgba(14,165,233,.2); color: #bae6fd; box-shadow: inset 3px 0 0 #38bdf8, 1px 0 0 rgba(255,255,255,.1); }
@@ -415,6 +419,79 @@
             .database-expanded-cell-modal footer { @@apply flex shrink-0 items-center justify-between gap-4 border-t border-[#bdc7cd] px-5 py-3 dark:border-white/10; }
             .database-expanded-cell-modal footer > span { @@apply text-[9px] text-[#71838f] dark:text-slate-500; }
             .database-expanded-cell-modal footer > div { @@apply flex gap-2; }
+            .database-row-inspector-modal { z-index: 90; }
+            .database-row-inspector-modal .database-modal-card { @@apply flex max-h-[92vh] w-[min(96vw,78rem)] max-w-none flex-col overflow-hidden border-[#71838f] bg-[#f2f5f7] p-0 dark:border-white/15 dark:bg-[#151c23]; }
+            .database-row-inspector-modal > .database-modal-card > header { @@apply flex shrink-0 items-center justify-between gap-4 border-b border-[#aeb9c2] bg-gradient-to-b from-white to-[#e4e9ec] px-5 py-3 dark:border-white/10 dark:from-[#28313a] dark:to-[#1b2229]; }
+            .database-row-inspector-modal > .database-modal-card > header span { @@apply font-mono text-[9px] font-semibold tracking-[.14em] text-[#71838f] dark:text-slate-500; }
+            .database-row-inspector-modal > .database-modal-card > header h2 { @@apply mt-1 flex items-center gap-2 font-mono text-sm font-semibold text-[#263f4f] dark:text-slate-100; }
+            .database-row-inspector-modal > .database-modal-card > header h2 .fa { @@apply text-sky-600 dark:text-sky-300; }
+            .database-row-inspector-modal > .database-modal-card > header > button { @@apply grid size-8 shrink-0 place-items-center rounded-sm text-[#607582] hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-400 dark:hover:bg-white/10; }
+            .database-row-inspector-modal > .database-modal-card > main { @@apply min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-5; }
+            .database-row-inspector-modal > .database-modal-card > footer { @@apply flex shrink-0 items-center justify-between border-t border-[#aeb9c2] bg-[#e3e8eb] px-5 py-3 text-[10px] text-[#607582] dark:border-white/10 dark:bg-[#1b2229] dark:text-slate-400; }
+            .database-row-inspector-modal > .database-modal-card > footer span { @@apply flex items-center gap-2; }
+            .database-row-inspector-modal > .database-modal-card > footer button { @@apply min-h-8 rounded-sm border border-[#8fa0aa] bg-white px-5 font-semibold text-[#334f60] shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-white/15 dark:bg-white/[.06] dark:text-slate-200 dark:hover:bg-white/10; }
+            .database-row-inspector-summary { @@apply flex flex-wrap items-center gap-2 rounded-sm border border-[#aeb9c2] bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-[#20272e]; }
+            .database-row-inspector-summary > div:not(.database-row-inspector-status) { @@apply min-w-24; }
+            .database-row-inspector-summary span { @@apply block text-[8px] uppercase tracking-wider text-[#71838f] dark:text-slate-500; }
+            .database-row-inspector-summary b { @@apply block truncate font-mono text-[11px] text-[#263f4f] dark:text-slate-200; }
+            .database-row-inspector-summary > .fa { @@apply text-sky-500; }
+            .database-row-inspector-status { @@apply ml-auto; }
+            .database-row-inspector-badge { @@apply inline-flex items-center rounded-full border border-[#aeb9c2] bg-[#edf1f3] px-2 py-0.5 font-mono text-[9px] font-semibold text-[#526b7a] dark:border-white/10 dark:bg-white/[.05] dark:text-slate-300; }
+            .database-row-inspector-badge.is-ok { @@apply border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-500/10 dark:text-emerald-300; }
+            .database-row-inspector-badge.is-warning { @@apply border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-300; }
+            .database-row-inspector-warnings { @@apply flex items-start gap-3 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-[10px] leading-5 text-amber-800 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200; }
+            .database-row-inspector-warnings > .fa { @@apply mt-1 shrink-0; }
+            .database-row-inspector-section, .database-row-inspector-advanced { @@apply rounded-sm border border-[#aeb9c2] bg-white shadow-sm dark:border-white/10 dark:bg-[#20272e]; }
+            .database-row-inspector-section-title { @@apply flex min-h-11 items-center justify-between gap-3 border-b border-[#d0d8dd] px-4 py-2 dark:border-white/[.07]; }
+            .database-row-inspector-section-title > div { @@apply flex items-center gap-2; }
+            .database-row-inspector-section-title h3 { @@apply text-xs font-semibold text-[#263f4f] dark:text-slate-100; }
+            .database-row-inspector-section-title .fa { @@apply text-sky-600 dark:text-sky-300; }
+            .database-row-inspector-section-title span { @@apply rounded bg-[#e8edf0] px-2 py-0.5 font-mono text-[8px] text-[#607582] dark:bg-white/[.06] dark:text-slate-400; }
+            .database-row-inspector-section-title button { @@apply ml-auto flex min-h-7 items-center gap-2 rounded-sm border border-[#aeb9c2] px-2 text-[9px] font-semibold hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-white/15 dark:hover:bg-white/[.06]; }
+            .database-row-inspector-fields { @@apply grid grid-cols-1 gap-px bg-[#d0d8dd] sm:grid-cols-2 lg:grid-cols-4 dark:bg-white/[.07]; }
+            .database-row-inspector-fields > div { @@apply min-w-0 bg-white px-4 py-3 dark:bg-[#20272e]; }
+            .database-row-inspector-fields dt { @@apply mb-1 text-[8px] uppercase tracking-wider text-[#71838f] dark:text-slate-500; }
+            .database-row-inspector-fields dd { @@apply break-words font-mono text-[10px] text-[#263f4f] dark:text-slate-200; overflow-wrap: anywhere; }
+            .database-row-inspector-note, .database-row-inspector-empty { @@apply px-4 py-3 text-[10px] leading-5 text-[#607582] dark:text-slate-400; }
+            .database-row-inspector-table-wrap { @@apply max-h-[45vh] overflow-auto; }
+            .database-row-inspector-table-wrap table { @@apply w-full min-w-[46rem] border-separate border-spacing-0 font-mono text-[10px]; }
+            .database-row-inspector-table-wrap th { @@apply sticky top-0 z-10 border-b border-[#aeb9c2] bg-[#e3e8eb] px-3 py-2 text-left font-semibold text-[#526b7a] dark:border-white/10 dark:bg-[#293139] dark:text-slate-300; }
+            .database-row-inspector-table-wrap td { @@apply border-b border-[#d8dfe3] px-3 py-2 align-top dark:border-white/[.06]; }
+            .database-row-inspector-table-wrap td:first-child { @@apply max-w-48 text-[#263f4f] dark:text-slate-200; }
+            .database-row-inspector-table-wrap code { @@apply whitespace-nowrap bg-transparent p-0 text-[9px] text-violet-700 dark:text-violet-300; }
+            .database-row-inspector-table-wrap td:last-child button { @@apply grid size-7 place-items-center rounded-sm text-sky-600 hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-300 dark:hover:bg-sky-400/10; }
+            .database-row-inspector-value { @@apply min-w-64 max-w-2xl; }
+            .database-row-inspector-value pre { @@apply max-h-40 overflow-auto whitespace-pre-wrap break-words bg-transparent p-0 text-[10px] leading-5 text-[#263f4f] dark:text-slate-200; overflow-wrap: anywhere; user-select: text; }
+            .database-row-inspector-value em { @@apply font-mono not-italic text-[#84939c] dark:text-slate-500; }
+            .database-row-inspector-chain { @@apply p-3; }
+            .database-row-inspector-chain li { @@apply grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-start gap-3 border-b border-[#d8dfe3] px-1 py-3 last:border-0 dark:border-white/[.06]; }
+            .database-row-inspector-chain li > span { @@apply grid size-7 place-items-center rounded-full bg-sky-100 font-mono text-[9px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300; }
+            .database-row-inspector-chain li b { @@apply font-mono text-[10px]; }
+            .database-row-inspector-chain li small { @@apply ml-2 text-[8px] text-[#71838f] dark:text-slate-500; }
+            .database-row-inspector-chain li p { @@apply mt-1 break-words font-mono text-[9px] text-[#607582] dark:text-slate-400; }
+            .database-row-inspector-chain li > strong { @@apply whitespace-nowrap font-mono text-[9px] font-normal text-[#71838f] dark:text-slate-500; }
+            .database-row-inspector-section > details { @@apply border-t border-[#d0d8dd] px-4 py-3 text-[10px] dark:border-white/[.07]; }
+            .database-row-inspector-section > details summary { @@apply cursor-pointer font-semibold text-sky-700 dark:text-sky-300; }
+            .database-row-inspector-candidates { @@apply mt-3 flex flex-wrap gap-1; }
+            .database-row-inspector-placements { @@apply grid gap-3 p-3 md:grid-cols-2; }
+            .database-row-inspector-placements article { @@apply overflow-hidden rounded-sm border border-[#b9c4ca] bg-[#f8fafb] dark:border-white/10 dark:bg-[#1a2128]; }
+            .database-row-inspector-placements article > header { @@apply flex items-center justify-between gap-3 border-b border-[#d0d8dd] px-3 py-2 dark:border-white/[.07]; }
+            .database-row-inspector-placements article > header > div { @@apply flex min-w-0 items-center gap-2; }
+            .database-row-inspector-placements article > header .fa { @@apply text-sky-600 dark:text-sky-300; }
+            .database-row-inspector-placements article > header b { @@apply truncate font-mono text-[10px]; }
+            .database-row-inspector-placements article dl { @@apply grid grid-cols-2 gap-px bg-[#d8dfe3] dark:bg-white/[.06]; }
+            .database-row-inspector-placements article dl > div { @@apply min-w-0 bg-[#f8fafb] px-3 py-2 dark:bg-[#1a2128]; }
+            .database-row-inspector-placements article dt { @@apply mb-1 text-[8px] uppercase text-[#71838f] dark:text-slate-500; }
+            .database-row-inspector-placements article dd { @@apply break-words font-mono text-[9px] text-[#334f60] dark:text-slate-300; overflow-wrap: anywhere; }
+            .database-row-inspector-advanced > summary { @@apply cursor-pointer list-none px-4 py-3 text-[10px] font-semibold text-[#526b7a] hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 dark:text-slate-300 dark:hover:bg-white/[.03]; }
+            .database-row-inspector-advanced > summary .fa { @@apply mr-2 text-sky-600 dark:text-sky-300; }
+            .database-row-inspector-loading, .database-row-inspector-error { @@apply grid min-h-80 place-items-center content-center gap-3 text-center text-[#607582] dark:text-slate-400; }
+            .database-row-inspector-loading b { @@apply text-xs text-[#334f60] dark:text-slate-200; }
+            .database-row-inspector-loading span { @@apply font-mono text-[9px]; }
+            .database-row-inspector-error .fa { @@apply text-3xl text-red-500; }
+            .database-row-inspector-error h3 { @@apply text-sm font-semibold text-red-700 dark:text-red-300; }
+            .database-row-inspector-error p { @@apply max-w-xl text-[10px]; }
+            .database-row-inspector-error button { @@apply mt-2 rounded-sm border border-[#aeb9c2] bg-white px-4 py-2 text-[10px] font-semibold text-[#334f60] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-white/15 dark:bg-white/[.06] dark:text-slate-200; }
             .database-readonly-note { @@apply shrink-0 border-t border-[#bdc7cd] bg-[#eef1f3] px-3 py-1 text-[9px] text-[#637783] dark:border-white/10 dark:bg-[#1b2127] dark:text-slate-500; }
             .database-workspace-status { @@apply flex min-h-11 shrink-0 items-center justify-between gap-5 overflow-hidden border-t border-[#aeb9c2] bg-gradient-to-b from-[#e8edf0] to-[#cdd6dc] px-3 py-2 text-xs text-[#4b6372] shadow-inner dark:border-[#3c454d] dark:from-[#252d34] dark:to-[#181e24] dark:text-slate-300; }
             .database-workspace-path { @@apply flex min-w-0 items-center gap-2.5 overflow-hidden whitespace-nowrap; }

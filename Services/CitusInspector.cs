@@ -24,7 +24,7 @@ public sealed class CitusInspector(ICitusConnectionFactory connections) : ICitus
         "citus_drain_node", "citus_remove_node", "alter_distributed_table",
         "create_distributed_table", "create_reference_table", "citus_schema_distribute",
         "citus_schema_move", "citus_schema_undistribute", "isolate_tenant_to_new_shard",
-        "citus_move_shard_placement"
+        "citus_move_shard_placement", "get_shard_id_for_distribution_column"
     ];
 
     public async Task<ClusterInventoryResponse> CollectAsync(

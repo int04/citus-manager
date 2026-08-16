@@ -23,6 +23,8 @@ public sealed class DatabaseExplorerOptions
     public int MaxRowsPerResultSet { get; set; } = 1000;
     public int MaxResultSets { get; set; } = 10;
     public int MaxCellCharacters { get; set; } = 65_536;
+    public int RowInspectionTimeoutSeconds { get; set; } = 10;
+    public int MaxInspectionRowCharacters { get; set; } = 1_048_576;
     public int ConversionCommandTimeoutSeconds { get; set; } = 3600;
 }
 
