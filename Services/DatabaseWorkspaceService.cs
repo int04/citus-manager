@@ -96,7 +96,15 @@ public sealed class DatabaseWorkspaceService(
         var pageSize = Math.Clamp(request.PageSize, 1, 500);
         var page = Math.Max(1, request.Page);
         var offset = checked((page - 1L) * pageSize);
-        var sql = $"SELECT cm.*, md5(to_jsonb(cm)::text) AS __cm_fingerprint FROM {qualified} AS cm" +
+        // Ask PostgreSQL for its canonical text representation instead of making Npgsql
+        // materialize every catalog/custom/array type into a CLR value first. This keeps
+        // workspace rows readable for extension and user-defined types as well.
+        // Internal aliases deliberately differ from source column names so ORDER BY
+        // continues to bind to the native PostgreSQL value (numeric/date/etc.), not
+        // to this text-only response projection.
+        var projection = string.Join(", ", metadata.Columns.Select((column, index) =>
+            $"cm.{Quote(column.Name)}::text AS {Quote($"__cm_value_{index}")}"));
+        var sql = $"SELECT {projection}, md5(to_jsonb(cm)::text) AS __cm_fingerprint FROM {qualified} AS cm" +
                   (where.Length == 0 ? "" : $" WHERE ({where})") +
                   (order.Length == 0 ? "" : $" ORDER BY {order}") + $" LIMIT {pageSize + 1} OFFSET {offset}";
         DatabaseWorkspaceQueryValidator.Validate(sql, request.Schema, request.ObjectName);
@@ -112,7 +120,7 @@ public sealed class DatabaseWorkspaceService(
             var keys = new Dictionary<string, string?>(StringComparer.Ordinal);
             for (var i = 0; i < metadata.Columns.Count; i++)
             {
-                var value = reader.IsDBNull(i) ? null : Convert.ToString(reader.GetValue(i), CultureInfo.InvariantCulture);
+                var value = reader.IsDBNull(i) ? null : PostgreSqlValueFormatter.Format(reader.GetValue(i));
                 var truncated = value?.Length > options.MaxCellCharacters;
                 if (truncated) value = value![..options.MaxCellCharacters];
                 cells.Add(new(value, value is null, truncated));
@@ -163,7 +171,7 @@ public sealed class DatabaseWorkspaceService(
         var predicates = KeyPredicates(request.Identity.Keys, keys, parameters, ref index);
         parameters.Add(new($"p{index}", request.Identity.Fingerprint));
         predicates.Add($"md5(to_jsonb(t)::text) = @p{index}");
-        var sql = $"SELECT {Quote(request.Column)} FROM {Qualified(request.Schema, request.ObjectName)} AS t WHERE {string.Join(" AND ", predicates)}";
+        var sql = $"SELECT t.{Quote(request.Column)}::text FROM {Qualified(request.Schema, request.ObjectName)} AS t WHERE {string.Join(" AND ", predicates)}";
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction)) await readOnly.ExecuteNonQueryAsync(ct);
         await using var command = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = options.CommandTimeoutSeconds };
@@ -172,7 +180,7 @@ public sealed class DatabaseWorkspaceService(
         await transaction.CommitAsync(ct);
         if (value is null) throw new DBConcurrencyException("Row changed or no longer exists.");
         if (value is DBNull) return new(null, true, false);
-        return new(Convert.ToString(value, CultureInfo.InvariantCulture), false, false);
+        return new(PostgreSqlValueFormatter.Format(value), false, false);
     }
 
     public async Task<ApplyTableChangesResponse> ApplyAsync(

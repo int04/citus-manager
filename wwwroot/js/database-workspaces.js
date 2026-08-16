@@ -1,3 +1,9 @@
+import { createJsonApi, html, problem } from "./database-workspaces/shared.js";
+import { attachExpandedEditorButton } from "./database-workspaces/cell-editor.js";
+import { bindWorkspaceTabInteractions } from "./database-workspaces/tabs.js";
+import { createCsvActions } from "./database-workspaces/csv.js";
+import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-workspaces.js";
+
 (() => {
   const explorer = document.querySelector("[data-database-explorer]");
   if (!explorer) return;
@@ -13,30 +19,23 @@
   const storageKey = `cm-workspaces:v2:${explorer.dataset.workspaceUser || "anonymous"}:${clusterKey}:${nodeId || "coordinator"}`;
   const workspaces = new Map();
   let activeKey = null;
-  let draggedWorkspaceKey = null;
   let consoleSequence = 0;
   const defaultPageSize = 20;
+  const defaultRowHeight = 36;
   const pageSizeOptions = [5, 10, 15, 20, 25, 50, 100, 200, 500];
 
-  const html = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  const problem = async response => {
-    try { const body = await response.json(); return body.detail || body.title || "Database request failed."; }
-    catch { return "Database request failed."; }
-  };
-  const jsonApi = async (url, body, signal) => {
-    const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "RequestVerificationToken": token }, body: JSON.stringify(body), signal });
-    if (!response.ok) throw new Error(await problem(response));
-    return response.json();
-  };
+  const jsonApi = createJsonApi(token);
   const showError = message => { feedback.textContent = message; feedback.classList.remove("hidden"); feedback.focus(); };
   const reportError = error => { if (error?.name !== "AbortError") showError(error?.message || String(error)); };
   const clearError = () => { feedback.textContent = ""; feedback.classList.add("hidden"); };
+  const { exportCsv, previewCsvImport } = createCsvActions({ stage, explorer, token, showError, loadRows });
+  const { renderChartWorkspace, renderSqlWorkspace } = createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId, updateFooter });
   const keyOf = (schema, name, type = "data") => `${nodeId || "coordinator"}:${schema}.${name}:${type}`;
   const icon = type => type === "sql" ? "⌘" : type === "structure" ? "▦" : type === "ddl" ? "DDL" : type === "chart" ? "⌁" : "▤";
 
   function persist() {
     const safe = [...workspaces.values()].filter(x => !x.dirty).map(x => ({ key: x.key, type: x.type, schema: x.schema, name: x.name, displayName: x.displayName,
-      page: x.page, pageSize: x.pageSize, where: x.where, orderBy: x.orderBy, widths: x.widths, hidden: x.hidden }));
+      page: x.page, pageSize: x.pageSize, where: x.where, orderBy: x.orderBy, widths: x.widths, rowHeights: x.rowHeights, hidden: x.hidden }));
     sessionStorage.setItem(storageKey, JSON.stringify({ activeKey, workspaces: safe }));
   }
   function ensureCapacity() {
@@ -95,7 +94,7 @@
   function duplicateWorkspace(key) {
     const source = workspaces.get(key); if (!source || !ensureCapacity()) return;
     const duplicateKey = `${source.key}:copy:${Date.now()}`, copyNumber = [...workspaces.values()].filter(ws => ws.key.startsWith(`${source.key}:copy:`)).length + 1;
-    const duplicate = { ...source, key: duplicateKey, displayName: `${source.displayName || source.name} (copy${copyNumber > 1 ? ` ${copyNumber}` : ""})`, dirty: false, used: Date.now(), autoTimer: null, queryAbort: null, countAbort: null, sqlAbort: null };
+    const duplicate = { ...source, key: duplicateKey, displayName: `${source.displayName || source.name} (copy${copyNumber > 1 ? ` ${copyNumber}` : ""})`, widths: {...(source.widths||{})}, rowHeights: {...(source.rowHeights||{})}, hidden: [...(source.hidden||[])], dirty: false, used: Date.now(), autoTimer: null, queryAbort: null, countAbort: null, sqlAbort: null };
     if (source.type === "data") Object.assign(duplicate, { rows: [], metadata: null, loaded: false, pending: new Map(), deleted: new Set(), inserted: [], selected: new Set(), autoRefresh: 0 });
     else if (source.type === "structure" || source.type === "ddl") Object.assign(duplicate, { loaded: false, html: null, ddl: null });
     else if (source.type === "chart") Object.assign(duplicate, { rows: [...source.rows], columns: [...source.columns], loaded: true });
@@ -108,88 +107,14 @@
     let targetIndex = without.findIndex(([key]) => key === targetKey); if (after) targetIndex++;
     without.splice(targetIndex, 0, source); workspaces.clear(); without.forEach(([key, ws]) => workspaces.set(key, ws)); renderTabs(sourceKey); persist();
   }
-  tabs.addEventListener("click", event => {
-    const tab = event.target.closest("[data-workspace-key]"); if (!tab) return;
-    if (event.target.closest(".database-workspace-tab-close")) closeWorkspace(tab.dataset.workspaceKey); else activate(tab.dataset.workspaceKey);
-  });
-  tabs.addEventListener("auxclick", event => { if (event.button === 1) closeWorkspace(event.target.closest("[data-workspace-key]")?.dataset.workspaceKey); });
-  const tabContextMenu = document.createElement("div");
-  tabContextMenu.className = "database-workspace-context-menu hidden"; tabContextMenu.role = "menu"; tabContextMenu.setAttribute("aria-label", "Tác vụ không gian làm việc");
-  tabContextMenu.innerHTML = `<button type="button" role="menuitem" data-tab-action="close"><i class="fa fa-times" aria-hidden="true"></i><span>Đóng tab</span><kbd>Ctrl+W</kbd></button>
-    <button type="button" role="menuitem" data-tab-action="close-others"><i class="fa fa-times-circle-o" aria-hidden="true"></i><span>Đóng mọi tab trừ tab này</span></button>
-    <button type="button" role="menuitem" data-tab-action="close-right"><i class="fa fa-step-forward" aria-hidden="true"></i><span>Đóng tab bên phải</span></button>
-    <button type="button" role="menuitem" data-tab-action="close-left"><i class="fa fa-step-backward" aria-hidden="true"></i><span>Đóng tab bên trái</span></button>
-    <div role="separator"></div>
-    <button type="button" role="menuitem" data-tab-action="duplicate"><i class="fa fa-clone" aria-hidden="true"></i><span>Nhân bản</span></button>
-    <div role="separator"></div>
-    <button type="button" role="menuitem" data-tab-action="close-all"><i class="fa fa-window-close-o" aria-hidden="true"></i><span>Đóng toàn bộ tab</span></button>`;
-  document.body.appendChild(tabContextMenu);
-  const hideTabContextMenu = () => { tabContextMenu.classList.add("hidden"); tabContextMenu.removeAttribute("data-workspace-key"); };
-  function showTabContextMenu(event, key) {
-    const keys = [...workspaces.keys()], index = keys.indexOf(key); if (index < 0) return;
-    event.preventDefault(); tabContextMenu.dataset.workspaceKey = key;
-    tabContextMenu.querySelector('[data-tab-action="close-left"]').disabled = index === 0;
-    tabContextMenu.querySelector('[data-tab-action="close-right"]').disabled = index === keys.length - 1;
-    tabContextMenu.querySelector('[data-tab-action="close-others"]').disabled = keys.length === 1;
-    tabContextMenu.classList.remove("hidden"); tabContextMenu.style.left = "0px"; tabContextMenu.style.top = "0px";
-    const bounds = tabContextMenu.getBoundingClientRect(), gutter = 8;
-    tabContextMenu.style.left = `${Math.max(gutter, Math.min(event.clientX, innerWidth - bounds.width - gutter))}px`;
-    tabContextMenu.style.top = `${Math.max(gutter, Math.min(event.clientY, innerHeight - bounds.height - gutter))}px`;
-    tabContextMenu.querySelector("button:not(:disabled)")?.focus();
-  }
-  tabs.addEventListener("contextmenu", event => { const tab = event.target.closest("[data-workspace-key]"); if (tab) showTabContextMenu(event, tab.dataset.workspaceKey); });
-  tabs.addEventListener("keydown", event => {
-    if (!(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
-    const tab = event.target.closest("[data-workspace-key]"); if (!tab) return; const bounds = tab.getBoundingClientRect();
-    showTabContextMenu({ preventDefault: () => event.preventDefault(), clientX: bounds.left + 12, clientY: bounds.bottom - 2 }, tab.dataset.workspaceKey);
-  });
-  tabContextMenu.addEventListener("click", event => {
-    const action = event.target.closest("[data-tab-action]")?.dataset.tabAction, key = tabContextMenu.dataset.workspaceKey; if (!action || !key) return;
-    const keys = [...workspaces.keys()], index = keys.indexOf(key); hideTabContextMenu();
-    if (action === "close") closeWorkspace(key);
-    else if (action === "close-all") closeWorkspaces(keys);
-    else if (action === "close-others") closeWorkspaces(keys.filter(candidate => candidate !== key));
-    else if (action === "close-right") closeWorkspaces(keys.slice(index + 1));
-    else if (action === "close-left") closeWorkspaces(keys.slice(0, index));
-    else if (action === "duplicate") duplicateWorkspace(key);
-  });
-  tabContextMenu.addEventListener("keydown", event => {
-    if (event.key === "Escape") { event.preventDefault(); const key = tabContextMenu.dataset.workspaceKey; hideTabContextMenu(); tabs.querySelector(`[data-workspace-key="${CSS.escape(key || "")}"]`)?.focus(); return; }
-    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-    event.preventDefault(); const items = [...tabContextMenu.querySelectorAll("button:not(:disabled)")], current = items.indexOf(document.activeElement);
-    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; items[next]?.focus();
-  });
+  bindWorkspaceTabInteractions({ tabs, workspaces, getActiveKey: () => activeKey, activate, closeWorkspace, closeWorkspaces, duplicateWorkspace, reorderWorkspace });
   document.addEventListener("pointerdown", event => {
-    if (!tabContextMenu.classList.contains("hidden") && !tabContextMenu.contains(event.target)) hideTabContextMenu();
     document.querySelectorAll(".database-query-suggestions:not(.hidden)").forEach(box => { if (!box.parentElement.contains(event.target)) box.classList.add("hidden"); });
-  });
-  addEventListener("resize", hideTabContextMenu); tabs.addEventListener("scroll", hideTabContextMenu, { passive: true });
-  tabs.addEventListener("dragstart", event => {
-    const tab = event.target.closest("[data-workspace-key]"); if (!tab) return; hideTabContextMenu(); draggedWorkspaceKey = tab.dataset.workspaceKey; tab.classList.add("is-dragging");
-    event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", draggedWorkspaceKey);
-  });
-  tabs.addEventListener("dragover", event => {
-    const target = event.target.closest("[data-workspace-key]"); if (!target || target.dataset.workspaceKey === draggedWorkspaceKey) return;
-    event.preventDefault(); event.dataTransfer.dropEffect = "move"; tabs.querySelectorAll(".is-drop-before,.is-drop-after").forEach(tab => tab.classList.remove("is-drop-before", "is-drop-after"));
-    target.classList.add(event.clientX >= target.getBoundingClientRect().left + target.offsetWidth / 2 ? "is-drop-after" : "is-drop-before");
-  });
-  tabs.addEventListener("drop", event => {
-    const target = event.target.closest("[data-workspace-key]"); if (!target || !draggedWorkspaceKey) return; event.preventDefault();
-    const sourceKey = draggedWorkspaceKey; draggedWorkspaceKey = null; reorderWorkspace(sourceKey, target.dataset.workspaceKey, event.clientX >= target.getBoundingClientRect().left + target.offsetWidth / 2);
-  });
-  tabs.addEventListener("dragend", () => { draggedWorkspaceKey = null; tabs.querySelectorAll(".is-dragging,.is-drop-before,.is-drop-after").forEach(tab => tab.classList.remove("is-dragging", "is-drop-before", "is-drop-after")); });
-  tabs.addEventListener("keydown",event=>{if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;event.preventDefault();const keys=[...workspaces.keys()],current=keys.indexOf(activeKey);const next=event.key==="Home"?0:event.key==="End"?keys.length-1:(current+(event.key==="ArrowRight"?1:-1)+keys.length)%keys.length;activate(keys[next]);tabs.querySelector(`[data-workspace-key="${CSS.escape(keys[next])}"]`)?.focus();});
-  document.addEventListener("keydown", event => {
-    if (event.ctrlKey && event.key.toLowerCase() === "w" && activeKey) { event.preventDefault(); closeWorkspace(activeKey); }
-    if (event.ctrlKey && (event.key === "PageDown" || event.key === "PageUp") && workspaces.size) {
-      event.preventDefault(); const keys = [...workspaces.keys()], current = keys.indexOf(activeKey);
-      activate(keys[(current + (event.key === "PageDown" ? 1 : -1) + keys.length) % keys.length]);
-    }
   });
 
   async function openObject(schema, name, type = "data") {
     const key = keyOf(schema, name, type); if (workspaces.has(key)) return activate(key); if (!ensureCapacity()) return;
-    const ws = { key, type, schema, name, page: 1, pageSize: defaultPageSize, where: "", orderBy: "", widths: {}, hidden: [], rows: [],
+    const ws = { key, type, schema, name, page: 1, pageSize: defaultPageSize, where: "", orderBy: "", widths: {}, rowHeights: {}, hidden: [], rows: [],
       metadata: null, dirty: false, pending: new Map(), deleted: new Set(), inserted: [], selected: new Set(), used: Date.now(), exactCount: null };
     workspaces.set(key, ws); activeKey = key; renderTabs(); empty.classList.add("hidden"); stage.classList.remove("hidden"); showWorkspaceLoading();
     try { await hydrateWorkspace(ws); }
@@ -216,7 +141,7 @@
         page: ws.page, pageSize: ws.pageSize, where: ws.where || null, orderBy: ws.orderBy || null }, controller.signal);
       ws.rows = data.rows; ws.columns = data.columns; ws.hasPrevious = data.hasPrevious; ws.hasNext = data.hasNext; ws.estimatedRows = data.estimatedRows;
       const loadedEnd=ws.rows.length?(ws.page-1)*ws.pageSize+ws.rows.length:0,knownMinimum=loadedEnd+(ws.hasNext?1:0);
-      ws.observedMinimum=Math.max(ws.observedMinimum||0,knownMinimum);ws.selected.clear();ws.loaded=true;
+      ws.observedMinimum=Math.max(ws.observedMinimum||0,knownMinimum);ws.selected.clear();ws.activeRow=null;ws.loaded=true;
     } finally {
       if (ws.queryAbort === controller) { ws.queryAbort = null; setGridLoading(ws, false, message); if(activeKey===ws.key&&ws.loaded)renderDataWorkspace(ws); }
     }
@@ -256,12 +181,14 @@
   }
   function pageRangeOptions(ws){const total=ws.exactCount??Math.max(Number(ws.estimatedRows)||0,ws.observedMinimum||0),exactLast=ws.exactCount==null?null:Math.max(1,Math.ceil(ws.exactCount/ws.pageSize)),knownLast=Math.max(exactLast??Math.ceil(total/ws.pageSize),ws.page+(ws.hasNext?1:0),1);let pages;if(knownLast<=500)pages=Array.from({length:knownLast},(_,index)=>index+1);else{const candidates=new Set([1,2,3,knownLast-2,knownLast-1,knownLast]);for(let page=Math.max(1,ws.page-100);page<=Math.min(knownLast,ws.page+100);page++)candidates.add(page);pages=[...candidates].sort((a,b)=>a-b);}return pages.map((page,index)=>{const from=(page-1)*ws.pageSize+1,to=exactLast?Math.min(page*ws.pageSize,ws.exactCount):page*ws.pageSize,previous=pages[index-1],gap=previous&&page-previous>1?'<span class="database-page-range-gap">…</span>':"";return `${gap}<button data-page="${page}" class="${page===ws.page?"is-active":""}" ${page===ws.page?"disabled":""}>${ws.exactCount===0?"0–0":`${from}–${to}`}</button>`;}).join("");}
   function renderDataWorkspace(ws) {
+    ws.rowHeights ||= {};
     const visible = ws.columns.map((c, i) => ({ c, i })).filter(x => !ws.hidden.includes(x.c.name));
+    const tableWidth = 48 + visible.reduce((total, { c }) => total + (ws.widths[c.name] || 180), 0);
     stage.innerHTML = `<div class="database-data-workspace">${dataToolbar(ws)}
       <div class="database-query-strip"><label><b>WHERE</b><input data-where value="${html(ws.where)}" placeholder="tenant_id = 42" autocomplete="off"><div class="database-query-suggestions hidden"></div></label>
       <label><b>ORDER BY</b><input data-order value="${html(ws.orderBy)}" placeholder="created_at DESC" autocomplete="off"><div class="database-query-suggestions hidden"></div></label><button data-apply-filter>Apply</button></div>
-      <div class="database-workspace-grid-shell"><div class="database-workspace-grid-scroll" aria-busy="${ws.rowsLoading ? "true" : "false"}"><table class="database-workspace-grid"><thead><tr><th class="database-row-number">#</th>${visible.map(({c}) => columnHeaderHtml(ws,c)).join("")}</tr></thead>
-      <tbody>${ws.rows.map((row, ri) => `<tr data-row="${ri}" class="${ws.deleted.has(ri) ? "is-deleted" : ""}"><th class="database-row-number" data-select-row="${ri}">${(ws.page - 1) * ws.pageSize + ri + 1}</th>${visible.map(({c,i}) => cellHtml(ws,row,ri,c,i)).join("")}</tr>`).join("")}${ws.inserted.map((row, ii) => `<tr class="is-inserted" data-insert="${ii}"><th class="database-row-number">+</th>${visible.map(({c}) => `<td data-insert-cell="${ii}" data-column="${html(c.name)}">${html(row[c.name] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div><div class="database-grid-loading ${ws.rowsLoading ? "" : "hidden"}" data-grid-loading role="status" aria-live="polite"><div><div class="database-spinner"></div><p>${html(ws.loadingMessage || "Đang tải dữ liệu…")}</p></div></div></div>
+      <div class="database-workspace-grid-shell"><div class="database-workspace-grid-scroll" aria-busy="${ws.rowsLoading ? "true" : "false"}"><table class="database-workspace-grid" style="width:${tableWidth}px"><colgroup><col style="width:48px">${visible.map(({c})=>`<col data-column-width="${html(c.name)}" style="width:${ws.widths[c.name]||180}px">`).join("")}</colgroup><thead><tr><th class="database-row-number">#</th>${visible.map(({c}) => columnHeaderHtml(ws,c)).join("")}</tr></thead>
+      <tbody>${ws.rows.map((row, ri) => {const heightKey=`page:${ws.page}:${ri}`,height=ws.rowHeights[heightKey]||defaultRowHeight;return `<tr data-row="${ri}" data-visual-row="${ri}" class="${ws.deleted.has(ri) ? "is-deleted " : ""}${ws.activeRow===ri?"is-active-row ":""}${height!==defaultRowHeight?"is-row-resized":""}" style="height:${height}px"><th class="database-row-number" data-select-row="${ri}"><span>${(ws.page - 1) * ws.pageSize + ri + 1}</span><i class="database-row-resizer" data-row-height-key="${heightKey}" title="Kéo để đổi chiều cao · double-click để reset"></i></th>${visible.map(({c,i}) => cellHtml(ws,row,ri,c,i)).join("")}</tr>`;}).join("")}${ws.inserted.map((row, ii) => {const visualRow=ws.rows.length+ii,heightKey=`insert:${ii}`,height=ws.rowHeights[heightKey]||defaultRowHeight;return `<tr class="is-inserted ${ws.activeRow===visualRow?"is-active-row ":""}${height!==defaultRowHeight?"is-row-resized":""}" data-insert="${ii}" data-visual-row="${visualRow}" style="height:${height}px"><th class="database-row-number" data-select-row="${visualRow}"><span>+</span><i class="database-row-resizer" data-row-height-key="${heightKey}" title="Kéo để đổi chiều cao · double-click để reset"></i></th>${visible.map(({c,i}) => `<td tabindex="0" data-cell data-row="${visualRow}" data-col="${i}" data-insert-cell="${ii}" data-column="${html(c.name)}" class="${ws.selected.has(`${visualRow}:${i}`)?"is-selected":""}">${html(row[c.name] ?? "")}</td>`).join("")}</tr>`;}).join("")}</tbody></table></div><div class="database-grid-loading ${ws.rowsLoading ? "" : "hidden"}" data-grid-loading role="status" aria-live="polite"><div><div class="database-spinner"></div><p>${html(ws.loadingMessage || "Đang tải dữ liệu…")}</p></div></div></div>
       ${ws.metadata.canEdit ? "" : `<div class="database-readonly-note">Read-only: ${html(ws.metadata.readOnlyReason || "object không hỗ trợ edit")}</div>`}</div>`;
     bindDataWorkspace(ws); updateFooter(ws);
   }
@@ -293,49 +220,87 @@
       cell.ondblclick = () => editCell(ws, cell); cell.onkeydown = e => { if (e.key === "F2" || e.key === "Enter") editCell(ws, cell); };
     });
     stage.querySelectorAll("[data-insert-cell]").forEach(cell => { cell.ondblclick=()=>editInsertedCell(ws,cell); cell.tabIndex=0; cell.onkeydown=e=>{if(e.key==="F2"||e.key==="Enter")editInsertedCell(ws,cell);}; });
-    stage.querySelectorAll("[data-select-row]").forEach(head => head.onclick = () => { const ri=Number(head.dataset.selectRow); ws.columns.forEach((_,ci)=>ws.selected.add(`${ri}:${ci}`)); renderDataWorkspace(ws); });
+    stage.querySelectorAll(".database-row-resizer").forEach(grip=>bindRowResize(ws,grip));
+    stage.querySelectorAll("[data-select-row]").forEach(head => head.onclick = event => { if(event.target.closest(".database-row-resizer"))return;const ri=Number(head.dataset.selectRow);ws.activeRow=ri;ws.columns.forEach((_,ci)=>ws.selected.add(`${ri}:${ci}`));renderDataWorkspace(ws); });
   }
   function applyFilter(ws) { const nextWhere=stage.querySelector("[data-where]").value.trim();ws.orderBy=stage.querySelector("[data-order]").value.trim();if(nextWhere!==ws.where){ws.exactCount=null;ws.observedMinimum=0;}ws.where=nextWhere;ws.page=1;loadRows(ws,"Đang áp dụng WHERE / ORDER BY…").catch(reportError);persist(); }
   function changePageSize(ws,size){if(!Number.isInteger(size)||size<1||size>500){showError("Rows per page phải là số nguyên từ 1 đến 500.");return;}ws.pageSize=size;ws.page=1;ws.observedMinimum=0;loadRows(ws,"Đang đổi số dòng mỗi trang…").catch(reportError);persist();}
-  function bindSuggestions(ws,input) {
-    const box=input.nextElementSibling; const values=[...ws.columns.map(c=>c.name),"AND","OR","NOT","NULL","IS NULL","IN ()","LIKE","ILIKE","ASC","DESC","NULLS LAST","count()","lower()","now()"];
-    let part="",active=-1;const choose=button=>{input.value=input.value.slice(0,input.value.length-part.length)+button.textContent;box.classList.add("hidden");input.focus();};
-    input.oninput=()=>{part=input.value.split(/[^\w.]+/).pop().toLowerCase();const matches=values.filter(x=>x.toLowerCase().startsWith(part)).slice(0,10);active=-1;box.innerHTML=matches.map(x=>`<button type="button">${html(x)}</button>`).join("");box.classList.toggle("hidden",!matches.length);box.querySelectorAll("button").forEach(b=>b.onclick=()=>choose(b));};
-    input.onblur=()=>setTimeout(()=>{if(!input.closest("label")?.contains(document.activeElement))box.classList.add("hidden");},0);
-    input.onkeydown=e=>{const buttons=[...box.querySelectorAll("button")];if(e.key==="Escape"){box.classList.add("hidden");return;}if(e.key==="Enter"){e.preventDefault();box.classList.add("hidden");applyFilter(ws);return;}if((e.key==="ArrowDown"||e.key==="ArrowUp")&&buttons.length){e.preventDefault();active=(active+(e.key==="ArrowDown"?1:-1)+buttons.length)%buttons.length;buttons.forEach((b,i)=>b.classList.toggle("is-active",i===active));buttons[active].scrollIntoView({block:"nearest"});}};
+  function bindSuggestions(ws, input) {
+    const box = input.nextElementSibling;
+    const values = [...ws.columns.map(column => column.name), "AND", "OR", "NOT", "NULL", "IS NULL", "IN ()", "LIKE", "ILIKE", "ASC", "DESC", "NULLS LAST", "count()", "lower()", "now()"];
+    let part = "", active = -1;
+    const choose = button => {
+      input.value = input.value.slice(0, input.value.length - part.length) + button.textContent;
+      box.classList.add("hidden");
+      active = -1;
+      input.focus();
+    };
+    input.oninput = () => {
+      part = input.value.split(/[^\w.]+/).pop().toLowerCase();
+      const matches = values.filter(value => value.toLowerCase().startsWith(part)).slice(0, 10);
+      active = -1;
+      box.innerHTML = matches.map(value => `<button type="button">${html(value)}</button>`).join("");
+      box.classList.toggle("hidden", !matches.length);
+      box.querySelectorAll("button").forEach(button => { button.onclick = () => choose(button); });
+    };
+    input.onblur = () => setTimeout(() => { if (!input.closest("label")?.contains(document.activeElement)) box.classList.add("hidden"); }, 0);
+    input.onkeydown = event => {
+      const buttons = [...box.querySelectorAll("button")];
+      if (event.key === "Escape") { box.classList.add("hidden"); active = -1; return; }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (!box.classList.contains("hidden") && active >= 0 && buttons[active]) choose(buttons[active]);
+        else { box.classList.add("hidden"); applyFilter(ws); }
+        return;
+      }
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && buttons.length) {
+        event.preventDefault();
+        active = (active + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+        buttons.forEach((button, index) => button.classList.toggle("is-active", index === active));
+        buttons[active].scrollIntoView({ block: "nearest" });
+      }
+    };
   }
   async function countRows(ws) { ws.countAbort=new AbortController();ws.counting=true;renderDataWorkspace(ws);try { const response=await fetch(explorer.dataset.workspaceCountUrl,{method:"POST",headers:{"Content-Type":"application/json","RequestVerificationToken":token},body:JSON.stringify({schema:ws.schema,objectName:ws.name,nodeId:nodeId?Number(nodeId):null,where:ws.where||null}),signal:ws.countAbort.signal});if(!response.ok)throw new Error(await problem(response));ws.exactCount=(await response.json()).count;}catch(e){if(e.name!=="AbortError")showError(e.message);}finally{ws.counting=false;ws.countAbort=null;renderDataWorkspace(ws);} }
   function setAutoRefresh(ws,seconds){clearInterval(ws.autoTimer);ws.autoRefresh=seconds;if(seconds>0)ws.autoTimer=setInterval(()=>{if(activeKey===ws.key&&!ws.dirty&&!stage.querySelector(".database-cell-editor"))loadRows(ws).catch(reportError);},seconds*1000);persist();}
   function sortColumn(ws,name,multi){const existing=sortState(ws,name),quoted=`"${name.replaceAll('"','""')}"`;if(!multi){ws.orderBy=!existing?`${quoted} ASC`:existing.direction==="ASC"?`${quoted} DESC`:"";}else{const parts=ws.orderBy?ws.orderBy.split(",").map(value=>value.trim()).filter(Boolean):[],at=parts.findIndex(part=>{const match=part.match(/^(.*?)\s+(ASC|DESC)(?:\s+NULLS\s+(?:FIRST|LAST))?$/i);return match&&match[1].trim().replace(/^"|"$/g,"").replaceAll('""','"')===name;});if(!existing)parts.push(`${quoted} ASC`);else if(existing.direction==="ASC")parts[at]=`${quoted} DESC`;else parts.splice(at,1);ws.orderBy=parts.join(", ");}ws.page=1;loadRows(ws,"Đang sắp xếp dữ liệu…").catch(reportError);}
-  function bindResize(ws,th){ const grip=th.querySelector(".database-column-resizer"); grip.onpointerdown=e=>{e.stopPropagation();const start=e.clientX,width=th.offsetWidth;grip.setPointerCapture(e.pointerId);grip.onpointermove=m=>{const next=Math.max(72,width+m.clientX-start);th.style.width=`${next}px`;ws.widths[th.dataset.column]=next;};grip.onpointerup=()=>persist();};grip.ondblclick=e=>{e.stopPropagation();ws.widths[th.dataset.column]=Math.min(520,Math.max(100,th.scrollWidth+24));renderDataWorkspace(ws);};}
+  function bindResize(ws,th){ const grip=th.querySelector(".database-column-resizer"); grip.onpointerdown=e=>{e.stopPropagation();const start=e.clientX,width=th.offsetWidth,table=th.closest("table"),tableWidth=table.offsetWidth,column=table.querySelector(`col[data-column-width="${CSS.escape(th.dataset.column)}"]`);grip.setPointerCapture(e.pointerId);grip.onpointermove=m=>{const next=Math.max(32,width+m.clientX-start);th.style.width=`${next}px`;if(column)column.style.width=`${next}px`;table.style.width=`${tableWidth+next-width}px`;ws.widths[th.dataset.column]=next;};grip.onpointerup=()=>persist();};grip.ondblclick=e=>{e.stopPropagation();ws.widths[th.dataset.column]=Math.min(520,Math.max(48,th.scrollWidth+24));renderDataWorkspace(ws);};}
+  function bindRowResize(ws,grip){grip.onpointerdown=event=>{event.preventDefault();event.stopPropagation();const row=grip.closest("tr"),start=event.clientY,height=row.offsetHeight,key=grip.dataset.rowHeightKey;grip.setPointerCapture(event.pointerId);grip.onpointermove=move=>{const next=Math.min(600,Math.max(28,height+move.clientY-start));row.style.height=`${next}px`;row.classList.toggle("is-row-resized",next!==defaultRowHeight);ws.rowHeights[key]=next;};grip.onpointerup=()=>persist();};grip.ondblclick=event=>{event.preventDefault();event.stopPropagation();delete ws.rowHeights[grip.dataset.rowHeightKey];persist();renderDataWorkspace(ws);};}
   function paintSelection(ws){stage.querySelectorAll("[data-cell]").forEach(cell=>cell.classList.toggle("is-selected",ws.selected.has(`${cell.dataset.row}:${cell.dataset.col}`)));updateFooter(ws);}
-  function beginCellSelection(ws,cell,event){const startRow=Number(cell.dataset.row),startCol=Number(cell.dataset.col);if(!(event.ctrlKey||event.metaKey))ws.selected.clear();ws.selected.add(`${startRow}:${startCol}`);paintSelection(ws);const move=target=>{const current=target.closest?.("[data-cell]");if(!current)return;const endRow=Number(current.dataset.row),endCol=Number(current.dataset.col);if(!(event.ctrlKey||event.metaKey))ws.selected.clear();for(let r=Math.min(startRow,endRow);r<=Math.max(startRow,endRow);r++)for(let c=Math.min(startCol,endCol);c<=Math.max(startCol,endCol);c++)ws.selected.add(`${r}:${c}`);paintSelection(ws);};const over=e=>{if(e.buttons===1)move(e.target);};const up=()=>{stage.removeEventListener("pointerover",over);document.removeEventListener("pointerup",up);};stage.addEventListener("pointerover",over);document.addEventListener("pointerup",up,{once:true});}
-  async function editCell(ws,cell){const ci=Number(cell.dataset.col),col=ws.columns[ci];if(!ws.metadata.canEdit||!col.canEdit)return;const ri=Number(cell.dataset.row),key=`${ri}:${col.name}`,pending=ws.pending.get(key),originalCell=ws.rows[ri].cells[ci];let originalValue=originalCell.value??"",current=pending?.value??originalValue;if(!pending&&cell.dataset.truncated==="true"){try{const full=await jsonApi(explorer.dataset.workspaceCellUrl,{schema:ws.schema,objectName:ws.name,column:col.name,identity:ws.rows[ri].identity});originalValue=full.value??"";current=originalValue;}catch(e){showError(e.message);return;}}cell.innerHTML="";let input;if(/^bool/i.test(col.dataType)){input=document.createElement("select");["true","false"].forEach(value=>{const option=document.createElement("option");option.value=value;option.textContent=value;input.appendChild(option);});}else{input=document.createElement(/json|text|char/i.test(col.dataType)?"textarea":"input");if(col.isNumeric)input.type="number";}input.className="database-cell-editor";input.value=current;cell.appendChild(input);input.focus();input.select?.();let done=false,touched=false;input.oninput=()=>{touched=true;};input.onchange=()=>{touched=true;};const finish=(save,mode="value")=>{if(done)return;done=true;if(save){const untouched=mode==="value"&&!pending&&!touched,unchanged=untouched||mode==="value"&&!originalCell.isNull&&input.value===originalValue||mode==="null"&&originalCell.isNull;if(unchanged)ws.pending.delete(key);else ws.pending.set(key,{column:col.name,value:mode==="value"?input.value:null,isNull:mode==="null",useDefault:mode==="default"});syncDirty(ws);}renderDataWorkspace(ws);};input.onkeydown=e=>{if(e.ctrlKey&&e.key==="0"){e.preventDefault();finish(true,"null");}else if(e.ctrlKey&&e.key.toLowerCase()==="d"){e.preventDefault();finish(true,"default");}else if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();finish(true);}else if(e.key==="Escape")finish(false);};input.onblur=()=>finish(true);}
+  function paintActiveRow(ws){stage.querySelectorAll("tbody tr[data-visual-row]").forEach(row=>row.classList.toggle("is-active-row",Number(row.dataset.visualRow)===ws.activeRow));}
+  function beginCellSelection(ws,cell,event){const startRow=Number(cell.dataset.row),startCol=Number(cell.dataset.col);ws.activeRow=startRow;paintActiveRow(ws);if(!(event.ctrlKey||event.metaKey))ws.selected.clear();ws.selected.add(`${startRow}:${startCol}`);paintSelection(ws);const move=target=>{const current=target.closest?.("[data-cell]");if(!current)return;const endRow=Number(current.dataset.row),endCol=Number(current.dataset.col);if(!(event.ctrlKey||event.metaKey))ws.selected.clear();for(let r=Math.min(startRow,endRow);r<=Math.max(startRow,endRow);r++)for(let c=Math.min(startCol,endCol);c<=Math.max(startCol,endCol);c++)ws.selected.add(`${r}:${c}`);paintSelection(ws);};const over=e=>{if(e.buttons===1)move(e.target);};const up=()=>{stage.removeEventListener("pointerover",over);document.removeEventListener("pointerup",up);};stage.addEventListener("pointerover",over);document.addEventListener("pointerup",up,{once:true});}
+  async function editCell(ws,cell){
+    const ci=Number(cell.dataset.col),col=ws.columns[ci];if(!ws.metadata.canEdit||!col.canEdit)return;const ri=Number(cell.dataset.row),key=`${ri}:${col.name}`,pending=ws.pending.get(key),originalCell=ws.rows[ri].cells[ci];let originalValue=originalCell.value??"",current=pending?.value??originalValue;
+    if(!pending&&cell.dataset.truncated==="true"){try{const full=await jsonApi(explorer.dataset.workspaceCellUrl,{schema:ws.schema,objectName:ws.name,column:col.name,identity:ws.rows[ri].identity});originalValue=full.value??"";current=originalValue;}catch(e){showError(e.message);return;}}
+    cell.innerHTML="";const container=document.createElement("div");container.className="database-cell-editor-shell";let input;if(/^bool/i.test(col.dataType)){input=document.createElement("select");["true","false"].forEach(value=>{const option=document.createElement("option");option.value=value;option.textContent=value;input.appendChild(option);});}else{input=document.createElement(/json|text|char/i.test(col.dataType)?"textarea":"input");if(col.isNumeric)input.type="number";}input.className="database-cell-editor";input.value=current;container.appendChild(input);cell.appendChild(container);
+    let done=false,touched=false,isExpanded=()=>false;input.oninput=()=>{touched=true;};input.onchange=()=>{touched=true;};const finish=(save,mode="value",nextValue=input.value)=>{if(done)return;done=true;if(save){const untouched=mode==="value"&&!pending&&!touched,unchanged=untouched||mode==="value"&&!originalCell.isNull&&nextValue===originalValue||mode==="null"&&originalCell.isNull;if(unchanged)ws.pending.delete(key);else ws.pending.set(key,{column:col.name,value:mode==="value"?nextValue:null,isNull:mode==="null",useDefault:mode==="default"});syncDirty(ws);}renderDataWorkspace(ws);};
+    isExpanded=attachExpandedEditorButton({workspace:ws,column:col,input,container,allowModes:true,onApply:(value,mode)=>{touched=true;input.value=value;finish(true,mode,value);}});input.focus();input.select?.();input.onkeydown=e=>{if(e.ctrlKey&&e.key==="0"){e.preventDefault();finish(true,"null");}else if(e.ctrlKey&&e.key.toLowerCase()==="d"){e.preventDefault();finish(true,"default");}else if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();finish(true);}else if(e.key==="Escape")finish(false);};input.onblur=()=>{if(!isExpanded())finish(true);};
+  }
   function setDirty(ws,value){ws.dirty=value;renderTabs();persist();}
   function syncDirty(ws){setDirty(ws,ws.pending.size>0||ws.deleted.size>0||ws.inserted.length>0);}
-  function addRow(ws){ if(!ws.metadata.canEdit)return;const row={};ws.columns.filter(c=>!c.isGenerated).forEach(c=>row[c.name]="");const index=ws.inserted.push(row)-1;setDirty(ws,true);renderDataWorkspace(ws);requestAnimationFrame(()=>{const insertedRow=stage.querySelector(`[data-insert="${index}"]`);insertedRow?.scrollIntoView({block:"end",inline:"nearest"});const firstEditable=[...(insertedRow?.querySelectorAll("[data-insert-cell]")||[])].find(cell=>{const column=ws.columns.find(item=>item.name===cell.dataset.column);return column&&!column.isGenerated&&!column.isIdentity;});if(firstEditable)editInsertedCell(ws,firstEditable);});}
-  function editInsertedCell(ws,cell){const col=ws.columns.find(c=>c.name===cell.dataset.column);if(!col||col.isGenerated||col.isIdentity)return;const row=ws.inserted[Number(cell.dataset.insertCell)],current=row[col.name]??"";cell.innerHTML="";const input=document.createElement("input");input.className="database-cell-editor";input.value=current;cell.appendChild(input);input.focus();input.select();let done=false;const finish=save=>{if(done)return;done=true;if(save){row[col.name]=input.value;setDirty(ws,true);}renderDataWorkspace(ws);};input.onkeydown=e=>{if(e.key==="Enter")finish(true);if(e.key==="Escape")finish(false);};input.onblur=()=>finish(true);}
-  function deleteRows(ws){ const rows=new Set([...ws.selected].map(x=>Number(x.split(":")[0])));rows.forEach(x=>ws.deleted.add(x));if(rows.size)setDirty(ws,true);renderDataWorkspace(ws);}
+  function addRow(ws){ if(!ws.metadata.canEdit)return;const row={};ws.columns.filter(c=>!c.isGenerated).forEach(c=>row[c.name]="");const index=ws.inserted.push(row)-1;ws.activeRow=ws.rows.length+index;setDirty(ws,true);renderDataWorkspace(ws);requestAnimationFrame(()=>{const insertedRow=stage.querySelector(`[data-insert="${index}"]`);insertedRow?.scrollIntoView({block:"end",inline:"nearest"});const firstEditable=[...(insertedRow?.querySelectorAll("[data-insert-cell]")||[])].find(cell=>{const column=ws.columns.find(item=>item.name===cell.dataset.column);return column&&!column.isGenerated&&!column.isIdentity;});if(firstEditable)editInsertedCell(ws,firstEditable);});}
+  function editInsertedCell(ws,cell){const col=ws.columns.find(c=>c.name===cell.dataset.column);if(!col||col.isGenerated||col.isIdentity)return;const row=ws.inserted[Number(cell.dataset.insertCell)],current=row[col.name]??"";cell.innerHTML="";const container=document.createElement("div");container.className="database-cell-editor-shell";const input=document.createElement("input");input.className="database-cell-editor";input.value=current;container.appendChild(input);cell.appendChild(container);let done=false,isExpanded=()=>false;const finish=(save,value=input.value)=>{if(done)return;done=true;if(save){row[col.name]=value;setDirty(ws,true);}renderDataWorkspace(ws);};isExpanded=attachExpandedEditorButton({workspace:ws,column:col,input,container,allowModes:false,onApply:value=>finish(true,value)});input.focus();input.select();input.onkeydown=e=>{if(e.key==="Enter")finish(true);if(e.key==="Escape")finish(false);};input.onblur=()=>{if(!isExpanded())finish(true);};}
+  function deleteRows(ws){
+    const rows=[...new Set([...ws.selected].map(x=>Number(x.split(":")[0])))]; if(!rows.length)return;
+    rows.filter(row=>row<ws.rows.length).forEach(row=>ws.deleted.add(row));
+    const removedInserts=new Set(rows.filter(row=>row>=ws.rows.length).map(row=>row-ws.rows.length));
+    if(removedInserts.size){const heights=ws.inserted.map((_,index)=>ws.rowHeights[`insert:${index}`]);ws.inserted=ws.inserted.filter((_,index)=>!removedInserts.has(index));Object.keys(ws.rowHeights).filter(key=>key.startsWith("insert:")).forEach(key=>delete ws.rowHeights[key]);let next=0;heights.forEach((height,index)=>{if(!removedInserts.has(index)){if(height)ws.rowHeights[`insert:${next}`]=height;next++;}});}
+    ws.selected.clear();ws.activeRow=null;syncDirty(ws);renderDataWorkspace(ws);
+  }
   async function saveRows(ws){ if(ws.saving)return;ws.saving=true;setGridLoading(ws,true,"Đang lưu thay đổi…");const saveButton=stage.querySelector("[data-save]");if(saveButton)saveButton.disabled=true;try{const grouped=new Map();ws.pending.forEach((value,key)=>{const ri=Number(key.split(":")[0]);if(!grouped.has(ri))grouped.set(ri,[]);grouped.get(ri).push(value);});const body={schema:ws.schema,objectName:ws.name,
     updates:[...grouped].filter(([ri])=>!ws.deleted.has(ri)).map(([ri,changes])=>({keys:ws.rows[ri].identity.keys,fingerprint:ws.rows[ri].identity.fingerprint,changes})),
     deletes:[...ws.deleted].map(ri=>({keys:ws.rows[ri].identity.keys,fingerprint:ws.rows[ri].identity.fingerprint})),
     inserts:ws.inserted.map(row=>({values:Object.entries(row).filter(([,v])=>v!=="").map(([column,value])=>({column,value,isNull:false,useDefault:false}))}))};
     await jsonApi(explorer.dataset.workspaceApplyUrl,body);ws.pending.clear();ws.deleted.clear();ws.inserted=[];ws.exactCount=null;ws.observedMinimum=0;setDirty(ws,false);await loadRows(ws,"Đang tải lại dữ liệu sau khi lưu…");
   }catch(e){showError(e.message);}finally{ws.saving=false;setGridLoading(ws,false);if(saveButton?.isConnected)saveButton.disabled=!ws.dirty;} }
-  async function exportCsv(ws,currentPageOnly){try{const response=await fetch(explorer.dataset.workspaceCsvExportUrl,{method:"POST",headers:{"Content-Type":"application/json","RequestVerificationToken":token},body:JSON.stringify({schema:ws.schema,objectName:ws.name,nodeId:nodeId?Number(nodeId):null,page:ws.page,pageSize:ws.pageSize,where:ws.where||null,orderBy:ws.orderBy||null,currentPageOnly})});if(!response.ok)throw new Error(await problem(response));const a=document.createElement("a");a.href=URL.createObjectURL(await response.blob());a.download=`${ws.schema}.${ws.name}${currentPageOnly?`.page-${ws.page}`:""}.csv`;a.click();URL.revokeObjectURL(a.href);}catch(e){showError(e.message);}}
-  async function previewCsvImport(ws,file){if(file.size>25*1024*1024){showError("CSV vượt giới hạn 25 MiB.");return;}const form=new FormData();form.append("file",file);try{const response=await fetch(explorer.dataset.workspaceCsvPreviewUrl,{method:"POST",headers:{"RequestVerificationToken":token},body:form});if(!response.ok)throw new Error(await problem(response));const preview=await response.json();showCsvImportModal(ws,file,preview);}catch(e){showError(e.message);}}
-  function showCsvImportModal(ws,file,preview){const modal=document.createElement("div");modal.className="database-modal";modal.setAttribute("role","dialog");modal.setAttribute("aria-modal","true");modal.innerHTML=`<div class="database-modal-card database-csv-card"><div class="database-action-heading"><div><p class="eyebrow">CSV IMPORT PREVIEW</p><h2>${html(file.name)} → ${html(ws.schema)}.${html(ws.name)}</h2></div><button type="button" data-csv-close class="database-action-close">×</button></div><p class="pma-modal-copy">Preview tối đa 100 rows. Header CSV map chính xác theo tên column. Import nguyên tử, tối đa 10.000 rows / 25 MiB.</p><div class="database-csv-preview"><table><thead><tr>${preview.headers.map(h=>`<th>${html(h)}</th>`).join("")}</tr></thead><tbody>${preview.rows.map(row=>`<tr>${row.map(v=>`<td>${html(v??"NULL")}</td>`).join("")}</tr>`).join("")}</tbody></table></div><div class="form-actions"><button type="button" class="btn btn-ghost" data-csv-close>Hủy</button><button type="button" class="btn btn-primary" data-csv-confirm>Import${preview.isTruncated?" toàn bộ file":""}</button></div></div>`;document.body.appendChild(modal);const close=()=>{modal.remove();stage.querySelector("[data-csv-file]")?.setAttribute("value","");};modal.querySelectorAll("[data-csv-close]").forEach(button=>button.onclick=close);modal.onclick=e=>{if(e.target===modal)close();};modal.querySelector("[data-csv-confirm]").onclick=async e=>{const button=e.currentTarget;button.disabled=true;button.textContent="Importing…";const form=new FormData();form.append("schema",ws.schema);form.append("objectName",ws.name);form.append("file",file);try{const response=await fetch(explorer.dataset.workspaceCsvImportUrl,{method:"POST",headers:{"RequestVerificationToken":token},body:form});if(!response.ok)throw new Error(await problem(response));close();ws.exactCount=null;ws.observedMinimum=0;await loadRows(ws);}catch(error){button.disabled=false;button.textContent="Import";showError(error.message);}};modal.querySelector("[data-csv-confirm]").focus();}
-  function openChart(source){const key=keyOf(source.schema,source.name,`chart:${Date.now()}`),selected=[...source.selected].map(x=>x.split(":").map(Number)),selectedCols=[...new Set(selected.map(x=>x[1]))];const numeric=(selectedCols.find(index=>source.columns[index]?.isNumeric)??source.columns.findIndex(c=>c.isNumeric));if(numeric<0){showError("Page/selection hiện tại không có cột numeric để vẽ chart.");return;}const selectedRows=new Set(selected.map(x=>x[0])),rows=selectedRows.size?source.rows.filter((_,index)=>selectedRows.has(index)):source.rows;workspaces.set(key,{key,type:"chart",schema:source.schema,name:`${source.name} chart`,columns:source.columns,rows,numeric,chartType:"bar",dirty:false,used:Date.now(),loaded:true});activate(key);}
-  function pieSlices(values){const positive=values.map(v=>Math.max(0,v)),total=positive.reduce((a,b)=>a+b,0)||1;let angle=-Math.PI/2;return positive.slice(0,24).map((value,index)=>{const next=angle+value/total*Math.PI*2,x1=400+130*Math.cos(angle),y1=180+130*Math.sin(angle),x2=400+130*Math.cos(next),y2=180+130*Math.sin(next),large=next-angle>Math.PI?1:0,path=`M 400 180 L ${x1} ${y1} A 130 130 0 ${large} 1 ${x2} ${y2} Z`;angle=next;return `<path d="${path}" fill="hsl(${index*47%360} 70% 55%)"><title>${value}</title></path>`;}).join("");}
-  function renderChartWorkspace(ws){const values=ws.rows.map(r=>Number(r.cells[ws.numeric].value)).filter(Number.isFinite).slice(0,50),max=Math.max(...values.map(Math.abs),1),points=values.map((v,i)=>`${30+i*(740/Math.max(values.length-1,1))},${330-(v/max)*290}`).join(" ");const drawing=ws.chartType==="line"?`<polyline points="${points}" fill="none" stroke="#38bdf8" stroke-width="3"/>`:ws.chartType==="scatter"?values.map((v,i)=>`<circle cx="${30+i*(740/Math.max(values.length-1,1))}" cy="${330-(v/max)*290}" r="5"><title>${v}</title></circle>`).join(""):ws.chartType==="pie"?pieSlices(values):values.map((v,i)=>`<rect x="${i*(740/Math.max(values.length,1))+30}" y="${330-v/max*290}" width="${Math.max(4,700/Math.max(values.length,1))}" height="${Math.abs(v/max*290)}" rx="2"><title>${v}</title></rect>`).join("");stage.innerHTML=`<div class="database-chart-workspace"><div class="database-grid-toolbar"><strong>${html(ws.columns[ws.numeric].name)}</strong><select data-chart-kind><option value="bar">Bar</option><option value="line">Line</option><option value="pie">Pie</option><option value="scatter">Scatter</option></select><span>Current page/selection only · ${values.length} values</span></div><svg viewBox="0 0 800 360" role="img" aria-label="${html(ws.chartType)} chart">${drawing}</svg></div>`;stage.querySelector("[data-chart-kind]").value=ws.chartType;stage.querySelector("[data-chart-kind]").onchange=e=>{ws.chartType=e.target.value;renderChartWorkspace(ws);};updateFooter(ws);}
-  function confirmCoordinatorSql(){const modal=document.getElementById("sql-confirm-modal");if(!modal)return Promise.resolve(false);if(!modal.dataset.workspaceReady){["confirm-sql-button","close-sql-modal"].forEach(id=>{const old=document.getElementById(id);old.replaceWith(old.cloneNode(true));});modal.dataset.workspaceReady="true";}return new Promise(resolve=>{modal.classList.remove("hidden");const confirm=document.getElementById("confirm-sql-button"),cancel=document.getElementById("close-sql-modal");const finish=value=>{modal.classList.add("hidden");confirm.onclick=null;cancel.onclick=null;modal.onclick=null;resolve(value);};confirm.onclick=()=>finish(true);cancel.onclick=()=>finish(false);modal.onclick=e=>{if(e.target===modal)finish(false);};confirm.focus();});}
-  function renderSqlWorkspace(ws){stage.innerHTML=`<div class="database-console-workspace"><div class="database-grid-toolbar"><button data-run-sql>Run</button><button data-stop-sql disabled>Stop</button><span>${nodeId?"Worker · read-only":"Coordinator · mutation requires confirmation"}</span></div><textarea data-console-editor spellcheck="false" placeholder="SELECT * FROM public.table LIMIT 100;">${html(ws.sql)}</textarea><div data-console-result></div></div>`;const editor=stage.querySelector("[data-console-editor]"),run=stage.querySelector("[data-run-sql]"),stop=stage.querySelector("[data-stop-sql]"),result=stage.querySelector("[data-console-result]");editor.oninput=()=>{ws.sql=editor.value;};run.onclick=async()=>{if(!editor.value.trim())return;const confirmed=nodeId?false:await confirmCoordinatorSql();if(!nodeId&&!confirmed)return;ws.sqlAbort=new AbortController();run.disabled=true;stop.disabled=false;result.innerHTML='<div class="database-loading"><div><div class="database-spinner"></div><p>Đang chạy SQL…</p></div></div>';try{const body=new URLSearchParams({__RequestVerificationToken:token,Sql:editor.value,Confirmed:String(confirmed)});if(nodeId)body.set("NodeId",nodeId);const response=await fetch(explorer.dataset.sqlUrl,{method:"POST",body,signal:ws.sqlAbort.signal});result.innerHTML=response.ok?await response.text():`<div class="database-workspace-error">${html(await problem(response))}</div>`;}catch(e){if(e.name!=="AbortError")result.innerHTML=`<div class="database-workspace-error">${html(e.message)}</div>`;}finally{run.disabled=false;stop.disabled=true;ws.sqlAbort=null;}};stop.onclick=()=>ws.sqlAbort?.abort();updateFooter(ws);}
-  function updateFooter(ws){if(!ws){statistics.textContent="0 row · 0 column · 0 cell";return;}footerPath.innerHTML=`<span>Database</span><b>›</b><span>${html(nodeId?"worker":"coordinator")}</span><b>›</b><span>${html(ws.schema||"")}</span><b>›</b><strong>${html(ws.name)}</strong><b>›</b><span>${html(ws.type)}</span>`;if(ws.type!=="data"){statistics.textContent=ws.type.toUpperCase();return;}const cells=[...ws.selected].map(k=>{const[ri,ci]=k.split(":").map(Number);return ws.rows[ri]?.cells[ci]?.value;}).filter(v=>v!=null);const nums=cells.map(Number).filter(Number.isFinite),rows=new Set([...ws.selected].map(k=>k.split(":")[0])).size,cols=new Set([...ws.selected].map(k=>k.split(":")[1])).size,sum=nums.reduce((a,b)=>a+b,0);statistics.textContent=`${rows} row · ${cols} column · Count ${cells.length}${nums.length?` · Sum ${sum.toLocaleString()} · Avg ${(sum/nums.length).toLocaleString()} · Min ${Math.min(...nums).toLocaleString()} · Max ${Math.max(...nums).toLocaleString()}`:""}`;}
+  function openChart(source){const key=keyOf(source.schema,source.name,`chart:${Date.now()}`),selected=[...source.selected].map(x=>x.split(":").map(Number)),selectedCols=[...new Set(selected.map(x=>x[1]))];const numeric=(selectedCols.find(index=>source.columns[index]?.isNumeric)??source.columns.findIndex(c=>c.isNumeric));if(numeric<0){showError("Page/selection hiện tại không có cột numeric để vẽ chart.");return;}const selectedRows=new Set(selected.map(x=>x[0])),allRows=[...source.rows,...source.inserted.map(row=>({cells:source.columns.map(column=>({value:row[column.name]??null}))}))],rows=selectedRows.size?allRows.filter((_,index)=>selectedRows.has(index)):allRows;workspaces.set(key,{key,type:"chart",schema:source.schema,name:`${source.name} chart`,columns:source.columns,rows,numeric,chartType:"bar",dirty:false,used:Date.now(),loaded:true});activate(key);}
+  function workspaceCellValue(ws,rowIndex,columnIndex){if(rowIndex<ws.rows.length){const column=ws.columns[columnIndex],pending=ws.pending.get(`${rowIndex}:${column?.name}`);return pending?pending.isNull?null:pending.useDefault?"DEFAULT":pending.value:ws.rows[rowIndex]?.cells[columnIndex]?.value;}return ws.inserted[rowIndex-ws.rows.length]?.[ws.columns[columnIndex]?.name]??null;}
+  function updateFooter(ws){if(!ws){statistics.textContent="0 row · 0 column · 0 cell";return;}footerPath.innerHTML=`<span>Database</span><b>›</b><span>${html(nodeId?"worker":"coordinator")}</span><b>›</b><span>${html(ws.schema||"")}</span><b>›</b><strong>${html(ws.name)}</strong><b>›</b><span>${html(ws.type)}</span>`;if(ws.type!=="data"){statistics.textContent=ws.type.toUpperCase();return;}const cells=[...ws.selected].map(k=>{const[ri,ci]=k.split(":").map(Number);return workspaceCellValue(ws,ri,ci);}).filter(v=>v!=null);const nums=cells.map(Number).filter(Number.isFinite),rows=new Set([...ws.selected].map(k=>k.split(":")[0])).size,cols=new Set([...ws.selected].map(k=>k.split(":")[1])).size,sum=nums.reduce((a,b)=>a+b,0);statistics.textContent=`${rows} row · ${cols} column · Count ${cells.length}${nums.length?` · Sum ${sum.toLocaleString()} · Avg ${(sum/nums.length).toLocaleString()} · Min ${Math.min(...nums).toLocaleString()} · Max ${Math.max(...nums).toLocaleString()}`:""}`;}
 
   stage.addEventListener("click",event=>{const ws=workspaces.get(activeKey);if(!ws)return;if(event.target.closest("[data-copy-ddl]"))navigator.clipboard.writeText(ws.ddl||"");if(event.target.closest("[data-download-ddl]")){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([ws.ddl||""],{type:"text/sql"}));a.download=`${ws.schema}.${ws.name}.sql`;a.click();URL.revokeObjectURL(a.href);}if(event.target.closest("[data-ddl-console]")){openQuery();const consoleWs=workspaces.get(activeKey);consoleWs.sql=ws.ddl||"";renderWorkspace(consoleWs);}});
   document.getElementById("database-tree-content")?.addEventListener("click",event=>{const object=event.target.closest("[data-database-object]");if(!object)return;event.stopImmediatePropagation();event.preventDefault();document.querySelectorAll("[data-database-object]").forEach(x=>x.classList.remove("is-active"));object.classList.add("is-active");openObject(object.dataset.schema,object.dataset.table,object.dataset.nodeKind==="sequence"?"ddl":"data");},true);
   window.databaseWorkspaces={openObject,openStructure:(s,n)=>openObject(s,n,"structure"),openDdl:(s,n)=>openObject(s,n,"ddl"),openQuery};
-  document.addEventListener("copy",event=>{const ws=workspaces.get(activeKey);if(!ws||ws.type!=="data"||!ws.selected.size||event.target.matches?.("input,textarea"))return;const cells=[...ws.selected].map(k=>k.split(":").map(Number));const minR=Math.min(...cells.map(x=>x[0])),maxR=Math.max(...cells.map(x=>x[0])),minC=Math.min(...cells.map(x=>x[1])),maxC=Math.max(...cells.map(x=>x[1]));const text=[];for(let r=minR;r<=maxR;r++){const line=[];for(let c=minC;c<=maxC;c++)line.push(ws.selected.has(`${r}:${c}`)?(ws.rows[r]?.cells[c]?.value??""):"");text.push(line.join("\t"));}event.clipboardData.setData("text/plain",text.join("\r\n"));event.preventDefault();});
-  try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||"{}");(saved.workspaces||[]).slice(0,20).forEach(ws=>{ws.rows=[];ws.metadata=null;ws.pending=new Map();ws.deleted=new Set();ws.inserted=[];ws.selected=new Set();ws.dirty=false;ws.loaded=false;ws.used=Date.now();workspaces.set(ws.key,ws);});renderTabs();if(saved.activeKey&&workspaces.has(saved.activeKey))activate(saved.activeKey);}catch{}
+  document.addEventListener("copy",event=>{const ws=workspaces.get(activeKey);if(!ws||ws.type!=="data"||!ws.selected.size||event.target.matches?.("input,textarea"))return;const cells=[...ws.selected].map(k=>k.split(":").map(Number));const minR=Math.min(...cells.map(x=>x[0])),maxR=Math.max(...cells.map(x=>x[0])),minC=Math.min(...cells.map(x=>x[1])),maxC=Math.max(...cells.map(x=>x[1]));const text=[];for(let r=minR;r<=maxR;r++){const line=[];for(let c=minC;c<=maxC;c++)line.push(ws.selected.has(`${r}:${c}`)?(workspaceCellValue(ws,r,c)??""):"");text.push(line.join("\t"));}event.clipboardData.setData("text/plain",text.join("\r\n"));event.preventDefault();});
+  try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||"{}");(saved.workspaces||[]).slice(0,20).forEach(ws=>{ws.rows=[];ws.metadata=null;ws.pending=new Map();ws.deleted=new Set();ws.inserted=[];ws.selected=new Set();ws.rowHeights||={};ws.dirty=false;ws.loaded=false;ws.used=Date.now();workspaces.set(ws.key,ws);});renderTabs();if(saved.activeKey&&workspaces.has(saved.activeKey))activate(saved.activeKey);}catch{}
   addEventListener("beforeunload",event=>{if([...workspaces.values()].some(x=>x.dirty)){event.preventDefault();event.returnValue="";}});
 })();

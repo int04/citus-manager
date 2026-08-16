@@ -35,6 +35,7 @@ public sealed class DatabaseController(
         try { return Ok(await workspaces.QueryAsync(clusterId, request, cancellationToken)); }
         catch (ArgumentException exception) { return DatabaseMutationProblem(400, "WHERE/ORDER BY không hợp lệ", exception.Message); }
         catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
+        catch (PostgresException exception) { return WorkspaceQueryProblem(exception); }
         catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không thể tải dữ liệu", "PostgreSQL từ chối query workspace."); }
     }
 
@@ -437,6 +438,20 @@ public sealed class DatabaseController(
         var problem = new ProblemDetails { Status = status, Title = title, Detail = detail, Instance = HttpContext.Request.Path };
         if (sqlState is not null) problem.Extensions["sqlState"] = sqlState;
         return new ObjectResult(problem) { StatusCode = status };
+    }
+
+    private ObjectResult WorkspaceQueryProblem(PostgresException exception)
+    {
+        var detail = exception.SqlState switch
+        {
+            "42703" => "Cột trong WHERE/ORDER BY không tồn tại. Kiểm tra tên cột và thử lại.",
+            "42804" => "Biểu thức WHERE/ORDER BY không phù hợp với kiểu dữ liệu của cột.",
+            "42883" => "Operator hoặc function không hỗ trợ kiểu dữ liệu đã chọn.",
+            "22P02" => "Giá trị filter không đúng định dạng của kiểu dữ liệu PostgreSQL.",
+            "57014" => "Query bị hủy hoặc vượt quá thời gian cho phép.",
+            _ => "PostgreSQL từ chối query workspace."
+        };
+        return DatabaseMutationProblem(422, "Không thể tải dữ liệu", detail, exception.SqlState);
     }
 
     private Guid ActorId() => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);

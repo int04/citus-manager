@@ -588,7 +588,7 @@ public sealed class DatabaseExplorerService(
             if (fieldType == typeof(byte[]))
             {
                 using var stream = reader.GetStream(ordinal);
-                var byteLimit = Math.Max(1, options.MaxCellCharacters / 2);
+                var byteLimit = Math.Max(1, (options.MaxCellCharacters - 2) / 2);
                 var buffer = new byte[byteLimit + 1];
                 var read = 0;
                 while (read < buffer.Length)
@@ -598,7 +598,7 @@ public sealed class DatabaseExplorerService(
                     read += count;
                 }
                 truncated = read > byteLimit;
-                return new(Convert.ToHexString(buffer, 0, Math.Min(read, byteLimit)), false, truncated);
+                return new($"\\x{Convert.ToHexString(buffer, 0, Math.Min(read, byteLimit)).ToLowerInvariant()}", false, truncated);
             }
             var value = reader.GetValue(ordinal);
             text = value switch
@@ -606,7 +606,7 @@ public sealed class DatabaseExplorerService(
                 DateTime dateTime => dateTime.ToString("O", CultureInfo.InvariantCulture),
                 DateTimeOffset dateTimeOffset => dateTimeOffset.ToString("O", CultureInfo.InvariantCulture),
                 JsonDocument document => document.RootElement.GetRawText(),
-                _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty
+                _ => PostgreSqlValueFormatter.Format(value)
             };
         }
         catch

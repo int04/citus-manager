@@ -334,10 +334,10 @@
             .database-grid-loading { @@apply absolute inset-0 z-[35] grid place-items-center bg-white/75 text-center text-[11px] font-medium text-[#36576a] backdrop-blur-[1px] dark:bg-[#20262c]/75 dark:text-sky-200; }
             .database-grid-loading > div { @@apply rounded-md border border-[#b8c4cb] bg-white/90 px-6 py-4 shadow-lg dark:border-white/15 dark:bg-[#171d23]/95; }
             .database-grid-loading p { @@apply mt-2; }
-            .database-workspace-grid { @@apply table-fixed border-separate border-spacing-0 font-mono text-[11px]; width: max-content; min-width: 100%; }
-            .database-workspace-grid th, .database-workspace-grid td { @@apply relative h-9 max-h-24 overflow-hidden border-r border-b border-[#c6d0d6] px-2 text-left align-middle dark:border-white/[.08]; }
+            .database-workspace-grid { @@apply table-fixed border-separate border-spacing-0 font-mono text-[11px]; min-width: 0; }
+            .database-workspace-grid th, .database-workspace-grid td { @@apply relative overflow-hidden border-r border-b border-[#c6d0d6] px-2 text-left align-middle dark:border-white/[.08]; }
             .database-workspace-grid th, .database-workspace-grid td { user-select: none; -webkit-user-select: none; }
-            .database-workspace-grid thead th { @@apply sticky top-0 z-20 bg-[#dfe4e7] text-[#2e4655] dark:bg-[#30373e] dark:text-slate-200; }
+            .database-workspace-grid thead th { @@apply sticky top-0 z-20 h-9 bg-[#dfe4e7] text-[#2e4655] dark:bg-[#30373e] dark:text-slate-200; }
             .database-workspace-grid thead th > span { @@apply block truncate font-medium; }
             .database-workspace-grid thead .database-column-title { @@apply flex min-w-0 items-center gap-1; }
             .database-column-title b { @@apply min-w-0 flex-1 truncate font-medium; }
@@ -356,13 +356,48 @@
             .database-workspace-grid td.is-pending { @@apply bg-amber-100 ring-1 ring-inset ring-amber-400 dark:bg-amber-400/15; }
             .database-workspace-grid tr.is-deleted td { @@apply bg-red-100/80 text-red-700 line-through dark:bg-red-500/10 dark:text-red-300; }
             .database-workspace-grid tr.is-inserted td { @@apply bg-emerald-50 dark:bg-emerald-500/[.07]; }
+            .database-workspace-grid tbody tr.is-active-row:not(.is-deleted) td:not(.is-selected):not(.is-pending) { @@apply bg-sky-50/80 dark:bg-sky-400/[.06]; }
+            .database-workspace-grid tr.is-inserted td.is-selected { @@apply bg-sky-200 text-sky-950 ring-1 ring-inset ring-sky-500 dark:bg-sky-500/25 dark:text-sky-100; }
+            .database-workspace-grid tbody tr.is-row-resized td { @@apply whitespace-pre-wrap break-words align-top; overflow-wrap: anywhere; }
+            .database-workspace-grid tbody tr.is-row-resized td > span { @@apply block max-h-full overflow-auto py-1; user-select: text; -webkit-user-select: text; }
             .database-row-number { @@apply sticky left-0 z-10 w-12 min-w-12 max-w-12 bg-[#e2e7ea] text-center font-normal text-[#667985] dark:bg-[#292f35] dark:text-slate-500; }
             .database-workspace-grid tbody > tr > .database-row-number { position: sticky; left: 0; z-index: 25; background-color: #e2e7ea; background-clip: padding-box; box-shadow: 1px 0 0 #aeb9c2; }
+            .database-workspace-grid tbody > tr.is-active-row > .database-row-number { @@apply bg-sky-100 font-semibold text-sky-800 dark:bg-sky-500/20 dark:text-sky-200; box-shadow: inset 3px 0 0 #38bdf8, 1px 0 0 #aeb9c2; }
+            .database-workspace-grid tbody > tr > .database-row-number > span { @@apply block; }
+            .database-row-resizer { @@apply absolute -bottom-0.5 left-0 z-30 h-1.5 w-full cursor-row-resize bg-transparent hover:bg-sky-500; touch-action: none; }
             [data-theme="dark"] .database-workspace-grid tbody > tr > .database-row-number { background-color: #292f35; box-shadow: 1px 0 0 rgba(255,255,255,.1); }
+            [data-theme="dark"] .database-workspace-grid tbody > tr.is-active-row > .database-row-number { background-color: rgba(14,165,233,.2); color: #bae6fd; box-shadow: inset 3px 0 0 #38bdf8, 1px 0 0 rgba(255,255,255,.1); }
             .database-workspace-grid thead .database-row-number { @@apply z-30; position: sticky; top: 0; left: 0; }
             .database-column-resizer { @@apply absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-sky-500; }
-            .database-cell-editor { @@apply absolute inset-0 z-10 h-full w-full border-2 border-sky-500 bg-white px-2 font-mono text-[11px] outline-none dark:bg-[#11161c]; }
+            .database-cell-editor-shell { @@apply absolute inset-0 z-10; }
+            .database-cell-editor { @@apply absolute inset-0 h-full w-full border-2 border-sky-500 bg-white px-2 pr-9 font-mono text-[11px] outline-none dark:bg-[#11161c]; }
             .database-cell-editor { user-select: text; -webkit-user-select: text; }
+            .database-cell-editor-expand { @@apply absolute right-1 top-1/2 z-20 grid size-6 -translate-y-1/2 place-items-center rounded-sm border border-[#aab7c0] bg-[#edf2f5] text-[10px] text-[#456476] shadow-sm hover:bg-white focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-white/15 dark:bg-[#27313a] dark:text-sky-300 dark:hover:bg-[#303b45]; }
+            .database-expanded-cell-modal { z-index: 80; }
+            .database-expanded-cell-modal .database-modal-card { @@apply flex max-h-[88vh] max-w-4xl flex-col overflow-hidden p-0; }
+            .database-expanded-cell-modal header { @@apply flex shrink-0 items-center justify-between gap-4 border-b border-[#bdc7cd] px-5 py-4 dark:border-white/10; }
+            .database-expanded-cell-modal header p { @@apply mb-1 font-mono text-[9px] text-[#71838f] dark:text-slate-500; }
+            .database-expanded-cell-modal header h2 { @@apply text-sm; }
+            .database-expanded-cell-modal header button { @@apply grid size-8 shrink-0 place-items-center rounded-sm text-slate-500 hover:bg-slate-200 focus-visible:ring-2 focus-visible:ring-sky-500 dark:hover:bg-white/10; }
+            .database-expanded-cell-meta { @@apply flex shrink-0 items-center gap-2 border-b border-[#d4dce1] px-5 py-2 text-[9px] dark:border-white/[.07]; }
+            .database-expanded-cell-meta span { @@apply rounded-sm border border-[#bdc7cd] bg-[#edf1f3] px-2 py-1 font-mono text-[#526b7a] dark:border-white/10 dark:bg-white/[.04] dark:text-slate-400; }
+            .database-expanded-cell-meta b { @@apply ml-auto font-mono font-normal text-[#71838f] dark:text-slate-500; }
+            .database-json-editor-toolbar { @@apply flex min-h-10 shrink-0 items-center gap-1 border-b border-[#d4dce1] bg-[#eef1f3] px-3 dark:border-white/[.07] dark:bg-[#1b2127]; }
+            .database-json-editor-toolbar > div { @@apply flex items-center rounded-sm border border-[#aeb9c2] bg-white p-0.5 dark:border-white/15 dark:bg-black/20; }
+            .database-json-editor-toolbar button { @@apply min-h-7 rounded-sm px-3 text-[9px] font-semibold text-[#526b7a] hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-35 dark:text-slate-400 dark:hover:bg-white/[.06]; }
+            .database-json-editor-toolbar [data-json-view].is-active { @@apply bg-sky-100 text-sky-800 shadow-sm dark:bg-sky-500/20 dark:text-sky-200; }
+            .database-json-editor-toolbar > span { @@apply ml-2 mr-auto font-mono text-[9px] text-[#71838f] dark:text-slate-500; }
+            .database-json-editor-toolbar > span.is-valid { @@apply text-emerald-700 dark:text-emerald-300; }
+            .database-json-editor-toolbar > span.is-invalid { @@apply text-red-700 dark:text-red-300; }
+            .database-json-editor-error { @@apply shrink-0 border-t border-red-200 bg-red-50 px-5 py-2 font-mono text-[10px] text-red-700 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-300; }
+            .database-expanded-cell-modal textarea { @@apply min-h-72 flex-1 resize-none border-0 bg-white p-5 font-mono text-[13px] leading-6 text-[#182c39] outline-none focus:ring-2 focus:ring-inset focus:ring-sky-500 dark:bg-[#11161c] dark:text-slate-100; user-select: text; -webkit-user-select: text; }
+            .database-expanded-cell-modal textarea:disabled { @@apply bg-[#eef1f3] opacity-50 dark:bg-black/20; }
+            .database-expanded-cell-modes { @@apply flex shrink-0 gap-1 border-t border-[#d4dce1] px-5 py-2 dark:border-white/[.07]; }
+            .database-expanded-cell-modes button { @@apply min-h-7 rounded-sm border border-[#aeb9c2] px-3 font-mono text-[9px] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35 dark:border-white/15 dark:hover:bg-white/[.06]; }
+            .database-expanded-cell-modes button.is-active { @@apply border-sky-500 bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-200; }
+            .database-expanded-cell-modal footer { @@apply flex shrink-0 items-center justify-between gap-4 border-t border-[#bdc7cd] px-5 py-3 dark:border-white/10; }
+            .database-expanded-cell-modal footer > span { @@apply text-[9px] text-[#71838f] dark:text-slate-500; }
+            .database-expanded-cell-modal footer > div { @@apply flex gap-2; }
             .database-readonly-note { @@apply shrink-0 border-t border-[#bdc7cd] bg-[#eef1f3] px-3 py-1 text-[9px] text-[#637783] dark:border-white/10 dark:bg-[#1b2127] dark:text-slate-500; }
             .database-workspace-status { @@apply flex min-h-8 shrink-0 items-center justify-between gap-4 overflow-hidden border-t border-[#343b42] bg-[#20262c] px-2 text-[9px] text-slate-400; }
             .database-workspace-path { @@apply flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap; }
