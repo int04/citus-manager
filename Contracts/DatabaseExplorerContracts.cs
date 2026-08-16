@@ -57,14 +57,21 @@ public sealed record DatabaseObjectResponse(
 /// <summary>One PostgreSQL type accepted by the structured table creator.</summary>
 public sealed record DatabaseTypeResponse(string Name, string DisplayName);
 
+/// <summary>One PostgreSQL operator class available to an index access method.</summary>
+public sealed record DatabaseOperatorClassResponse(string AccessMethod, string Name);
+
 /// <summary>Capabilities and catalog choices used by database action dialogs.</summary>
 public sealed record DatabaseActionMetadataResponse(
     IReadOnlyList<string> Schemas,
     IReadOnlyList<DatabaseTypeResponse> ColumnTypes,
     IReadOnlyList<string> DistributedTables,
     IReadOnlyList<string> TableAccessMethods,
+    IReadOnlyList<string> IndexAccessMethods,
+    IReadOnlyList<string> Collations,
+    IReadOnlyList<DatabaseOperatorClassResponse> OperatorClasses,
     IReadOnlyList<string> Tablespaces,
     IReadOnlyList<string> Roles,
+    bool SupportsNullsNotDistinct,
     bool CanCreateReferenceTable,
     bool CanCreateDistributedTable,
     string? CitusVersion);
@@ -120,8 +127,12 @@ public enum DatabaseIndexMethod
     Hash,
     Gin,
     Gist,
+    Spgist,
     Brin
 }
+
+/// <summary>Sort direction applied to one indexed column.</summary>
+public enum DatabaseIndexSortOrder { None, Ascending, Descending }
 
 /// <summary>Supported referential action for a foreign key.</summary>
 public enum DatabaseReferentialAction
@@ -170,9 +181,23 @@ public sealed record CreateTableForeignKeyRequest
 public sealed record CreateTableIndexRequest
 {
     [Required, MaxLength(63)] public required string Name { get; init; }
+    [MaxLength(4000)] public string? Comment { get; init; }
     public bool Unique { get; init; }
+    public bool NullsNotDistinct { get; init; }
     public DatabaseIndexMethod Method { get; init; } = DatabaseIndexMethod.Btree;
-    [MinLength(1), MaxLength(64)] public required IReadOnlyList<string> Columns { get; init; }
+    [MinLength(1), MaxLength(64)] public required IReadOnlyList<CreateTableIndexColumnRequest> Columns { get; init; }
+    [MaxLength(64)] public IReadOnlyList<string> IncludeColumns { get; init; } = [];
+    [MaxLength(4000)] public string? Condition { get; init; }
+    [MaxLength(63)] public string? Tablespace { get; init; }
+}
+
+/// <summary>One ordered column in a PostgreSQL index definition.</summary>
+public sealed record CreateTableIndexColumnRequest
+{
+    [Required, MaxLength(63)] public required string Name { get; init; }
+    public DatabaseIndexSortOrder Order { get; init; }
+    [MaxLength(128)] public string? Collation { get; init; }
+    [MaxLength(128)] public string? OperatorClass { get; init; }
 }
 
 /// <summary>CHECK constraint definition in CREATE TABLE.</summary>

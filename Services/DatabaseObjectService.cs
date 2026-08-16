@@ -135,6 +135,26 @@ public sealed class DatabaseObjectService(
 
         var accessMethods = await ReadStringListAsync(connection,
             "SELECT amname FROM pg_am WHERE amtype='t' ORDER BY amname", cancellationToken);
+        var indexAccessMethods = await ReadStringListAsync(connection,
+            "SELECT amname FROM pg_am WHERE amtype='i' ORDER BY amname", cancellationToken);
+        var collations = await ReadStringListAsync(connection, """
+            SELECT quote_ident(n.nspname) || '.' || quote_ident(c.collname)
+            FROM pg_collation c JOIN pg_namespace n ON n.oid = c.collnamespace
+            WHERE n.nspname IN ('pg_catalog', 'public')
+            ORDER BY n.nspname, c.collname
+            """, cancellationToken);
+        var operatorClasses = new List<DatabaseOperatorClassResponse>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT am.amname, quote_ident(n.nspname) || '.' || quote_ident(opc.opcname)
+            FROM pg_opclass opc
+            JOIN pg_am am ON am.oid = opc.opcmethod
+            JOIN pg_namespace n ON n.oid = opc.opcnamespace
+            WHERE am.amtype = 'i'
+            ORDER BY am.amname, n.nspname, opc.opcname
+            """, connection))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken))
+                operatorClasses.Add(new(reader.GetString(0), reader.GetString(1)));
         var tablespaces = await ReadStringListAsync(connection,
             "SELECT spcname FROM pg_tablespace WHERE spcname <> 'pg_global' ORDER BY spcname", cancellationToken);
         var roles = await ReadStringListAsync(connection,
@@ -153,7 +173,9 @@ public sealed class DatabaseObjectService(
         }
 
         var (reference, distributedCapability) = await ReadCreateCapabilitiesAsync(connection, cancellationToken);
-        return new(schemas, types, distributed, accessMethods, tablespaces, roles, reference, distributedCapability,
+        var supportsNullsNotDistinct = connection.PostgreSqlVersion.Major >= 15;
+        return new(schemas, types, distributed, accessMethods, indexAccessMethods, collations, operatorClasses,
+            tablespaces, roles, supportsNullsNotDistinct, reference, distributedCapability,
             hasCitus ? await ReadCitusVersionAsync(connection, cancellationToken) : null);
     }
 
@@ -190,6 +212,31 @@ public sealed class DatabaseObjectService(
                     await EnsureCatalogValueAsync(connection, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$1)", request.Owner, "owner", cancellationToken);
                 foreach (var grant in request.Grants)
                     await EnsureCatalogValueAsync(connection, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$1)", grant.Role, "grant role", cancellationToken);
+                foreach (var index in request.Indexes)
+                {
+                    var method = DatabaseObjectDdlSafety.IndexMethodSql(index.Method);
+                    if (index.NullsNotDistinct && connection.PostgreSqlVersion.Major < 15)
+                        throw new ArgumentException("NULLS NOT DISTINCT requires PostgreSQL 15 or newer.");
+                    if (index.Tablespace is not null)
+                        await EnsureCatalogValueAsync(connection, "SELECT EXISTS (SELECT 1 FROM pg_tablespace WHERE spcname=$1)", index.Tablespace, "index tablespace", cancellationToken);
+                    foreach (var column in index.Columns)
+                    {
+                        if (column.Collation is not null)
+                            await EnsureCatalogValueAsync(connection, """
+                                SELECT EXISTS (
+                                    SELECT 1 FROM pg_collation c JOIN pg_namespace n ON n.oid=c.collnamespace
+                                    WHERE quote_ident(n.nspname) || '.' || quote_ident(c.collname)=$1)
+                                """, column.Collation, "index collation", cancellationToken);
+                        if (column.OperatorClass is not null)
+                            await EnsureCatalogValueAsync(connection, """
+                                SELECT EXISTS (
+                                    SELECT 1 FROM pg_opclass opc
+                                    JOIN pg_am am ON am.oid=opc.opcmethod
+                                    JOIN pg_namespace n ON n.oid=opc.opcnamespace
+                                    WHERE am.amname=$2 AND quote_ident(n.nspname) || '.' || quote_ident(opc.opcname)=$1)
+                                """, column.OperatorClass, "index operator class", cancellationToken, method);
+                    }
+                }
 
                 await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
                 try
@@ -256,10 +303,32 @@ public sealed class DatabaseObjectService(
                     {
                         var unique = index.Unique ? "UNIQUE " : string.Empty;
                         var method = DatabaseObjectDdlSafety.IndexMethodSql(index.Method);
-                        var columns = string.Join(", ", index.Columns.Select(Quote));
+                        var columns = string.Join(", ", index.Columns.Select(column =>
+                        {
+                            var value = Quote(column.Name);
+                            if (column.Collation is not null) value += $" COLLATE {column.Collation}";
+                            if (column.OperatorClass is not null) value += $" {column.OperatorClass}";
+                            value += column.Order switch
+                            {
+                                DatabaseIndexSortOrder.Ascending => " ASC",
+                                DatabaseIndexSortOrder.Descending => " DESC",
+                                _ => string.Empty
+                            };
+                            return value;
+                        }));
+                        var include = index.IncludeColumns.Count > 0
+                            ? $" INCLUDE ({string.Join(", ", index.IncludeColumns.Select(Quote))})"
+                            : string.Empty;
+                        var nulls = index.NullsNotDistinct ? " NULLS NOT DISTINCT" : string.Empty;
+                        var tablespace = index.Tablespace is not null ? $" TABLESPACE {Quote(index.Tablespace)}" : string.Empty;
+                        var condition = index.Condition is not null ? $" WHERE {index.Condition.Trim()}" : string.Empty;
                         await ExecuteCommandAsync(connection,
-                            $"CREATE {unique}INDEX {Quote(index.Name)} ON {Qualified(request.Schema, request.Name)} USING {method} ({columns})",
+                            $"CREATE {unique}INDEX {Quote(index.Name)} ON {Qualified(request.Schema, request.Name)} USING {method} ({columns}){include}{nulls}{tablespace}{condition}",
                             cancellationToken, transaction);
+                        if (index.Comment is not null)
+                            await ExecuteCommandAsync(connection,
+                                $"COMMENT ON INDEX {Qualified(request.Schema, index.Name)} IS {DatabaseObjectDdlSafety.QuoteLiteral(index.Comment)}",
+                                cancellationToken, transaction);
                     }
 
                     if (request.Mode != DatabaseTableMode.Local)
@@ -554,10 +623,12 @@ public sealed class DatabaseObjectService(
     }
 
     private static async Task EnsureCatalogValueAsync(
-        NpgsqlConnection connection, string sql, string value, string label, CancellationToken cancellationToken)
+        NpgsqlConnection connection, string sql, string value, string label, CancellationToken cancellationToken,
+        string? secondValue = null)
     {
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue(value);
+        if (secondValue is not null) command.Parameters.AddWithValue(secondValue);
         if (await command.ExecuteScalarAsync(cancellationToken) is not true)
             throw new ArgumentException($"Unsupported or unavailable {label}.");
     }
@@ -680,7 +751,25 @@ internal static class DatabaseObjectDdlSafety
         foreach (var index in request.Indexes)
         {
             ValidateIdentifier(index.Name, nameof(index.Name));
-            ValidateColumnList(index.Columns, columnNames, "Index");
+            var indexColumns = index.Columns.Select(column => column.Name).ToList();
+            ValidateColumnList(indexColumns, columnNames, "Index");
+            ValidateColumnListIfPresent(index.IncludeColumns, columnNames, "Included index");
+            if (index.IncludeColumns.Intersect(indexColumns, StringComparer.Ordinal).Any())
+                throw new ArgumentException("Included index columns cannot duplicate key columns.");
+            if (index.Comment?.IndexOf('\0') >= 0) throw new ArgumentException("Index comment contains an invalid character.");
+            if (index.NullsNotDistinct && !index.Unique) throw new ArgumentException("NULLS NOT DISTINCT requires a unique index.");
+            if (index.Unique && index.Method != DatabaseIndexMethod.Btree)
+                throw new ArgumentException("Unique indexes require the btree access method in this designer.");
+            if (index.Method != DatabaseIndexMethod.Btree && index.Columns.Any(column => column.Order != DatabaseIndexSortOrder.None))
+                throw new ArgumentException("Explicit index column order is supported only for btree indexes.");
+            foreach (var column in index.Columns)
+            {
+                if (!Enum.IsDefined(column.Order)) throw new ArgumentException("Index column order is invalid.");
+                ValidateCatalogToken(column.Collation, "Index collation");
+                ValidateCatalogToken(column.OperatorClass, "Index operator class");
+            }
+            if (index.Condition is not null) ValidateIndexExpression(index.Condition);
+            if (index.Tablespace is not null) ValidateIdentifier(index.Tablespace, nameof(index.Tablespace));
             _ = IndexMethodSql(index.Method);
         }
 
@@ -709,7 +798,7 @@ internal static class DatabaseObjectDdlSafety
                 throw new ArgumentException("Primary key must include the partition key.");
             if (request.Keys.Any(x => !x.Columns.Contains(partitionKey, StringComparer.Ordinal)))
                 throw new ArgumentException("Primary and unique keys must include the partition key.");
-            if (request.Indexes.Any(x => x.Unique && !x.Columns.Contains(partitionKey, StringComparer.Ordinal)))
+            if (request.Indexes.Any(x => x.Unique && !x.Columns.Any(column => column.Name == partitionKey)))
                 throw new ArgumentException("Unique indexes must include the partition key.");
         }
 
@@ -725,7 +814,7 @@ internal static class DatabaseObjectDdlSafety
                 throw new ArgumentException("Primary key must include the distribution column.");
             if (request.Keys.Any(x => !x.Columns.Contains(request.DistributionColumn!, StringComparer.Ordinal)))
                 throw new ArgumentException("Primary and unique keys must include the distribution column.");
-            if (request.Indexes.Any(x => x.Unique && !x.Columns.Contains(request.DistributionColumn!, StringComparer.Ordinal)))
+            if (request.Indexes.Any(x => x.Unique && !x.Columns.Any(column => column.Name == request.DistributionColumn)))
                 throw new ArgumentException("Unique indexes must include the distribution column.");
         }
         else if (request.DistributionColumn is not null || request.ShardCount.HasValue || request.ColocateWith is not null)
@@ -742,6 +831,26 @@ internal static class DatabaseObjectDdlSafety
         }
         if (columns.Distinct(StringComparer.Ordinal).Count() != columns.Count)
             throw new ArgumentException($"{label} columns must be unique.");
+    }
+
+    private static void ValidateColumnListIfPresent(IReadOnlyList<string> columns, ISet<string> availableColumns, string label)
+    {
+        if (columns.Count == 0) return;
+        ValidateColumnList(columns, availableColumns, label);
+    }
+
+    private static void ValidateCatalogToken(string? value, string label)
+    {
+        if (value is null) return;
+        if (value.Length is < 1 or > 128 || value.IndexOf('\0') >= 0 || value.Contains(';') || value.Contains("--") || value.Contains("/*"))
+            throw new ArgumentException($"{label} is invalid.");
+    }
+
+    internal static void ValidateIndexExpression(string expression)
+    {
+        var value = expression.Trim();
+        if (value.Length == 0 || value.IndexOf('\0') >= 0 || value.Contains(';') || value.Contains("--") || value.Contains("/*") || value.Contains("*/"))
+            throw new ArgumentException("Index condition must contain one safe expression without comments or semicolons.");
     }
 
     internal static void ValidateDefaultExpression(string expression)
@@ -772,6 +881,7 @@ internal static class DatabaseObjectDdlSafety
         DatabaseIndexMethod.Hash => "hash",
         DatabaseIndexMethod.Gin => "gin",
         DatabaseIndexMethod.Gist => "gist",
+        DatabaseIndexMethod.Spgist => "spgist",
         DatabaseIndexMethod.Brin => "brin",
         _ => throw new ArgumentOutOfRangeException(nameof(method))
     };

@@ -87,7 +87,7 @@ public sealed class DatabaseObjectDdlSafetyTests
     {
         var request = Table(DatabaseTableMode.Distributed, "tenant_id") with
         {
-            Indexes = [new() { Name = "events_id_uidx", Unique = true, Columns = ["id"] }]
+            Indexes = [new() { Name = "events_id_uidx", Unique = true, Columns = [new() { Name = "id" }] }]
         };
         Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
     }
@@ -127,6 +127,52 @@ public sealed class DatabaseObjectDdlSafetyTests
     public void Unlogged_distributed_table_is_rejected()
     {
         var request = Table(DatabaseTableMode.Distributed, "tenant_id") with { Persistence = DatabaseTablePersistence.Unlogged };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Index_include_columns_cannot_duplicate_key_columns()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Indexes = [new() { Name = "events_id_idx", Columns = [new() { Name = "id" }], IncludeColumns = ["id"] }]
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Nulls_not_distinct_requires_unique_index()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Indexes = [new() { Name = "events_id_idx", NullsNotDistinct = true, Columns = [new() { Name = "id" }] }]
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Theory]
+    [InlineData("id IS NOT NULL")]
+    [InlineData("tenant_id = 1")]
+    public void Safe_partial_index_conditions_pass(string condition)
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Indexes = [new() { Name = "events_partial_idx", Condition = condition, Columns = [new() { Name = "id" }] }]
+        };
+        DatabaseObjectDdlSafety.ValidateCreateTable(request);
+    }
+
+    [Fact]
+    public void Partial_index_condition_rejects_statement_separator()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Indexes = [new() { Name = "events_partial_idx", Condition = "id > 0; DROP TABLE x", Columns = [new() { Name = "id" }] }]
+        };
         Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
     }
 

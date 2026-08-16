@@ -17,6 +17,7 @@
   let modalTrigger = null;
   let modalSubmit = null;
   let metadataPromise = null;
+  let designerMetadata = null;
   let longPressTimer = null;
   let longPressPoint = null;
   let suppressNextClick = false;
@@ -397,7 +398,7 @@
   function renameColumnReferences(previousName, nextName) {
     if (!previousName || previousName === nextName) return;
     document.querySelectorAll(".dg-key-row").forEach(row => { const key = keyRowData(row); key.columns = key.columns.map(column => column === previousName ? nextName : column); row.dataset.keyColumns = JSON.stringify(key.columns); });
-    document.querySelectorAll(".dg-index-row").forEach(row => { const index = indexRowData(row); index.columns = index.columns.map(column => column === previousName ? nextName : column); row.dataset.indexColumns = JSON.stringify(index.columns); });
+    document.querySelectorAll(".dg-index-row").forEach(row => { const index = indexRowData(row); index.columns = index.columns.map(column => ({ ...column, name: column.name === previousName ? nextName : column.name })); index.includeColumns = index.includeColumns.map(column => column === previousName ? nextName : column); row.dataset.indexColumns = JSON.stringify(index.columns); row.dataset.indexIncludeColumns = JSON.stringify(index.includeColumns); });
     document.querySelectorAll(".dg-foreign-key-row").forEach(row => { const fk = foreignKeyRowData(row); fk.mappings = fk.mappings.map(mapping => ({ ...mapping, local: mapping.local === previousName ? nextName : mapping.local })); row.dataset.foreignKeyMappings = JSON.stringify(fk.mappings); });
   }
   function updateColumnFromEditor() {
@@ -496,7 +497,7 @@
 
   function syncDesignerColumnSelectors(names = tableColumnNames()) {
     document.querySelectorAll(".dg-key-row").forEach(row => { row.dataset.keyColumns = JSON.stringify(keyRowData(row).columns.filter(column => names.includes(column))); renderKeySummary(row); });
-    document.querySelectorAll(".dg-index-row").forEach(row => { row.dataset.indexColumns = JSON.stringify(indexRowData(row).columns.filter(column => names.includes(column))); renderIndexSummary(row); });
+    document.querySelectorAll(".dg-index-row").forEach(row => { const index = indexRowData(row); row.dataset.indexColumns = JSON.stringify(index.columns.filter(column => names.includes(column.name))); row.dataset.indexIncludeColumns = JSON.stringify(index.includeColumns.filter(column => names.includes(column))); renderIndexSummary(row); });
     document.querySelectorAll(".dg-foreign-key-row").forEach(row => { const fk = foreignKeyRowData(row); fk.mappings = fk.mappings.filter(mapping => names.includes(mapping.local)); row.dataset.foreignKeyMappings = JSON.stringify(fk.mappings); renderForeignKeySummary(row); });
     const activeKey = activeKeyRow(); if (activeKey) renderKeyColumns(activeKey);
     const activeIndex = activeIndexRow(); if (activeIndex) renderIndexColumns(activeIndex);
@@ -537,7 +538,7 @@
       renderKeySummary(row);
     });
     document.querySelectorAll(".dg-index-row").forEach(row => {
-      if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns), row);
+      if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns.map(column => column.name)), row);
       renderIndexSummary(row);
     });
     const activeKey = activeKeyRow();
@@ -784,12 +785,19 @@
     document.getElementById("database-remove-foreign-key").disabled = !activeForeignKeyRow();
   }
   function indexRowData(row) {
-    let columns = []; try { columns = JSON.parse(row.dataset.indexColumns || "[]"); } catch { columns = []; }
-    return { name: row.dataset.indexName || "", unique: row.dataset.indexUnique === "true", method: row.dataset.indexMethod || "Btree", columns };
+    let columns = [], includeColumns = [];
+    try { columns = JSON.parse(row.dataset.indexColumns || "[]"); } catch { columns = []; }
+    try { includeColumns = JSON.parse(row.dataset.indexIncludeColumns || "[]"); } catch { includeColumns = []; }
+    columns = columns.map(column => typeof column === "string" ? { name: column, order: "None", collation: "", operatorClass: "" } : {
+      name: column.name || "", order: column.order || "None", collation: column.collation || "", operatorClass: column.operatorClass || ""
+    });
+    return { name: row.dataset.indexName || "", comment: row.dataset.indexComment || "", unique: row.dataset.indexUnique === "true",
+      nullsNotDistinct: row.dataset.indexNullsNotDistinct === "true", method: row.dataset.indexMethod || "Btree", columns, includeColumns,
+      condition: row.dataset.indexCondition || "", tablespace: row.dataset.indexTablespace || "" };
   }
   function renderIndexSummary(row) {
     const index = indexRowData(row);
-    row.innerHTML = `<span class="dg-index-icon" aria-hidden="true"></span><span><strong>${html(index.name || "index")}</strong><small>${html(index.columns.join(", ") || "No columns")} · ${html(index.method.toLowerCase())}</small></span>${index.unique ? '<span class="dg-key-kind-badge">UQ</span>' : ""}`;
+    row.innerHTML = `<span class="dg-index-icon" aria-hidden="true"></span><span><strong>${html(index.name || "index")}</strong><small>${html(index.columns.map(column => column.name).join(", ") || "No columns")} · ${html(index.method.toLowerCase())}${index.condition ? " · partial" : ""}</small></span>${index.unique ? '<span class="dg-key-kind-badge">UQ</span>' : ""}`;
   }
   function activeIndexRow() { return document.querySelector(".dg-index-row.is-active"); }
   function refreshIndexCount() { document.getElementById("database-index-count")?.replaceChildren(document.createTextNode(String(document.querySelectorAll(".dg-index-row").length))); }
@@ -800,20 +808,41 @@
     const index = indexRowData(row), auto = row.dataset.indexAutoName !== "false";
     document.getElementById("database-index-name").value = index.name; document.getElementById("database-index-name").readOnly = auto;
     document.getElementById("database-index-auto-name").checked = auto; document.getElementById("database-index-method").value = index.method;
-    document.getElementById("database-index-unique").checked = index.unique; document.querySelector("[data-index-editor-title]").textContent = index.name;
+    document.getElementById("database-index-comment").value = index.comment;
+    document.getElementById("database-index-unique").checked = index.unique;
+    document.getElementById("database-index-nulls-not-distinct").checked = index.nullsNotDistinct;
+    document.getElementById("database-index-nulls-not-distinct").disabled = !index.unique || !designerMetadata?.supportsNullsNotDistinct;
+    document.getElementById("database-index-condition").value = index.condition;
+    document.getElementById("database-index-tablespace").value = index.tablespace;
+    syncIndexIncludeColumns(index.includeColumns);
+    document.querySelector("[data-index-editor-title]").textContent = index.name;
     renderIndexColumns(row);
     document.getElementById("database-remove-index").disabled = false;
   }
   function updateIndexFromEditor() {
     const row = activeIndexRow(); if (!row) return;
     row.dataset.indexName = document.getElementById("database-index-name").value.trim(); row.dataset.indexMethod = document.getElementById("database-index-method").value;
+    row.dataset.indexComment = document.getElementById("database-index-comment").value;
     row.dataset.indexUnique = document.getElementById("database-index-unique").checked;
-    if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns), row);
+    const nulls = document.getElementById("database-index-nulls-not-distinct"); nulls.disabled = row.dataset.indexUnique !== "true" || !designerMetadata?.supportsNullsNotDistinct;
+    if (nulls.disabled) nulls.checked = false;
+    row.dataset.indexNullsNotDistinct = nulls.checked;
+    row.dataset.indexCondition = document.getElementById("database-index-condition").value.trim();
+    row.dataset.indexTablespace = document.getElementById("database-index-tablespace").value;
+    row.dataset.indexIncludeColumns = JSON.stringify([...document.getElementById("database-index-include-columns").selectedOptions].map(option => option.value));
+    const normalized = indexRowData(row);
+    const validOperatorClasses = new Set((designerMetadata?.operatorClasses || []).filter(item => item.accessMethod.toLowerCase() === normalized.method.toLowerCase()).map(item => item.name));
+    normalized.columns = normalized.columns.map(column => ({ ...column,
+      order: normalized.method === "Btree" ? column.order : "None",
+      operatorClass: !column.operatorClass || validOperatorClasses.has(column.operatorClass) ? column.operatorClass : "" }));
+    row.dataset.indexColumns = JSON.stringify(normalized.columns);
+    if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns.map(column => column.name)), row);
+    syncIndexColumnEditor();
     renderIndexSummary(row); document.querySelector("[data-index-editor-title]").textContent = row.dataset.indexName; updateTableSqlPreview();
   }
   function renderIndexColumns(row) {
     const list = document.getElementById("database-index-column-list"), columns = indexRowData(row).columns;
-    list.innerHTML = columns.length ? columns.map((column, index) => `<button type="button" class="dg-index-column-row dg-key-column-row ${index === 0 ? "is-active" : ""}" data-index-column-index="${index}" role="option"><span>${index + 1}</span><strong>${html(column)}</strong></button>`).join("") : '<div class="dg-key-column-empty">Add at least one column</div>';
+    list.innerHTML = columns.length ? columns.map((column, index) => `<button type="button" class="dg-index-column-row dg-key-column-row ${index === 0 ? "is-active" : ""}" data-index-column-index="${index}" role="option"><span>${index + 1}</span><strong>${html(column.name)}${column.order !== "None" ? ` · ${html(column.order === "Ascending" ? "ASC" : "DESC")}` : ""}</strong></button>`).join("") : '<div class="dg-key-column-empty">Add at least one column</div>';
     list.querySelectorAll(".dg-index-column-row").forEach(item => item.addEventListener("click", () => {
       list.querySelectorAll(".dg-index-column-row").forEach(other => other.classList.toggle("is-active", other === item)); syncIndexColumnEditor();
     }));
@@ -821,23 +850,47 @@
   }
   function syncIndexColumnEditor() {
     const row = activeIndexRow(), selected = document.querySelector(".dg-index-column-row.is-active"), select = document.getElementById("database-index-column-name");
-    const value = row && selected ? indexRowData(row).columns[Number(selected.dataset.indexColumnIndex)] : "";
-    select.innerHTML = `<option value="">Select column…</option>${tableColumnNames().map(name => `<option value="${html(name)}" ${name === value ? "selected" : ""}>${html(name)}</option>`).join("")}`;
-    select.disabled = !selected;
+    const column = row && selected ? indexRowData(row).columns[Number(selected.dataset.indexColumnIndex)] : null;
+    select.innerHTML = `<option value="">Select column…</option>${tableColumnNames().map(name => `<option value="${html(name)}" ${name === column?.name ? "selected" : ""}>${html(name)}</option>`).join("")}`;
+    const order = document.getElementById("database-index-column-order"), collation = document.getElementById("database-index-column-collation"), operatorClass = document.getElementById("database-index-column-operator-class");
+    order.value = column?.order || "None"; order.disabled = !column || row?.dataset.indexMethod !== "Btree";
+    collation.innerHTML = `<option value="">default</option>${(designerMetadata?.collations || []).map(value => `<option value="${html(value)}" ${value === column?.collation ? "selected" : ""}>${html(value)}</option>`).join("")}`;
+    const method = (row?.dataset.indexMethod || "Btree").toLowerCase();
+    const operatorClasses = (designerMetadata?.operatorClasses || []).filter(item => item.accessMethod.toLowerCase() === method);
+    operatorClass.innerHTML = `<option value="">default</option>${operatorClasses.map(item => `<option value="${html(item.name)}" ${item.name === column?.operatorClass ? "selected" : ""}>${html(item.name)}</option>`).join("")}`;
+    [select, collation, operatorClass].forEach(control => { control.disabled = !column; });
+  }
+  function syncIndexIncludeColumns(selected = indexRowData(activeIndexRow() || document.createElement("div")).includeColumns) {
+    const select = document.getElementById("database-index-include-columns"); if (!select) return;
+    const keyColumns = new Set(activeIndexRow() ? indexRowData(activeIndexRow()).columns.map(column => column.name) : []);
+    select.innerHTML = tableColumnNames().map(name => `<option value="${html(name)}" ${selected.includes(name) && !keyColumns.has(name) ? "selected" : ""} ${keyColumns.has(name) ? "disabled" : ""}>${html(name)}${keyColumns.has(name) ? " · key" : ""}</option>`).join("");
+  }
+  function updateIndexColumnFromEditor() {
+    const row = activeIndexRow(), selected = document.querySelector(".dg-index-column-row.is-active");
+    if (!row || !selected) return;
+    const index = indexRowData(row), position = Number(selected.dataset.indexColumnIndex), name = document.getElementById("database-index-column-name").value;
+    if (!name || index.columns.some((column, columnIndex) => column.name === name && columnIndex !== position)) return syncIndexColumnEditor();
+    index.columns[position] = { name, order: document.getElementById("database-index-column-order").value,
+      collation: document.getElementById("database-index-column-collation").value,
+      operatorClass: document.getElementById("database-index-column-operator-class").value };
+    row.dataset.indexColumns = JSON.stringify(index.columns);
+    updateAutoObjectNames(); renderIndexColumns(row); renderIndexSummary(row); syncIndexIncludeColumns(index.includeColumns); updateTableSqlPreview();
   }
   function mutateIndexColumns(action) {
     const row = activeIndexRow(); if (!row) return;
     const index = indexRowData(row), selected = document.querySelector(".dg-index-column-row.is-active"), position = selected ? Number(selected.dataset.indexColumnIndex) : -1;
-    if (action === "add") { const next = tableColumnNames().find(name => !index.columns.includes(name)); if (next) index.columns.push(next); }
+    if (action === "add") { const next = tableColumnNames().find(name => !index.columns.some(column => column.name === name)); if (next) index.columns.push({ name: next, order: "None", collation: "", operatorClass: "" }); }
     if (action === "remove" && position >= 0) index.columns.splice(position, 1);
     if ((action === "up" || action === "down") && position >= 0) { const target = position + (action === "up" ? -1 : 1); if (target >= 0 && target < index.columns.length) [index.columns[position], index.columns[target]] = [index.columns[target], index.columns[position]]; }
-    row.dataset.indexColumns = JSON.stringify(index.columns); updateAutoObjectNames(); renderIndexColumns(row); renderIndexSummary(row); updateTableSqlPreview();
+    row.dataset.indexColumns = JSON.stringify(index.columns); updateAutoObjectNames(); renderIndexColumns(row); renderIndexSummary(row); syncIndexIncludeColumns(index.includeColumns); updateTableSqlPreview();
   }
   function addIndexRow(initial = {}) {
     const row = document.createElement("button"); row.type = "button"; row.className = "dg-index-row dg-tree-object-row"; row.setAttribute("role", "option");
     row.dataset.indexAutoName = initial.name ? "false" : "true"; row.dataset.indexName = initial.name || ""; row.dataset.indexUnique = initial.unique ? "true" : "false";
-    row.dataset.indexMethod = initial.method || "Btree"; row.dataset.indexColumns = JSON.stringify(initial.columns || tableColumnNames().slice(0, 1));
-    if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns), row);
+    row.dataset.indexComment = initial.comment || ""; row.dataset.indexNullsNotDistinct = initial.nullsNotDistinct ? "true" : "false";
+    row.dataset.indexMethod = initial.method || "Btree"; row.dataset.indexColumns = JSON.stringify((initial.columns || tableColumnNames().slice(0, 1)).map(column => typeof column === "string" ? { name: column, order: "None", collation: "", operatorClass: "" } : column));
+    row.dataset.indexIncludeColumns = JSON.stringify(initial.includeColumns || []); row.dataset.indexCondition = initial.condition || ""; row.dataset.indexTablespace = initial.tablespace || "";
+    if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns.map(column => column.name)), row);
     renderIndexSummary(row); row.addEventListener("click", () => selectIndexRow(row)); wireObjectTreeKeyboard(row, "dg-index-row", selectIndexRow, removeActiveIndex); document.getElementById("database-index-list").appendChild(row);
     selectIndexRow(row); refreshIndexCount(); updateAutoObjectNames(); updateTableSqlPreview(); document.getElementById("database-index-column-name").focus();
   }
@@ -938,10 +991,10 @@
     document.getElementById("database-remove-index").addEventListener("click", removeActiveIndex);
     document.getElementById("database-index-name").addEventListener("input", () => { const row = activeIndexRow(); if (!row) return; row.dataset.indexAutoName = "false"; document.getElementById("database-index-auto-name").checked = false; updateIndexFromEditor(); });
     document.getElementById("database-index-auto-name").addEventListener("change", event => { const row = activeIndexRow(); if (!row) return; row.dataset.indexAutoName = event.target.checked ? "true" : "false"; document.getElementById("database-index-name").readOnly = event.target.checked; if (event.target.checked) updateAutoObjectNames(); else updateIndexFromEditor(); });
-    ["database-index-method", "database-index-unique"].forEach(id => { document.getElementById(id).addEventListener("input", updateIndexFromEditor); document.getElementById(id).addEventListener("change", updateIndexFromEditor); });
+    ["database-index-comment", "database-index-method", "database-index-unique", "database-index-nulls-not-distinct", "database-index-condition", "database-index-include-columns", "database-index-tablespace"].forEach(id => { document.getElementById(id).addEventListener("input", updateIndexFromEditor); document.getElementById(id).addEventListener("change", updateIndexFromEditor); });
     document.getElementById("database-add-index-column").addEventListener("click", () => mutateIndexColumns("add")); document.getElementById("database-remove-index-column").addEventListener("click", () => mutateIndexColumns("remove"));
     document.getElementById("database-move-index-column-up").addEventListener("click", () => mutateIndexColumns("up")); document.getElementById("database-move-index-column-down").addEventListener("click", () => mutateIndexColumns("down"));
-    document.getElementById("database-index-column-name").addEventListener("change", event => { const row = activeIndexRow(), selected = document.querySelector(".dg-index-column-row.is-active"); if (!row || !selected || !event.target.value) return; const index = indexRowData(row), position = Number(selected.dataset.indexColumnIndex); if (index.columns.some((column, i) => column === event.target.value && i !== position)) return syncIndexColumnEditor(); index.columns[position] = event.target.value; row.dataset.indexColumns = JSON.stringify(index.columns); updateAutoObjectNames(); renderIndexColumns(row); renderIndexSummary(row); updateTableSqlPreview(); });
+    ["database-index-column-name", "database-index-column-order", "database-index-column-collation", "database-index-column-operator-class"].forEach(id => document.getElementById(id).addEventListener("change", updateIndexColumnFromEditor));
     document.getElementById("database-add-check").addEventListener("click", () => addCheckRow());
     document.getElementById("database-empty-add-check").addEventListener("click", () => addCheckRow());
     document.getElementById("database-remove-check").addEventListener("click", removeActiveCheck);
@@ -1076,7 +1129,14 @@
     sql += ";";
     document.querySelectorAll(".dg-index-row").forEach(row => {
       const index = indexRowData(row);
-      sql += `\n\nCREATE ${index.unique ? "UNIQUE " : ""}INDEX ${quoteId(index.name || "index_name")} ON ${quoteId(schema)}.${quoteId(table)} USING ${index.method.toLowerCase()} (${(index.columns.length ? index.columns : ["column_name"]).map(quoteId).join(", ")});`;
+      const indexColumns = (index.columns.length ? index.columns : [{ name: "column_name", order: "None", collation: "", operatorClass: "" }]).map(column =>
+        `${quoteId(column.name)}${column.collation ? ` COLLATE ${column.collation}` : ""}${column.operatorClass ? ` ${column.operatorClass}` : ""}${column.order === "Ascending" ? " ASC" : column.order === "Descending" ? " DESC" : ""}`);
+      const include = index.includeColumns.length ? ` INCLUDE (${index.includeColumns.map(quoteId).join(", ")})` : "";
+      const nulls = index.nullsNotDistinct ? " NULLS NOT DISTINCT" : "";
+      const tablespace = index.tablespace ? ` TABLESPACE ${quoteId(index.tablespace)}` : "";
+      const condition = index.condition ? ` WHERE ${index.condition}` : "";
+      sql += `\n\nCREATE ${index.unique ? "UNIQUE " : ""}INDEX ${quoteId(index.name || "index_name")} ON ${quoteId(schema)}.${quoteId(table)} USING ${index.method.toLowerCase()} (${indexColumns.join(", ")})${include}${nulls}${tablespace}${condition};`;
+      if (index.comment) sql += `\nCOMMENT ON INDEX ${quoteId(schema)}.${quoteId(index.name || "index_name")} IS ${quoteLiteral(index.comment)};`;
     });
     const mode = form.elements.Mode?.value;
     if (mode === "Reference") sql += `\n\nSELECT create_reference_table('${schema.replaceAll("'", "''")}.${table.replaceAll("'", "''")}');`;
@@ -1138,6 +1198,9 @@
     const installedAccessMethods = [...new Set(metadata.tableAccessMethods || [])];
     const accessMethodOptions = installedAccessMethods.map(method => `<option value="${html(method)}">${html(method)}</option>`).join("");
     const unavailableKnownMethods = ["heap", "columnar"].filter(method => !installedAccessMethods.includes(method));
+    const indexMethodEnums = { btree: "Btree", hash: "Hash", gin: "Gin", gist: "Gist", spgist: "Spgist", brin: "Brin" };
+    const indexMethodOptions = (metadata.indexAccessMethods || Object.keys(indexMethodEnums)).filter(method => indexMethodEnums[method.toLowerCase()])
+      .map(method => `<option value="${indexMethodEnums[method.toLowerCase()]}">${html(method.toLowerCase())}</option>`).join("");
     openModal({ title: "Create Table", eyebrow: `POSTGRESQL · CITUS ${metadata.citusVersion || "N/A"}`,
       description: "Thiết kế table, columns và Citus placement. SQL preview cập nhật ngay khi chỉnh sửa.", variant: "table",
       body: `<div class="dg-table-designer">
@@ -1263,12 +1326,18 @@
               <div id="database-index-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No index selected</strong><p>Add an index to configure method, uniqueness and ordered columns.</p><button type="button" id="database-empty-add-index" class="dg-toolbar-button">+ Add index</button></div>
               <div id="database-index-editor" class="dg-object-editor hidden">
                 <header class="dg-key-editor-heading"><span class="dg-index-icon" aria-hidden="true"></span><strong data-index-editor-title>index</strong><span>index</span></header>
-                <div class="dg-property-grid">
-                  <label><span>Name <span class="dg-auto-name-toggle"><input id="database-index-auto-name" type="checkbox" checked> Auto</span></span><input id="database-index-name" maxlength="63" placeholder="users_id_createdAt" readonly></label>
-                  <label><span>Access method</span><select id="database-index-method">${["Btree", "Hash", "Gin", "Gist", "Brin"].map(value => `<option value="${value}">${value.toLowerCase()}</option>`).join("")}</select></label>
-                  <fieldset class="dg-option-group"><legend>Options</legend><label><input id="database-index-unique" type="checkbox"> Unique</label></fieldset>
+                <div class="dg-index-property-form">
+                  <label class="dg-index-property-row"><span>Name <span class="dg-auto-name-toggle"><input id="database-index-auto-name" type="checkbox" checked> Auto</span></span><input id="database-index-name" maxlength="63" placeholder="users_id_createdAt" readonly></label>
+                  <label class="dg-index-property-row"><span>Comment</span><textarea id="database-index-comment" maxlength="4000" rows="2" placeholder="Optional index description"></textarea></label>
+                  <div class="dg-index-toggle-row"><label><input id="database-index-unique" type="checkbox"> Unique</label><label><input id="database-index-nulls-not-distinct" type="checkbox" ${metadata.supportsNullsNotDistinct ? "" : "disabled"}> Nulls Not Distinct</label></div>
                 </div>
-                <section class="dg-key-columns-section"><div class="dg-key-columns-heading"><div><strong>Columns</strong><small>Order affects lookup and sort behavior</small></div><div class="dg-key-column-toolbar" role="toolbar" aria-label="Index column actions"><button type="button" id="database-add-index-column" aria-label="Add index column" title="Add column">+</button><button type="button" id="database-remove-index-column" aria-label="Remove selected index column" title="Remove column">−</button><span></span><button type="button" id="database-move-index-column-up" aria-label="Move index column up" title="Move up">↑</button><button type="button" id="database-move-index-column-down" aria-label="Move index column down" title="Move down">↓</button></div></div><div class="dg-key-columns-workspace"><div id="database-index-column-list" class="dg-key-column-list"></div><label class="dg-key-column-property"><span>Column name</span><select id="database-index-column-name" disabled></select><small>Select a row on the left, then choose its column.</small></label></div></section>
+                <section class="dg-key-columns-section dg-index-columns-section"><div class="dg-key-columns-heading"><div><strong>Columns</strong><small>Ordered index keys and per-column options</small></div><div class="dg-key-column-toolbar" role="toolbar" aria-label="Index column actions"><button type="button" id="database-add-index-column" aria-label="Add index column" title="Add column">+</button><button type="button" id="database-remove-index-column" aria-label="Remove selected index column" title="Remove column">−</button><span></span><button type="button" id="database-move-index-column-up" aria-label="Move index column up" title="Move up">↑</button><button type="button" id="database-move-index-column-down" aria-label="Move index column down" title="Move down">↓</button></div></div><div class="dg-index-columns-workspace"><div id="database-index-column-list" class="dg-key-column-list"></div><div class="dg-index-column-properties"><label><span>Column Name</span><select id="database-index-column-name" disabled></select></label><label><span>Order</span><select id="database-index-column-order" disabled><option value="None">NONE</option><option value="Ascending">ASC</option><option value="Descending">DESC</option></select></label><label><span>Collation</span><select id="database-index-column-collation" disabled></select></label><label><span>Operator Class</span><select id="database-index-column-operator-class" disabled></select></label></div></div></section>
+                <div class="dg-index-advanced-properties">
+                  <label><span>Condition</span><textarea id="database-index-condition" rows="2" maxlength="4000" spellcheck="false" placeholder="e.g. deleted_at IS NULL"></textarea></label>
+                  <label><span>Include Columns</span><select id="database-index-include-columns" multiple size="3" aria-label="Included index columns"></select></label>
+                  <label><span>Access Method</span><select id="database-index-method">${indexMethodOptions}</select></label>
+                  <label><span>Tablespace</span><select id="database-index-tablespace"><option value="">server default</option>${(metadata.tablespaces || []).map(value => `<option value="${html(value)}">${html(value)}</option>`).join("")}</select></label>
+                </div>
               </div>
             </section>
             <section data-designer-panel="checks" class="dg-designer-panel hidden">
@@ -1324,8 +1393,11 @@
         });
         [...document.querySelectorAll(".dg-index-row")].forEach((row, index) => {
           const item = indexRowData(row); if (!item.columns.length) throw { responseJSON: { detail: `Index ${item.name || index + 1} phải có ít nhất một column.` } };
-          data[`Indexes[${index}].Name`] = item.name; data[`Indexes[${index}].Unique`] = item.unique; data[`Indexes[${index}].Method`] = item.method;
-          item.columns.forEach((column, columnIndex) => { data[`Indexes[${index}].Columns[${columnIndex}]`] = column; });
+          data[`Indexes[${index}].Name`] = item.name; data[`Indexes[${index}].Comment`] = item.comment || null;
+          data[`Indexes[${index}].Unique`] = item.unique; data[`Indexes[${index}].NullsNotDistinct`] = item.nullsNotDistinct; data[`Indexes[${index}].Method`] = item.method;
+          data[`Indexes[${index}].Condition`] = item.condition || null; data[`Indexes[${index}].Tablespace`] = item.tablespace || null;
+          item.columns.forEach((column, columnIndex) => { data[`Indexes[${index}].Columns[${columnIndex}].Name`] = column.name; data[`Indexes[${index}].Columns[${columnIndex}].Order`] = column.order; data[`Indexes[${index}].Columns[${columnIndex}].Collation`] = column.collation || null; data[`Indexes[${index}].Columns[${columnIndex}].OperatorClass`] = column.operatorClass || null; });
+          item.includeColumns.forEach((column, columnIndex) => { data[`Indexes[${index}].IncludeColumns[${columnIndex}]`] = column; });
         });
         [...document.querySelectorAll(".dg-check-row")].forEach((row, index) => {
           const check = checkRowData(row); if (!check.expression.trim()) throw { responseJSON: { detail: `Check ${check.name || index + 1} cần expression.` } };
@@ -1340,6 +1412,7 @@
         });
         await finish(await post($explorer.data("create-table-url"), data));
       } });
+    designerMetadata = metadata;
     bindDesignerSections(metadata);
     addColumnRow(metadata, { name: "id", nullable: false });
     form.elements.Name.addEventListener("input", () => { updateAutoObjectNames(); updateTableSqlPreview(); });

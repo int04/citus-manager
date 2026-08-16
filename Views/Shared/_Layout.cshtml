@@ -478,6 +478,14 @@
             .dg-key-kind-control strong, .dg-key-kind-control small { @@apply block; }
             .dg-key-kind-control strong { @@apply text-[10px] font-semibold text-[#e4e8eb]; }
             .dg-key-kind-control small { @@apply text-[8px] text-[#7f8991]; }
+            .dg-index-property-form { @@apply grid gap-3 border-b border-[#3d4248] p-4; }
+            .dg-index-property-row { display: grid; grid-template-columns: 9.5rem minmax(0,1fr); align-items: center; gap: 1rem; color: #e3e8eb; font-size: 11px; }
+            .dg-index-property-row > span { @@apply flex items-center justify-between font-medium; }
+            .dg-index-property-row input:not([type=checkbox]), .dg-index-property-row textarea { @@apply min-h-9 min-w-0 w-full rounded-[3px] border border-[#4a535b] bg-[#22282d] px-3 text-[11px] text-[#edf1f3] focus:border-[#55b9ee] focus-visible:outline-none; }
+            .dg-index-property-row textarea { @@apply resize-y py-2; }
+            .dg-index-toggle-row { @@apply ml-[10.5rem] flex flex-wrap items-center gap-8; }
+            .dg-index-toggle-row label { @@apply flex items-center gap-2 text-[11px] text-[#edf1f3]; }
+            .dg-index-toggle-row input { @@apply size-4 accent-[#ff786f] disabled:cursor-not-allowed disabled:opacity-40; }
             .dg-key-columns-section { @@apply p-4; }
             .dg-key-columns-heading { @@apply flex items-end justify-between border-b border-[#3d4248]; }
             .dg-key-columns-heading > div:first-child { @@apply pb-2; }
@@ -497,6 +505,15 @@
             .dg-key-column-property { @@apply grid content-start gap-2 p-4 text-[10px] font-medium text-[#bac2c8]; }
             .dg-key-column-property select { @@apply min-h-9 rounded-[2px] border border-[#4a5158] bg-[#20252a] px-2 text-[11px] text-[#edf0f2] focus:border-[#4a9ff5] focus-visible:outline-none disabled:opacity-50; }
             .dg-key-column-property small { @@apply font-normal leading-4 text-[#737d85]; }
+            .dg-index-columns-section { @@apply border-b border-[#3d4248]; }
+            .dg-index-columns-workspace { display: grid; grid-template-columns: minmax(11rem,.7fr) minmax(18rem,1.3fr); min-height: 210px; border: 1px solid #3d444a; border-top: 0; }
+            .dg-index-column-properties { @@apply grid content-start gap-2 p-3; }
+            .dg-index-column-properties label, .dg-index-advanced-properties label { display: grid; grid-template-columns: 8rem minmax(0,1fr); align-items: center; gap: .75rem; color: #dce1e4; font-size: 10px; }
+            .dg-index-column-properties select, .dg-index-advanced-properties select, .dg-index-advanced-properties textarea { @@apply min-h-9 min-w-0 rounded-[3px] border border-[#4a535b] bg-[#22282d] px-3 text-[11px] text-[#edf1f3] focus:border-[#55b9ee] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45; }
+            .dg-index-advanced-properties { @@apply grid gap-3 p-4; }
+            .dg-index-advanced-properties label { grid-template-columns: 9.5rem minmax(0,1fr); }
+            .dg-index-advanced-properties textarea { @@apply resize-y py-2 font-mono; }
+            .dg-index-advanced-properties select[multiple] { @@apply py-1; }
             .dg-object-tree-list { @@apply space-y-0.5 p-1; }
             .dg-tree-object-row { display: grid; grid-template-columns: 14px minmax(0,1fr) auto; min-width: 0; width: 100%; gap: .5rem; align-items: center; border-left: 2px solid transparent; border-radius: 3px; padding: .375rem .25rem .375rem .5rem; background: transparent; text-align: left; box-shadow: none; }
             .dg-tree-object-row:hover { background: rgba(255,255,255,.05); }
@@ -601,6 +618,9 @@
                 .dg-inline-property, .dg-table-grant-row { grid-template-columns: minmax(0,1fr); }
                 .dg-key-grid, .dg-index-grid, .dg-fk-grid, .dg-check-grid { grid-template-columns: minmax(0,1fr); }
                 .dg-key-properties, .dg-key-columns-workspace, .dg-property-grid, .dg-fk-properties { grid-template-columns: minmax(0,1fr); }
+                .dg-index-property-row, .dg-index-column-properties label, .dg-index-advanced-properties label { grid-template-columns: minmax(0,1fr); gap: .35rem; }
+                .dg-index-toggle-row { @@apply ml-0; }
+                .dg-index-columns-workspace { grid-template-columns: minmax(0,1fr); }
                 .dg-column-property-form { @@apply px-3 py-4; }
                 .dg-column-property-row, .dg-column-toggle-row { grid-template-columns: minmax(0,1fr); gap: .35rem; }
                 .dg-column-toggle-row > span { display: none; }
