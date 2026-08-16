@@ -280,16 +280,16 @@
             .pma-schema-node .database-schema-toggle > svg, .database-object > svg { @@apply size-3.5 shrink-0 text-[#5a7d92] dark:text-sky-400/80; }
             .pma-content { @@apply flex min-h-0 flex-col overflow-hidden; }
             .database-workspace-host { @@apply relative min-w-0; }
-            .database-workspace-tabs { @@apply flex min-h-10 shrink-0 items-stretch overflow-x-auto border-b border-[#343b42] bg-[#1b2127] text-slate-300; scrollbar-width: thin; }
-            .database-workspace-tab { @@apply flex min-w-36 max-w-64 shrink-0 cursor-pointer items-center gap-2 border-r border-[#343b42] px-3 text-left text-[11px] hover:bg-white/[.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500; }
-            .database-workspace-tab.is-active { @@apply relative bg-[#252c33] text-white; box-shadow: inset 0 -3px 0 #ff806e; }
+            .database-workspace-tabs { @@apply flex min-h-12 shrink-0 items-stretch overflow-x-auto border-b border-[#aeb9c2] bg-gradient-to-b from-[#edf1f3] to-[#d3dbe0] text-[#526875] shadow-inner dark:border-[#3c454d] dark:from-[#29323a] dark:to-[#1a2026] dark:text-slate-300; scrollbar-color: #8797a2 transparent; scrollbar-width: thin; }
+            .database-workspace-tab { @@apply flex min-h-12 min-w-36 max-w-64 shrink-0 cursor-pointer items-center gap-2 border-r border-[#b9c4ca] px-3 text-left text-xs hover:bg-white/60 hover:text-[#1f3d50] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 dark:border-[#3c454d] dark:hover:bg-white/[.06] dark:hover:text-white; }
+            .database-workspace-tab.is-active { @@apply relative bg-[#f8fafb] font-medium text-[#18384c] dark:bg-[#303941] dark:text-white; box-shadow: inset 0 -3px 0 #ff806e, inset 0 1px 0 rgba(255,255,255,.55); }
             .database-workspace-tab.is-dragging { @@apply opacity-40; }
             .database-workspace-tab.is-drop-before { box-shadow: inset 3px 0 0 #38bdf8; }
             .database-workspace-tab.is-drop-after { box-shadow: inset -3px 0 0 #38bdf8; }
             .database-workspace-tab > span:nth-child(2) { @@apply min-w-0 flex-1 truncate; }
-            .database-workspace-tab-icon { @@apply grid min-w-4 place-items-center text-[9px] text-cyan-300; }
+            .database-workspace-tab-icon { @@apply grid min-w-4 place-items-center text-[9px] text-[#34789e] dark:text-cyan-300; }
             .database-workspace-tab i { @@apply text-[8px] not-italic text-amber-400; }
-            .database-workspace-tab-close { @@apply grid size-5 place-items-center rounded hover:bg-white/10; }
+            .database-workspace-tab-close { @@apply grid size-5 place-items-center rounded hover:bg-black/5 dark:hover:bg-white/10; }
             .database-workspace-context-menu { @@apply fixed z-[70] w-64 rounded-sm border border-[#53606a] bg-[#20262c] p-1 text-[11px] text-slate-200 shadow-2xl; }
             .database-workspace-context-menu button { @@apply flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-left hover:bg-sky-500/20 focus-visible:bg-sky-500/20 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-35; }
             .database-workspace-context-menu button .fa { @@apply w-4 shrink-0 text-center text-slate-400; }
@@ -409,11 +409,11 @@
             .database-expanded-cell-modal footer > span { @@apply text-[9px] text-[#71838f] dark:text-slate-500; }
             .database-expanded-cell-modal footer > div { @@apply flex gap-2; }
             .database-readonly-note { @@apply shrink-0 border-t border-[#bdc7cd] bg-[#eef1f3] px-3 py-1 text-[9px] text-[#637783] dark:border-white/10 dark:bg-[#1b2127] dark:text-slate-500; }
-            .database-workspace-status { @@apply flex min-h-8 shrink-0 items-center justify-between gap-4 overflow-hidden border-t border-[#343b42] bg-[#20262c] px-2 text-[9px] text-slate-400; }
-            .database-workspace-path { @@apply flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap; }
+            .database-workspace-status { @@apply flex min-h-11 shrink-0 items-center justify-between gap-5 overflow-hidden border-t border-[#aeb9c2] bg-gradient-to-b from-[#e8edf0] to-[#cdd6dc] px-3 py-2 text-xs text-[#4b6372] shadow-inner dark:border-[#3c454d] dark:from-[#252d34] dark:to-[#181e24] dark:text-slate-300; }
+            .database-workspace-path { @@apply flex min-w-0 items-center gap-2.5 overflow-hidden whitespace-nowrap; }
             .database-workspace-path span, .database-workspace-path strong { @@apply truncate; }
-            .database-workspace-path b { @@apply font-normal text-cyan-600; }
-            .database-workspace-statistics { @@apply shrink-0 whitespace-nowrap font-mono; }
+            .database-workspace-path b { @@apply font-normal text-sky-600 dark:text-cyan-500; }
+            .database-workspace-statistics { @@apply shrink-0 whitespace-nowrap font-mono font-medium text-[#294a5e] dark:text-slate-200; }
             .database-workspace-error { @@apply m-4 rounded border border-red-300 bg-red-50 p-3 text-xs text-red-700 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-300; }
             .database-ddl-workspace, .database-console-workspace, .database-chart-workspace { @@apply flex h-full min-h-0 flex-col; }
             .database-ddl-workspace pre { @@apply min-h-0 flex-1 overflow-auto bg-[#20262c] p-4 text-[13px] leading-6 text-slate-200; }

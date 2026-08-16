@@ -108,6 +108,18 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
     without.splice(targetIndex, 0, source); workspaces.clear(); without.forEach(([key, ws]) => workspaces.set(key, ws)); renderTabs(sourceKey); persist();
   }
   bindWorkspaceTabInteractions({ tabs, workspaces, getActiveKey: () => activeKey, activate, closeWorkspace, closeWorkspaces, duplicateWorkspace, reorderWorkspace });
+  tabs.addEventListener("wheel", event => {
+    if (tabs.scrollWidth <= tabs.clientWidth) return;
+    const rawDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? tabs.clientWidth : 1;
+    const delta = rawDelta * unit;
+    const maximum = tabs.scrollWidth - tabs.clientWidth;
+    const next = Math.max(0, Math.min(maximum, tabs.scrollLeft + delta));
+    if (next === tabs.scrollLeft) return;
+    tabs.scrollLeft = next;
+    event.preventDefault();
+  }, { passive: false });
   document.addEventListener("pointerdown", event => {
     document.querySelectorAll(".database-query-suggestions:not(.hidden)").forEach(box => { if (!box.parentElement.contains(event.target)) box.classList.add("hidden"); });
   });
