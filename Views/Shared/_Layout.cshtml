@@ -348,6 +348,10 @@
             .database-workspace-grid th, .database-workspace-grid td { @@apply relative overflow-hidden border-r border-b border-[#c6d0d6] px-2 text-left align-middle dark:border-white/[.08]; }
             .database-workspace-grid th, .database-workspace-grid td { user-select: none; -webkit-user-select: none; }
             .database-workspace-grid thead th { @@apply sticky top-0 z-20 h-9 bg-[#dfe4e7] text-[#2e4655] dark:bg-[#30373e] dark:text-slate-200; }
+            .database-workspace-grid thead th[data-column] { @@apply cursor-grab focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 active:cursor-grabbing; }
+            .database-workspace-grid thead th.is-column-dragging { @@apply opacity-45; }
+            .database-workspace-grid thead th.is-column-drop-before { box-shadow: inset 3px 0 0 #0ea5e9; }
+            .database-workspace-grid thead th.is-column-drop-after { box-shadow: inset -3px 0 0 #0ea5e9; }
             .database-workspace-grid thead th > span { @@apply block truncate font-medium; }
             .database-workspace-grid thead .database-column-title { @@apply flex min-w-0 items-center gap-1; }
             .database-column-title b { @@apply min-w-0 flex-1 truncate font-medium; }

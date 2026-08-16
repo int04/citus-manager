@@ -64,7 +64,8 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
 
   function persist() {
     const safe = [...workspaces.values()].filter(x => !x.dirty).map(x => ({ key: x.key, type: x.type, schema: x.schema, name: x.name, displayName: x.displayName,
-      page: x.page, pageSize: x.pageSize, where: x.where, orderBy: x.orderBy, widths: x.widths, rowHeights: x.rowHeights, hidden: x.hidden }));
+      page: x.page, pageSize: x.pageSize, where: x.where, orderBy: x.orderBy, widths: x.widths, rowHeights: x.rowHeights,
+      hidden: x.hidden, columnOrder: x.columnOrder }));
     sessionStorage.setItem(storageKey, JSON.stringify({ activeKey, workspaces: safe }));
   }
   function ensureCapacity() {
@@ -128,7 +129,7 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
   function duplicateWorkspace(key) {
     const source = workspaces.get(key); if (!source || !ensureCapacity()) return;
     const duplicateKey = `${source.key}:copy:${Date.now()}`, copyNumber = [...workspaces.values()].filter(ws => ws.key.startsWith(`${source.key}:copy:`)).length + 1;
-    const duplicate = { ...source, key: duplicateKey, displayName: `${source.displayName || source.name} (copy${copyNumber > 1 ? ` ${copyNumber}` : ""})`, widths: {...(source.widths||{})}, rowHeights: {...(source.rowHeights||{})}, hidden: [...(source.hidden||[])], dirty: false, used: Date.now(), autoTimer: null, queryAbort: null, countAbort: null, sqlAbort: null };
+    const duplicate = { ...source, key: duplicateKey, displayName: `${source.displayName || source.name} (copy${copyNumber > 1 ? ` ${copyNumber}` : ""})`, widths: {...(source.widths||{})}, rowHeights: {...(source.rowHeights||{})}, hidden: [...(source.hidden||[])], columnOrder: [...(source.columnOrder||[])], dirty: false, used: Date.now(), autoTimer: null, queryAbort: null, countAbort: null, sqlAbort: null };
     if (source.type === "data") Object.assign(duplicate, { rows: [], metadata: null, loaded: false, pending: new Map(), deleted: new Set(), inserted: [], selected: new Set(), autoRefresh: 0 });
     else if (source.type === "structure" || source.type === "ddl") Object.assign(duplicate, { loaded: false, html: null, ddl: null });
     else if (source.type === "chart") Object.assign(duplicate, { rows: [...source.rows], columns: [...source.columns], loaded: true });
@@ -164,7 +165,7 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
 
   async function openObject(schema, name, type = "data") {
     const key = keyOf(schema, name, type); if (workspaces.has(key)) return activate(key); if (!ensureCapacity()) return;
-    const ws = { key, type, schema, name, page: 1, pageSize: defaultPageSize, where: "", orderBy: "", widths: {}, rowHeights: {}, hidden: [], rows: [],
+    const ws = { key, type, schema, name, page: 1, pageSize: defaultPageSize, where: "", orderBy: "", widths: {}, rowHeights: {}, hidden: [], columnOrder: [], rows: [],
       metadata: null, dirty: false, pending: new Map(), deleted: new Set(), inserted: [], selected: new Set(), used: Date.now(), exactCount: null };
     workspaces.set(key, ws); activeKey = key; renderTabs(); empty.classList.add("hidden"); stage.classList.remove("hidden"); showWorkspaceLoading();
     try { await hydrateWorkspace(ws); }
@@ -189,7 +190,7 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
     try {
       const data = await jsonApi(explorer.dataset.workspaceQueryUrl, { schema: ws.schema, objectName: ws.name, nodeId: nodeId ? Number(nodeId) : null,
         page: ws.page, pageSize: ws.pageSize, where: ws.where || null, orderBy: ws.orderBy || null }, controller.signal);
-      ws.rows = data.rows; ws.columns = data.columns; ws.hasPrevious = data.hasPrevious; ws.hasNext = data.hasNext; ws.estimatedRows = data.estimatedRows;
+      ws.rows = data.rows; ws.columns = data.columns; normalizeColumnOrder(ws); ws.hasPrevious = data.hasPrevious; ws.hasNext = data.hasNext; ws.estimatedRows = data.estimatedRows;
       const loadedEnd=ws.rows.length?(ws.page-1)*ws.pageSize+ws.rows.length:0,knownMinimum=loadedEnd+(ws.hasNext?1:0);
       ws.observedMinimum=Math.max(ws.observedMinimum||0,knownMinimum);ws.selected.clear();ws.activeRow=null;ws.loaded=true;
     } finally {
@@ -214,6 +215,31 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
     else if (ws.type === "chart") renderChartWorkspace(ws);
     updateFooter(ws);
   }
+  function normalizeColumnOrder(ws) {
+    const names = (ws.columns || []).map(column => column.name);
+    const known = new Set(names);
+    const preserved = (ws.columnOrder || []).filter((name, index, order) => known.has(name) && order.indexOf(name) === index);
+    const preservedSet = new Set(preserved);
+    ws.columnOrder = [...preserved, ...names.filter(name => !preservedSet.has(name))];
+  }
+  function orderedColumnEntries(ws) {
+    normalizeColumnOrder(ws);
+    const positions = new Map(ws.columnOrder.map((name, index) => [name, index]));
+    return ws.columns.map((c, i) => ({ c, i })).sort((left, right) =>
+      positions.get(left.c.name) - positions.get(right.c.name));
+  }
+  function reorderColumn(ws, sourceName, targetName, after) {
+    if (!sourceName || sourceName === targetName) return;
+    normalizeColumnOrder(ws);
+    const order = ws.columnOrder.filter(name => name !== sourceName);
+    let targetIndex = order.indexOf(targetName);
+    if (targetIndex < 0) return;
+    if (after) targetIndex++;
+    order.splice(targetIndex, 0, sourceName);
+    ws.columnOrder = order;
+    persist();
+    renderDataWorkspace(ws);
+  }
   function dataToolbar(ws) {
     const start = ws.rows.length ? (ws.page - 1) * ws.pageSize + 1 : 0, end = start ? start + ws.rows.length - 1 : 0;
     const estimated=ws.estimatedRows==null?null:Math.max(Number(ws.estimatedRows),ws.observedMinimum||0),total=ws.exactCount??estimated;
@@ -226,13 +252,13 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
       <label title="Tự động làm mới"><i class="fa fa-clock-o" aria-hidden="true"></i><select data-auto-refresh aria-label="Tự động làm mới"><option value="0">Off</option><option value="5" ${ws.autoRefresh===5?"selected":""}>5s</option><option value="15" ${ws.autoRefresh===15?"selected":""}>15s</option><option value="30" ${ws.autoRefresh===30?"selected":""}>30s</option><option value="60" ${ws.autoRefresh===60?"selected":""}>60s</option></select></label>
       <span class="database-toolbar-separator"></span><button data-add ${ws.metadata.canEdit ? "" : "disabled"} title="Add row" aria-label="Add row"><i class="fa fa-plus" aria-hidden="true"></i></button><button data-delete ${ws.metadata.canEdit ? "" : "disabled"} title="Delete selected rows" aria-label="Delete selected rows"><i class="fa fa-minus" aria-hidden="true"></i></button>
       <button data-save ${ws.dirty ? "" : "disabled"} title="Save changes"><i class="fa fa-floppy-o" aria-hidden="true"></i><span>Save</span></button><button data-revert ${ws.dirty ? "" : "disabled"} title="Revert changes"><i class="fa fa-undo" aria-hidden="true"></i><span>Revert</span></button>
-      <span class="database-toolbar-spacer"></span><details class="database-toolbar-menu"><summary><i class="fa fa-columns" aria-hidden="true"></i><span>Columns</span></summary><div class="database-column-menu">${ws.columns.map(c=>`<label><input type="checkbox" data-column-visible="${html(c.name)}" ${ws.hidden.includes(c.name)?"":"checked"}> ${html(c.name)}</label>`).join("")}</div></details><details class="database-toolbar-menu"><summary><i class="fa fa-file-text-o" aria-hidden="true"></i><span>CSV</span></summary><div><button data-csv-page><i class="fa fa-download" aria-hidden="true"></i><span>Export page</span></button><button data-csv-all><i class="fa fa-cloud-download" aria-hidden="true"></i><span>Export all filter</span></button><button data-csv-import ${ws.metadata.canEdit ? "" : "disabled"}><i class="fa fa-upload" aria-hidden="true"></i><span>Import…</span></button></div></details><input class="hidden" data-csv-file type="file" accept=".csv,text/csv"><button data-open-ddl title="Open DDL"><i class="fa fa-code" aria-hidden="true"></i><span>DDL</span></button><button data-chart title="Create chart"><i class="fa fa-bar-chart" aria-hidden="true"></i><span>Chart</span></button>
+      <span class="database-toolbar-spacer"></span><details class="database-toolbar-menu"><summary><i class="fa fa-columns" aria-hidden="true"></i><span>Columns</span></summary><div class="database-column-menu">${orderedColumnEntries(ws).map(({c})=>`<label><input type="checkbox" data-column-visible="${html(c.name)}" ${ws.hidden.includes(c.name)?"":"checked"}> ${html(c.name)}</label>`).join("")}</div></details><details class="database-toolbar-menu"><summary><i class="fa fa-file-text-o" aria-hidden="true"></i><span>CSV</span></summary><div><button data-csv-page><i class="fa fa-download" aria-hidden="true"></i><span>Export page</span></button><button data-csv-all><i class="fa fa-cloud-download" aria-hidden="true"></i><span>Export all filter</span></button><button data-csv-import ${ws.metadata.canEdit ? "" : "disabled"}><i class="fa fa-upload" aria-hidden="true"></i><span>Import…</span></button></div></details><input class="hidden" data-csv-file type="file" accept=".csv,text/csv"><button data-open-ddl title="Open DDL"><i class="fa fa-code" aria-hidden="true"></i><span>DDL</span></button><button data-chart title="Create chart"><i class="fa fa-bar-chart" aria-hidden="true"></i><span>Chart</span></button>
     </div>`;
   }
   function pageRangeOptions(ws){const total=ws.exactCount??Math.max(Number(ws.estimatedRows)||0,ws.observedMinimum||0),exactLast=ws.exactCount==null?null:Math.max(1,Math.ceil(ws.exactCount/ws.pageSize)),knownLast=Math.max(exactLast??Math.ceil(total/ws.pageSize),ws.page+(ws.hasNext?1:0),1);let pages;if(knownLast<=500)pages=Array.from({length:knownLast},(_,index)=>index+1);else{const candidates=new Set([1,2,3,knownLast-2,knownLast-1,knownLast]);for(let page=Math.max(1,ws.page-100);page<=Math.min(knownLast,ws.page+100);page++)candidates.add(page);pages=[...candidates].sort((a,b)=>a-b);}return pages.map((page,index)=>{const from=(page-1)*ws.pageSize+1,to=exactLast?Math.min(page*ws.pageSize,ws.exactCount):page*ws.pageSize,previous=pages[index-1],gap=previous&&page-previous>1?'<span class="database-page-range-gap">…</span>':"";return `${gap}<button data-page="${page}" class="${page===ws.page?"is-active":""}" ${page===ws.page?"disabled":""}>${ws.exactCount===0?"0–0":`${from}–${to}`}</button>`;}).join("");}
   function renderDataWorkspace(ws) {
     ws.rowHeights ||= {};
-    const visible = ws.columns.map((c, i) => ({ c, i })).filter(x => !ws.hidden.includes(x.c.name));
+    const visible = orderedColumnEntries(ws).filter(x => !ws.hidden.includes(x.c.name));
     const tableWidth = 48 + visible.reduce((total, { c }) => total + (ws.widths[c.name] || 180), 0);
     stage.innerHTML = `<div class="database-data-workspace">${dataToolbar(ws)}
       <div class="database-query-strip"><label><b>WHERE</b><input data-where value="${html(ws.where)}" placeholder="tenant_id = 42" autocomplete="off"><div class="database-query-suggestions hidden"></div></label>
@@ -242,7 +268,7 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
       ${ws.metadata.canEdit ? "" : `<div class="database-readonly-note">Read-only: ${html(ws.metadata.readOnlyReason || "object không hỗ trợ edit")}</div>`}</div>`;
     bindDataWorkspace(ws); updateFooter(ws);
   }
-  function columnHeaderHtml(ws,column){const sort=sortState(ws,column.name),keyIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="10" r="4"/><path d="m11 13 8 8m-3-3 2-2m-5-1 2-2"/></svg>';const badges=column.isPrimaryKey?`<i class="database-column-key is-primary" title="Primary key">${keyIcon}</i>`:column.isIndexed?`<i class="database-column-key is-indexed" title="${column.isUnique?"Unique index":"Indexed column"}">${keyIcon}</i>`:"";const required=!column.isNullable?'<i class="database-column-required" title="NOT NULL"></i>':"";const comment=column.comment?.trim()?`<button type="button" class="database-column-comment" data-column-comment="${html(column.comment)}" aria-label="Xem comment cột ${html(column.name)}" aria-controls="database-column-comment-tooltip" aria-expanded="false"><i class="fa fa-info-circle" aria-hidden="true"></i></button>`:"";const sortIcon=sort?`<i class="database-sort-indicator is-${sort.direction.toLowerCase()}" title="Sort ${sort.direction}">${sort.direction==="ASC"?"↑":"↓"}${sort.priority>1?`<sup>${sort.priority}</sup>`:""}</i>`:"";return `<th data-column="${html(column.name)}" style="width:${ws.widths[column.name]||180}px"><span class="database-column-title">${badges}${required}<b>${html(column.name)}</b>${comment}${sortIcon}</span><small>${html(column.dataType)}${column.isUnique&&!column.isPrimaryKey?" · UNIQUE":""}</small><i class="database-column-resizer"></i></th>`;}
+  function columnHeaderHtml(ws,column){const sort=sortState(ws,column.name),keyIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="10" r="4"/><path d="m11 13 8 8m-3-3 2-2m-5-1 2-2"/></svg>';const badges=column.isPrimaryKey?`<i class="database-column-key is-primary" title="Primary key">${keyIcon}</i>`:column.isIndexed?`<i class="database-column-key is-indexed" title="${column.isUnique?"Unique index":"Indexed column"}">${keyIcon}</i>`:"";const required=!column.isNullable?'<i class="database-column-required" title="NOT NULL"></i>':"";const comment=column.comment?.trim()?`<button type="button" class="database-column-comment" data-column-comment="${html(column.comment)}" aria-label="Xem comment cột ${html(column.name)}" aria-controls="database-column-comment-tooltip" aria-expanded="false"><i class="fa fa-info-circle" aria-hidden="true"></i></button>`:"";const sortIcon=sort?`<i class="database-sort-indicator is-${sort.direction.toLowerCase()}" title="Sort ${sort.direction}">${sort.direction==="ASC"?"↑":"↓"}${sort.priority>1?`<sup>${sort.priority}</sup>`:""}</i>`:"";return `<th tabindex="0" draggable="true" data-column="${html(column.name)}" aria-label="Cột ${html(column.name)}. Kéo để đổi vị trí; Alt cộng phím mũi tên để di chuyển." title="Kéo để đổi vị trí · click để sort" style="width:${ws.widths[column.name]||180}px"><span class="database-column-title">${badges}${required}<b>${html(column.name)}</b>${comment}${sortIcon}</span><small>${html(column.dataType)}${column.isUnique&&!column.isPrimaryKey?" · UNIQUE":""}</small><i class="database-column-resizer" draggable="false"></i></th>`;}
   function sortState(ws,name){if(!ws.orderBy)return null;const parts=ws.orderBy.split(",").map(value=>value.trim()).filter(Boolean),normalizedName=name.replaceAll('"','');for(let index=0;index<parts.length;index++){const match=parts[index].match(/^(.*?)\s+(ASC|DESC)(?:\s+NULLS\s+(?:FIRST|LAST))?$/i);if(!match)continue;const candidate=match[1].trim().replace(/^"|"$/g,"").replaceAll('""','"');if(candidate===normalizedName||candidate===name)return{direction:match[2].toUpperCase(),priority:index+1};}return null;}
   function cellHtml(ws, row, ri, column, ci) {
     const pending = ws.pending.get(`${ri}:${column.name}`); const cell = row.cells[ci]; const value = pending ? pending.value : cell.value;
@@ -265,7 +291,59 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
     stage.querySelectorAll("[data-column-visible]").forEach(input=>input.onchange=()=>{ws.hidden=input.checked?ws.hidden.filter(name=>name!==input.dataset.columnVisible):[...new Set([...ws.hidden,input.dataset.columnVisible])];persist();renderDataWorkspace(ws);});
     stage.querySelector("[data-csv-import]").onclick=()=>stage.querySelector("[data-csv-file]").click();stage.querySelector("[data-csv-file]").onchange=e=>{const file=e.target.files[0];if(file)previewCsvImport(ws,file);};
     stage.querySelectorAll("[data-column-comment]").forEach(button => { button.onclick = event => { event.stopPropagation(); toggleColumnComment(button); }; });
-    stage.querySelectorAll("thead th[data-column]").forEach(th => { th.onclick = e => { if(e.target.closest(".database-column-resizer,[data-column-comment]"))return;if(e.ctrlKey||e.metaKey){const ci=ws.columns.findIndex(c=>c.name===th.dataset.column);ws.selected.clear();ws.rows.forEach((_,ri)=>ws.selected.add(`${ri}:${ci}`));paintSelection(ws);}else sortColumn(ws, th.dataset.column, e.shiftKey); }; bindResize(ws, th); });
+    const columnHeaders = [...stage.querySelectorAll("thead th[data-column]")];
+    let draggedColumnName = null;
+    const clearColumnDropState = () => columnHeaders.forEach(header => header.classList.remove("is-column-dragging", "is-column-drop-before", "is-column-drop-after"));
+    columnHeaders.forEach(th => {
+      th.addEventListener("pointerdown", event => {
+        th.dataset.blockColumnDrag = String(Boolean(event.target.closest(".database-column-resizer,[data-column-comment]")));
+      }, true);
+      th.ondragstart = event => {
+        if (th.dataset.blockColumnDrag === "true") { event.preventDefault(); return; }
+        draggedColumnName = th.dataset.column;
+        th.classList.add("is-column-dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", draggedColumnName);
+      };
+      th.ondragover = event => {
+        if (!draggedColumnName || draggedColumnName === th.dataset.column) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        columnHeaders.forEach(header => header.classList.remove("is-column-drop-before", "is-column-drop-after"));
+        const after = event.clientX >= th.getBoundingClientRect().left + th.offsetWidth / 2;
+        th.classList.add(after ? "is-column-drop-after" : "is-column-drop-before");
+      };
+      th.ondrop = event => {
+        if (!draggedColumnName || draggedColumnName === th.dataset.column) return;
+        event.preventDefault();
+        const source = draggedColumnName;
+        const after = event.clientX >= th.getBoundingClientRect().left + th.offsetWidth / 2;
+        draggedColumnName = null;
+        clearColumnDropState();
+        reorderColumn(ws, source, th.dataset.column, after);
+      };
+      th.ondragend = () => { draggedColumnName = null; clearColumnDropState(); };
+      th.onclick = event => {
+        if(event.target.closest(".database-column-resizer,[data-column-comment]"))return;
+        if(event.ctrlKey||event.metaKey){const ci=ws.columns.findIndex(c=>c.name===th.dataset.column);ws.selected.clear();ws.rows.forEach((_,ri)=>ws.selected.add(`${ri}:${ci}`));paintSelection(ws);}
+        else sortColumn(ws, th.dataset.column, event.shiftKey);
+      };
+      th.onkeydown = event => {
+        if (event.target.closest("[data-column-comment]")) return;
+        if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          const visibleNames = orderedColumnEntries(ws).filter(entry => !ws.hidden.includes(entry.c.name)).map(entry => entry.c.name);
+          const current = visibleNames.indexOf(th.dataset.column);
+          const direction = event.key === "ArrowLeft" ? -1 : 1;
+          const target = visibleNames[current + direction];
+          if (target) reorderColumn(ws, th.dataset.column, target, direction > 0);
+          event.preventDefault();
+        } else if (event.key === "Enter" || event.key === " ") {
+          sortColumn(ws, th.dataset.column, event.shiftKey);
+          event.preventDefault();
+        }
+      };
+      bindResize(ws, th);
+    });
     stage.querySelectorAll("[data-cell]").forEach(cell => {
       cell.onpointerdown = event => beginCellSelection(ws, cell, event);
       cell.ondblclick = () => editCell(ws, cell); cell.onkeydown = e => { if (e.key === "F2" || e.key === "Enter") editCell(ws, cell); };
@@ -352,6 +430,6 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
   document.getElementById("database-tree-content")?.addEventListener("click",event=>{const object=event.target.closest("[data-database-object]");if(!object)return;event.stopImmediatePropagation();event.preventDefault();document.querySelectorAll("[data-database-object]").forEach(x=>x.classList.remove("is-active"));object.classList.add("is-active");openObject(object.dataset.schema,object.dataset.table,object.dataset.nodeKind==="sequence"?"ddl":"data");},true);
   window.databaseWorkspaces={openObject,openStructure:(s,n)=>openObject(s,n,"structure"),openDdl:(s,n)=>openObject(s,n,"ddl"),openQuery};
   document.addEventListener("copy",event=>{const ws=workspaces.get(activeKey);if(!ws||ws.type!=="data"||!ws.selected.size||event.target.matches?.("input,textarea"))return;const cells=[...ws.selected].map(k=>k.split(":").map(Number));const minR=Math.min(...cells.map(x=>x[0])),maxR=Math.max(...cells.map(x=>x[0])),minC=Math.min(...cells.map(x=>x[1])),maxC=Math.max(...cells.map(x=>x[1]));const text=[];for(let r=minR;r<=maxR;r++){const line=[];for(let c=minC;c<=maxC;c++)line.push(ws.selected.has(`${r}:${c}`)?(workspaceCellValue(ws,r,c)??""):"");text.push(line.join("\t"));}event.clipboardData.setData("text/plain",text.join("\r\n"));event.preventDefault();});
-  try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||"{}");(saved.workspaces||[]).slice(0,20).forEach(ws=>{ws.rows=[];ws.metadata=null;ws.pending=new Map();ws.deleted=new Set();ws.inserted=[];ws.selected=new Set();ws.rowHeights||={};ws.dirty=false;ws.loaded=false;ws.used=Date.now();workspaces.set(ws.key,ws);});renderTabs();if(saved.activeKey&&workspaces.has(saved.activeKey))activate(saved.activeKey);}catch{}
+  try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||"{}");(saved.workspaces||[]).slice(0,20).forEach(ws=>{ws.rows=[];ws.metadata=null;ws.pending=new Map();ws.deleted=new Set();ws.inserted=[];ws.selected=new Set();ws.rowHeights||={};ws.columnOrder||=[];ws.dirty=false;ws.loaded=false;ws.used=Date.now();workspaces.set(ws.key,ws);});renderTabs();if(saved.activeKey&&workspaces.has(saved.activeKey))activate(saved.activeKey);}catch{}
   addEventListener("beforeunload",event=>{if([...workspaces.values()].some(x=>x.dirty)){event.preventDefault();event.returnValue="";}});
 })();
