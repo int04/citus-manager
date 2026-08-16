@@ -197,6 +197,118 @@
       const expanded = $(this).attr("aria-expanded") === "true";
       $(this).attr("aria-expanded", String(!expanded)).next().toggleClass("hidden", expanded);
     });
+    $("#database-tree-content").on("click", ".database-object-toggle", async function (event) {
+      event.stopPropagation();
+      const expanded = $(this).attr("aria-expanded") === "true";
+      $(this).attr("aria-expanded", String(!expanded));
+      const node = this.closest("[data-database-object-node]");
+      const container = node?.querySelector(":scope > .database-object-children");
+      container?.classList.toggle("hidden", expanded);
+      if (expanded || !container || container.dataset.loaded === "true" || container.dataset.loading === "true") return;
+      const parentObject = node.querySelector(":scope > .database-object-row [data-database-object]");
+      container.dataset.loading = "true"; this.setAttribute("aria-busy", "true");
+      container.innerHTML = '<div class="database-tree-lazy-state"><span class="database-tree-lazy-spinner" aria-hidden="true"></span>Đang tải cấu trúc…</div>';
+      try {
+        const response = await $.get(databaseExplorer.data("tree-children-url"), {
+          nodeId: databaseExplorer.data("node-id") || null,
+          schema: parentObject.dataset.schema, name: parentObject.dataset.table, group: "summary"
+        });
+        renderTreeGroups(container, response.items || []);
+        container.dataset.loaded = "true";
+        container.dispatchEvent(new CustomEvent("database:tree-group-loaded", { bubbles: true, detail: { group: "summary" } }));
+      } catch (xhr) {
+        container.innerHTML = "";
+        const failure = document.createElement("div"); failure.className = "database-tree-lazy-state is-error";
+        failure.textContent = `${problemText(xhr)} Click đóng/mở để thử lại.`; container.appendChild(failure);
+      } finally {
+        delete container.dataset.loading; this.removeAttribute("aria-busy");
+      }
+    });
+    const treeChildIcon = group => group === "columns" ? "▤" : group === "keys" ? "◆" :
+      group === "foreign-keys" ? "↗" : group === "indexes" ? "⚡" : group === "checks" ? "✓" : "▦";
+    const treeGroupLabel = group => group === "foreign-keys" ? "foreign keys" : group;
+    const renderTreeGroups = (container, items) => {
+      container.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement("div"); empty.className = "database-tree-lazy-state";
+        empty.textContent = "Không có cấu trúc con."; container.appendChild(empty); return;
+      }
+      items.forEach(item => {
+        const group = item.name;
+        const button = document.createElement("button"); button.type = "button";
+        button.className = `database-tree-group-row database-tree-group-toggle${group === "partitions" ? " is-partitions" : ""}`;
+        button.setAttribute("aria-expanded", "false"); button.dataset.treeGroup = group;
+        const caret = document.createElement("span"); caret.textContent = "›";
+        const icon = document.createElement("span"); icon.className = "database-tree-folder-icon"; icon.textContent = "▰";
+        const label = document.createElement("strong"); label.textContent = treeGroupLabel(group);
+        const count = document.createElement("small"); count.textContent = item.detail || "0";
+        button.append(caret, icon, label, count);
+        const children = document.createElement("div");
+        children.className = `database-tree-group-items hidden${group === "partitions" ? " database-partition-list" : ""}`;
+        children.dataset.treeGroupItems = ""; children.dataset.loaded = "false";
+        container.append(button, children);
+      });
+    };
+    const renderTreeChildren = (container, group, items, parentObject) => {
+      container.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement("div");
+        empty.className = "database-tree-lazy-state"; empty.textContent = "Không có object con.";
+        container.appendChild(empty); return;
+      }
+      items.forEach(item => {
+        if (group !== "partitions") {
+          const leaf = document.createElement("div"); leaf.className = "database-tree-leaf";
+          const icon = document.createElement("span"); icon.className = "database-tree-leaf-icon"; icon.textContent = treeChildIcon(group);
+          const content = document.createElement("span");
+          const name = document.createElement("strong"); name.textContent = item.name;
+          content.appendChild(name);
+          if (item.detail) { const detail = document.createElement("small"); detail.textContent = item.detail; content.appendChild(detail); leaf.title = `${item.name} · ${item.detail}`; }
+          leaf.append(icon, content); container.appendChild(leaf); return;
+        }
+        const button = document.createElement("button"); button.type = "button";
+        button.className = "database-object database-partition-object";
+        button.setAttribute("data-database-object", ""); button.setAttribute("data-context-node", "");
+        button.dataset.schema = item.schema; button.dataset.table = item.name; button.dataset.name = item.name;
+        button.dataset.kind = item.kind || "table"; button.dataset.nodeKind = String(item.objectKind || "table").toLowerCase();
+        button.dataset.tableMode = String(item.tableMode || "local").toLowerCase(); button.dataset.postgresKind = item.postgreSqlKind || "r";
+        button.dataset.canOperate = parentObject.dataset.canOperate; button.dataset.canAdmin = parentObject.dataset.canAdmin;
+        button.dataset.isCoordinator = parentObject.dataset.isCoordinator;
+        button.dataset.searchText = `${item.schema}.${item.name} partition ${item.detail || ""}`;
+        button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1"/><path d="M4 10h16M10 5v14"/></svg>';
+        const content = document.createElement("span"), name = document.createElement("strong"), detail = document.createElement("small");
+        name.textContent = item.name; detail.textContent = item.detail || "partition"; detail.title = item.detail || "";
+        content.append(name, detail); button.appendChild(content); container.appendChild(button);
+      });
+    };
+    $("#database-tree-content").on("click", ".database-tree-group-toggle", async function (event) {
+      event.stopPropagation();
+      const expanded = $(this).attr("aria-expanded") === "true";
+      const container = this.nextElementSibling;
+      $(this).attr("aria-expanded", String(!expanded));
+      container?.classList.toggle("hidden", expanded);
+      if (expanded || !container || container.dataset.loaded === "true" || container.dataset.loading === "true") return;
+      const parentObject = this.closest("[data-database-object-node]")?.querySelector(":scope > .database-object-row [data-database-object]");
+      if (!parentObject) return;
+      container.dataset.loading = "true"; this.setAttribute("aria-busy", "true");
+      container.innerHTML = '<div class="database-tree-lazy-state"><span class="database-tree-lazy-spinner" aria-hidden="true"></span>Đang tải…</div>';
+      try {
+        const response = await $.get(databaseExplorer.data("tree-children-url"), {
+          nodeId: databaseExplorer.data("node-id") || null,
+          schema: parentObject.dataset.schema, name: parentObject.dataset.table, group: this.dataset.treeGroup
+        });
+        renderTreeChildren(container, this.dataset.treeGroup, response.items || [], parentObject);
+        container.dataset.loaded = "true";
+        container.dispatchEvent(new CustomEvent("database:tree-group-loaded", { bubbles: true,
+          detail: { group: this.dataset.treeGroup } }));
+      } catch (xhr) {
+        container.innerHTML = "";
+        const failure = document.createElement("div"); failure.className = "database-tree-lazy-state is-error";
+        failure.textContent = `${problemText(xhr)} Click đóng/mở để thử lại.`; container.appendChild(failure);
+      } finally {
+        delete container.dataset.loading; this.removeAttribute("aria-busy");
+      }
+    });
     let searchTimer = null;
     $("#database-object-search").on("input", function () {
       const input = this;
@@ -206,6 +318,17 @@
         $("[data-database-object]").each(function () {
           $(this).toggleClass("hidden", !String($(this).data("search-text")).toLocaleLowerCase().includes(query));
         });
+        if (query) {
+          $("[data-database-object-node]").each(function () {
+            const node = $(this);
+            if (node.find(".database-partition-object:not(.hidden)").length === 0) return;
+            node.children(".database-object-row").find("[data-database-object]").removeClass("hidden");
+            node.children(".database-object-children").removeClass("hidden");
+            node.find(".database-object-toggle").first().attr("aria-expanded", "true");
+            const partitions = node.find("[data-tree-group='partitions']").first();
+            partitions.attr("aria-expanded", "true").next(".database-tree-group-items").removeClass("hidden");
+          });
+        }
         $("[data-object-kind]").each(function () {
           $(this).toggleClass("hidden", $(this).find("[data-database-object]:not(.hidden)").length === 0);
         });

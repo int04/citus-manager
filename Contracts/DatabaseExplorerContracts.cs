@@ -52,7 +52,30 @@ public sealed record DatabaseObjectResponse(
     int LocalShardCount,
     string PostgreSqlKind = "",
     DatabaseObjectKind ObjectKind = DatabaseObjectKind.Table,
-    DatabaseTableMode TableMode = DatabaseTableMode.NotApplicable);
+    DatabaseTableMode TableMode = DatabaseTableMode.NotApplicable,
+    int ColumnCount = 0,
+    int KeyCount = 0,
+    int ForeignKeyCount = 0,
+    int IndexCount = 0,
+    int CheckCount = 0,
+    int PartitionCount = 0,
+    bool IsPartition = false,
+    string? ParentSchema = null,
+    string? ParentName = null,
+    string? PartitionBound = null);
+
+/// <summary>One lazily loaded catalog item inside a database tree group.</summary>
+public sealed record DatabaseTreeChildResponse(
+    string Name,
+    string? Detail = null,
+    string? Schema = null,
+    string? Kind = null,
+    DatabaseObjectKind? ObjectKind = null,
+    DatabaseTableMode? TableMode = null,
+    string? PostgreSqlKind = null);
+
+/// <summary>Items returned when one database tree group is expanded.</summary>
+public sealed record DatabaseTreeChildrenResponse(string Group, IReadOnlyList<DatabaseTreeChildResponse> Items);
 
 /// <summary>One PostgreSQL type accepted by the structured table creator.</summary>
 public sealed record DatabaseTypeResponse(string Name, string DisplayName);

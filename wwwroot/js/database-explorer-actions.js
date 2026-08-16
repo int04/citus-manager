@@ -330,7 +330,15 @@
     const expanded = [...document.querySelectorAll("[data-schema-group]")]
       .filter(x => x.querySelector(".database-schema-toggle")?.getAttribute("aria-expanded") === "true")
       .map(x => x.dataset.schemaName);
+    const expandedObjects = [...document.querySelectorAll("[data-database-object-node]")]
+      .filter(x => x.querySelector(":scope > .database-object-row .database-object-toggle")?.getAttribute("aria-expanded") === "true")
+      .map(x => x.dataset.objectKey);
+    const expandedGroups = [...document.querySelectorAll("[data-database-object-node] .database-tree-group-toggle")]
+      .filter(x => x.getAttribute("aria-expanded") === "true")
+      .map(x => `${x.closest("[data-database-object-node]")?.dataset.objectKey}|${x.dataset.treeGroup}`);
     const active = document.querySelector("[data-database-object].is-active");
+    const activeParentKey = active?.closest("[data-database-object-node]")?.dataset.objectKey;
+    const activeWasPartition = active?.classList.contains("database-partition-object") === true;
     const schema = selectSchema ?? active?.dataset.schema;
     const name = selectName ?? active?.dataset.table;
     const tree = await $.get($explorer.data("tree-url"), {
@@ -343,8 +351,40 @@
         group.querySelector(".database-schema-items")?.classList.add("hidden");
       }
     });
+    document.querySelectorAll("[data-database-object-node]").forEach(node => {
+      if (!expandedObjects.includes(node.dataset.objectKey)) return;
+      const objectToggle = node.querySelector(":scope > .database-object-row .database-object-toggle");
+      const objectChildren = node.querySelector(":scope > .database-object-children");
+      const restoreGroups = () => node.querySelectorAll(".database-tree-group-toggle").forEach(group => {
+        const key = `${node.dataset.objectKey}|${group.dataset.treeGroup}`;
+        if (expandedGroups.includes(key) && group.getAttribute("aria-expanded") !== "true") group.click();
+      });
+      if (objectChildren?.dataset.loaded === "true") restoreGroups();
+      else objectChildren?.addEventListener("database:tree-group-loaded", restoreGroups, { once: true });
+      objectToggle?.setAttribute("aria-expanded", "false");
+      objectToggle?.click();
+    });
     if (schema && name) {
-      [...document.querySelectorAll("[data-database-object]")].find(x => x.dataset.schema === schema && x.dataset.table === name)?.classList.add("is-active");
+      const selected = [...document.querySelectorAll("[data-database-object]")].find(x => x.dataset.schema === schema && x.dataset.table === name);
+      selected?.classList.add("is-active");
+      if (!selected && activeWasPartition && activeParentKey) {
+        const lazyParent = [...document.querySelectorAll("[data-database-object-node]")]
+          .find(x => x.dataset.objectKey === activeParentKey);
+        const objectToggle = lazyParent?.querySelector(":scope > .database-object-row .database-object-toggle");
+        const objectChildren = lazyParent?.querySelector(":scope > .database-object-children");
+        const openAndRestorePartition = () => {
+          const partitions = lazyParent?.querySelector("[data-tree-group='partitions']");
+          const container = partitions?.nextElementSibling;
+          const restorePartition = () => [...(container?.querySelectorAll(".database-partition-object") || [])]
+            .find(x => x.dataset.schema === schema && x.dataset.table === name)?.classList.add("is-active");
+          if (container?.dataset.loaded === "true") restorePartition();
+          else container?.addEventListener("database:tree-group-loaded", restorePartition, { once: true });
+          if (partitions?.getAttribute("aria-expanded") !== "true") partitions?.click();
+        };
+        if (objectChildren?.dataset.loaded === "true") openAndRestorePartition();
+        else objectChildren?.addEventListener("database:tree-group-loaded", openAndRestorePartition, { once: true });
+        if (objectToggle?.getAttribute("aria-expanded") !== "true") objectToggle?.click();
+      }
     }
     $("#database-object-search").trigger("input");
   }
@@ -358,6 +398,23 @@
   }
   function tableColumnRows() { return [...document.querySelectorAll(".database-column-row")]; }
   function tableColumnNames() { return tableColumnRows().map(row => columnRowData(row).name.trim()).filter(Boolean); }
+  function clearDesignerObjectSelection(selected = null) {
+    const groups = [
+      [".database-column-row", "database-column-editor", "database-column-empty", "database-remove-column"],
+      [".dg-key-row", "database-key-editor", "database-key-empty", "database-remove-key"],
+      [".dg-foreign-key-row", "database-foreign-key-editor", "database-foreign-key-empty", "database-remove-foreign-key"],
+      [".dg-index-row", "database-index-editor", "database-index-empty", "database-remove-index"],
+      [".dg-check-row", "database-check-editor", "database-check-empty", "database-remove-check"]
+    ];
+    groups.forEach(([selector, editorId, emptyId, removeId]) => {
+      document.querySelectorAll(selector).forEach(row => { const active = row === selected; row.classList.toggle("is-active", active); row.setAttribute("aria-selected", active ? "true" : "false"); });
+      if (!selected?.matches(selector)) {
+        document.getElementById(editorId)?.classList.add("hidden");
+        document.getElementById(emptyId)?.classList.remove("hidden");
+        const remove = document.getElementById(removeId); if (remove) remove.disabled = true;
+      }
+    });
+  }
   function renderColumnSummary(row) {
     const column = columnRowData(row);
     row.innerHTML = `<span class="dg-column-icon ${column.primaryKey ? "is-primary" : ""}" aria-hidden="true"></span><span><strong>${html(column.name || "column_name")}</strong><small>${html(column.dataType)}${column.nullable ? "" : " · not null"}${column.identity ? " · identity" : ""}</small></span>${column.primaryKey ? '<span class="dg-key-kind-badge">PK</span>' : ""}`;
@@ -367,7 +424,7 @@
   }
   function selectColumnRow(row) {
     document.querySelector("[data-designer-section='columns']")?.click();
-    tableColumnRows().forEach(item => { item.classList.toggle("is-active", item === row); item.setAttribute("aria-selected", item === row ? "true" : "false"); });
+    clearDesignerObjectSelection(row);
     document.getElementById("database-column-empty")?.classList.add("hidden");
     document.getElementById("database-column-editor")?.classList.remove("hidden");
     const column = columnRowData(row);
@@ -450,11 +507,12 @@
     if (next?.classList.contains("database-column-row")) selectColumnRow(next);
     refreshColumnCount(); syncDistributionColumns(); updateAutoObjectNames(); updateTableSqlPreview();
   }
-  function addColumnRow(metadata, initial = {}) {
+  function addColumnRow(metadata, initial = {}, select = true) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "database-column-row dg-tree-object-row";
     row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", "false");
     row.dataset.columnName = initial.name || "";
     row.dataset.columnType = initial.dataType || metadata.columnTypes[0]?.name || "text";
     row.dataset.columnNullable = initial.nullable === false ? "false" : "true";
@@ -477,7 +535,14 @@
       if (sibling?.classList.contains("database-column-row")) { selectColumnRow(sibling); sibling.focus(); }
     });
     document.getElementById("database-column-list").appendChild(row);
-    selectColumnRow(row); refreshColumnCount(); syncDistributionColumns(); updateAutoObjectNames(); updateTableSqlPreview();
+    if (select) selectColumnRow(row);
+    else {
+      tableColumnRows().forEach(item => { item.classList.remove("is-active"); item.setAttribute("aria-selected", "false"); });
+      document.getElementById("database-column-editor")?.classList.add("hidden");
+      document.getElementById("database-column-empty")?.classList.remove("hidden");
+      refreshColumnControls();
+    }
+    refreshColumnCount(); syncDistributionColumns(); updateAutoObjectNames(); updateTableSqlPreview();
   }
   function syncDistributionColumns() {
     const select = document.querySelector("[name=DistributionColumn]");
@@ -600,7 +665,7 @@
   function selectKeyRow(row) {
     const keysTab = document.querySelector("[data-designer-section='keys']");
     if (keysTab && !keysTab.classList.contains("is-active")) keysTab.click();
-    document.querySelectorAll(".dg-key-row").forEach(item => { item.classList.toggle("is-active", item === row); item.setAttribute("aria-selected", item === row ? "true" : "false"); });
+    clearDesignerObjectSelection(row);
     refreshKeyCount();
     document.getElementById("database-key-empty")?.classList.add("hidden");
     const editor = document.getElementById("database-key-editor");
@@ -756,7 +821,7 @@
   function refreshForeignKeyCount() { document.getElementById("database-foreign-key-count")?.replaceChildren(document.createTextNode(String(document.querySelectorAll(".dg-foreign-key-row").length))); }
   function selectForeignKeyRow(row) {
     document.querySelector("[data-designer-section='foreign-keys']")?.click();
-    document.querySelectorAll(".dg-foreign-key-row").forEach(item => item.classList.toggle("is-active", item === row));
+    clearDesignerObjectSelection(row);
     document.getElementById("database-foreign-key-empty")?.classList.add("hidden"); document.getElementById("database-foreign-key-editor")?.classList.remove("hidden");
     const fk = foreignKeyRowData(row), auto = row.dataset.foreignKeyAutoName !== "false";
     document.getElementById("database-foreign-key-name").value = fk.name; document.getElementById("database-foreign-key-name").readOnly = auto; document.getElementById("database-foreign-key-auto-name").checked = auto;
@@ -842,7 +907,7 @@
   function refreshIndexCount() { document.getElementById("database-index-count")?.replaceChildren(document.createTextNode(String(document.querySelectorAll(".dg-index-row").length))); }
   function selectIndexRow(row) {
     document.querySelector("[data-designer-section='indexes']")?.click();
-    document.querySelectorAll(".dg-index-row").forEach(item => { item.classList.toggle("is-active", item === row); item.setAttribute("aria-selected", item === row ? "true" : "false"); });
+    clearDesignerObjectSelection(row);
     document.getElementById("database-index-empty")?.classList.add("hidden"); document.getElementById("database-index-editor")?.classList.remove("hidden");
     const index = indexRowData(row), auto = row.dataset.indexAutoName !== "false";
     document.getElementById("database-index-name").value = index.name; document.getElementById("database-index-name").readOnly = auto;
@@ -947,7 +1012,7 @@
   function activeCheckRow() { return document.querySelector(".dg-check-row.is-active"); }
   function refreshCheckCount() { document.getElementById("database-check-count")?.replaceChildren(document.createTextNode(String(document.querySelectorAll(".dg-check-row").length))); }
   function selectCheckRow(row) {
-    document.querySelector("[data-designer-section='checks']")?.click(); document.querySelectorAll(".dg-check-row").forEach(item => item.classList.toggle("is-active", item === row));
+    document.querySelector("[data-designer-section='checks']")?.click(); clearDesignerObjectSelection(row);
     document.getElementById("database-check-empty")?.classList.add("hidden"); document.getElementById("database-check-editor")?.classList.remove("hidden");
     const check = checkRowData(row); document.getElementById("database-check-name").value = check.name; document.getElementById("database-check-expression").value = check.expression;
     document.querySelector("[data-check-editor-title]").textContent = check.name || "check";
@@ -972,6 +1037,7 @@
   }
   function bindDesignerSections(metadata) {
     document.querySelectorAll("[data-designer-section]").forEach(button => button.addEventListener("click", () => {
+      clearDesignerObjectSelection();
       document.querySelectorAll("[data-designer-section]").forEach(item => { item.classList.toggle("is-active", item === button); item.setAttribute("aria-selected", item === button ? "true" : "false"); });
       document.querySelectorAll("[data-designer-panel]").forEach(panel => panel.classList.toggle("hidden", panel.dataset.designerPanel !== button.dataset.designerSection));
     }));
@@ -1458,7 +1524,7 @@
       } });
     designerMetadata = metadata;
     bindDesignerSections(metadata);
-    addColumnRow(metadata, { name: "id", nullable: false });
+    addColumnRow(metadata, { name: "id", nullable: false }, false);
     form.elements.Name.addEventListener("input", () => { updateAutoObjectNames(); updateTableSqlPreview(); });
     bindTableMode();
     bindSqlPreviewSplitter();

@@ -53,6 +53,33 @@ public sealed class DatabaseController(
         }
     }
 
+    [HttpGet("Tree/Children")]
+    [ProducesResponseType<DatabaseTreeChildrenResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> TreeChildren(
+        Guid clusterId, int? nodeId, string schema, string name, string group, CancellationToken cancellationToken)
+    {
+        NoStore();
+        try
+        {
+            return Ok(await explorer.GetTreeChildrenAsync(clusterId, nodeId, schema, name, group, cancellationToken));
+        }
+        catch (ArgumentException exception)
+        {
+            return DatabaseMutationProblem(StatusCodes.Status400BadRequest, "Nhóm cây không hợp lệ", exception.Message);
+        }
+        catch (KeyNotFoundException)
+        {
+            return DatabaseMutationProblem(StatusCodes.Status404NotFound, "Không tìm thấy database object", "Refresh cây và thử lại.");
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or NpgsqlException)
+        {
+            return SafeDatabaseProblem("Không thể tải nhánh database", exception);
+        }
+    }
+
     [HttpGet("ActionMetadata")]
     public async Task<IActionResult> ActionMetadata(Guid clusterId, CancellationToken cancellationToken)
     {

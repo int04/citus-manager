@@ -40,6 +40,9 @@ POST {{baseUrl}}/api/clusters/{{clusterId}}/refresh
 ### Open database explorer (authenticated browser route)
 GET {{baseUrl}}/Clusters/{{clusterId}}/Database
 
+### Lazy-load one database tree group (columns, keys, foreign-keys, indexes, checks, partitions)
+GET {{baseUrl}}/Clusters/{{clusterId}}/Database/Tree/Children?schema=public&name=events&group=columns
+
 ### Browse one table (requires Identity cookie + anti-forgery token from explorer page)
 POST {{baseUrl}}/Clusters/{{clusterId}}/Database/Browse
 Content-Type: application/x-www-form-urlencoded

@@ -147,9 +147,11 @@
             .database-tree { @@apply flex min-h-72 flex-col border-b border-[#aeb9c2] bg-gradient-to-r from-[#eef1f3] to-[#dfe5e8] lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:border-r lg:border-b-0 dark:border-white/10 dark:from-[#202832] dark:to-[#182029]; }
             .database-tree-head { @@apply flex min-h-9 items-center justify-between border-b border-[#aeb9c2] bg-gradient-to-b from-[#f7f8f9] to-[#cfd7dd] px-3 text-[10px] font-bold uppercase tracking-[.08em] text-[#445c6c] shadow-sm dark:border-white/10 dark:from-white/[.08] dark:to-white/[.02] dark:text-slate-300; }
             .database-tree-head .status-pill { @@apply border-[#aeb9c2] bg-[#f7f9fa] px-1.5 py-0 text-[9px] text-[#556b79] dark:border-white/10 dark:bg-white/[.06] dark:text-slate-400; }
-            .database-search { @@apply mx-2 mt-2 flex min-h-9 items-center gap-2 rounded border border-[#aeb9c2] bg-white px-2 text-[#718692] shadow-inner focus-within:border-[#5b90b3] focus-within:ring-1 focus-within:ring-[#5b90b3]/30 dark:border-white/10 dark:bg-black/25 dark:text-slate-500; }
+            .database-search { @@apply mx-2 mt-2 flex min-h-9 shrink-0 items-center gap-2 rounded border border-[#aeb9c2] bg-white px-2 text-[#718692] shadow-inner focus-within:border-[#5b90b3] focus-within:ring-1 focus-within:ring-[#5b90b3]/30 dark:border-white/10 dark:bg-black/25 dark:text-slate-500; }
             .database-search input { @@apply min-w-0 flex-1 border-0 bg-transparent p-0 text-base text-[#263844] outline-none placeholder:text-[#7e8e98] focus:ring-0 sm:text-xs dark:text-slate-100 dark:placeholder:text-slate-600; }
-            .database-tree-scroll { @@apply max-h-80 flex-1 overflow-y-auto px-2 pb-3 pt-2 lg:max-h-none; scrollbar-color: #9baab4 transparent; scrollbar-width: thin; }
+            #database-tree-content { @@apply flex min-h-0 flex-1 flex-col overflow-hidden; }
+            #database-tree-content > .pma-tree-database { @@apply shrink-0; }
+            .database-tree-scroll { @@apply min-h-0 max-h-80 flex-1 overflow-y-auto overscroll-contain px-2 pb-3 pt-2 lg:max-h-none; scrollbar-color: #9baab4 transparent; scrollbar-width: thin; }
             .database-schema { @@apply mb-1; }
             .database-schema-toggle { @@apply flex min-h-9 w-full cursor-pointer items-center gap-2 rounded px-1.5 text-left text-xs font-semibold text-[#2d4657] transition-colors hover:bg-white/60 hover:text-[#123f5c] dark:text-slate-300 dark:hover:bg-white/[.06] dark:hover:text-white; }
             .database-schema-toggle span { @@apply min-w-0 flex-1 truncate; }
@@ -158,11 +160,40 @@
             .database-object-kind { @@apply mb-1.5; }
             .database-object-kind-label { @@apply flex min-h-8 w-full cursor-pointer items-center justify-between rounded-sm px-1.5 py-1 text-left text-[9px] font-bold uppercase tracking-[.08em] text-[#677b88] hover:bg-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-500 dark:hover:bg-white/[.05]; }
             .database-object-kind-label small { @@apply font-mono text-[9px] font-semibold tracking-normal; }
+            .database-object-node { @@apply min-w-0; }
+            .database-object-row { @@apply flex min-w-0 items-stretch; }
+            .database-object-toggle { @@apply grid w-5 shrink-0 cursor-pointer place-items-center rounded-sm text-[#637986] hover:bg-[#cbdbe5] hover:text-[#173f59] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-500 dark:hover:bg-white/[.07] dark:hover:text-white; }
+            .database-object-toggle svg { @@apply size-3 transition-transform; }
+            .database-object-toggle[aria-expanded="true"] svg { @@apply rotate-90; }
+            .database-object-toggle-spacer { @@apply w-5 shrink-0; }
+            .database-object-row > .database-object { @@apply min-w-0 flex-1; }
             .database-object { @@apply flex min-h-8 w-full cursor-pointer items-center gap-1.5 rounded-sm px-1.5 text-left text-[#475d6b] transition-colors hover:bg-[#cbdbe5] hover:text-[#163e58] dark:text-slate-400 dark:hover:bg-white/[.07] dark:hover:text-white; }
             .database-object > span { @@apply min-w-0 flex-1; }
             .database-object strong { @@apply block truncate text-[11px] font-medium leading-4; }
             .database-object small { @@apply block truncate text-[9px] leading-3 text-[#728490] dark:text-slate-500; }
             .database-object.is-active { @@apply bg-[#87b8d4] text-[#102f43] shadow-inner ring-1 ring-inset ring-[#679bb9] dark:bg-sky-500/20 dark:text-sky-200 dark:ring-sky-400/30; }
+            .database-object-children { @@apply ml-5 border-l border-[#bdc8cf] py-0.5 pl-1 dark:border-white/10; }
+            .database-tree-group-row { @@apply flex min-h-7 w-full items-center gap-1.5 rounded-sm px-1 text-left text-[11px] text-[#526977] dark:text-slate-400; }
+            .database-tree-group-toggle { @@apply cursor-pointer hover:bg-[#d4e0e7] hover:text-[#173f59] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:hover:bg-white/[.07] dark:hover:text-white; }
+            .database-tree-group-row > span { @@apply w-3 shrink-0 text-center text-[10px] text-[#718691] dark:text-slate-500; }
+            .database-tree-group-toggle > span { @@apply transition-transform; }
+            .database-tree-group-toggle[aria-expanded="true"] > span { @@apply rotate-90; }
+            .database-tree-group-row > svg { @@apply size-3.5 shrink-0 text-[#718691] dark:text-slate-500; }
+            .database-tree-folder-icon { @@apply grid size-3.5 shrink-0 place-items-center text-[9px] text-[#718691] dark:text-slate-500; }
+            .database-tree-group-row strong { @@apply min-w-0 flex-1 truncate font-medium; }
+            .database-tree-group-row small { @@apply font-mono text-[9px] text-[#7b8d98] dark:text-slate-500; }
+            .database-tree-group-row.is-partitions { @@apply text-[#365a70] dark:text-slate-300; }
+            .database-tree-group-items { @@apply ml-5 border-l border-[#c6d0d6] py-0.5 pl-1 dark:border-white/10; }
+            .database-tree-leaf { @@apply flex min-h-7 min-w-0 items-center gap-1.5 rounded-sm px-1.5 text-[10px] text-[#536a78] dark:text-slate-400; }
+            .database-tree-leaf > span:last-child { @@apply min-w-0 flex-1; }
+            .database-tree-leaf strong { @@apply block truncate font-medium; }
+            .database-tree-leaf small { @@apply block truncate text-[9px] text-[#7b8d98] dark:text-slate-500; }
+            .database-tree-leaf-icon { @@apply grid size-3.5 shrink-0 place-items-center text-[9px] text-amber-600 dark:text-amber-300; }
+            .database-tree-lazy-state { @@apply flex min-h-8 items-center gap-1.5 px-1.5 text-[9px] text-[#718691] dark:text-slate-500; }
+            .database-tree-lazy-state.is-error { @@apply leading-4 text-red-700 dark:text-red-300; }
+            .database-tree-lazy-spinner { @@apply size-3 shrink-0 animate-spin rounded-full border border-[#aebbc3] border-t-[#32749d] motion-reduce:animate-none dark:border-white/15 dark:border-t-sky-400; }
+            .database-partition-object { @@apply min-h-7; }
+            .database-partition-object strong { @@apply text-[10px]; }
             .database-content { @@apply min-w-0 bg-[#f8f8f8] dark:bg-[#11161c]; }
             .database-content-head { @@apply sticky top-14 z-20 flex flex-col justify-between gap-2 border-b border-[#aeb9c2] bg-gradient-to-b from-[#f9fafb] to-[#dce2e6] px-3 py-2 shadow-sm sm:flex-row sm:items-center dark:border-white/10 dark:from-[#222b35] dark:to-[#171e26]; }
             .database-content-head h2 { @@apply text-sm text-[#2d4352] dark:text-slate-100; }
@@ -219,7 +250,7 @@
             .pma-target-chip { @@apply flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[9px] font-semibold; }
             .pma-target-chip.coordinator { @@apply border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-400/20 dark:bg-sky-400/10 dark:text-sky-300; }
             .pma-target-chip.worker { @@apply border-cyan-200 bg-cyan-50 text-cyan-800 dark:border-cyan-400/20 dark:bg-cyan-400/10 dark:text-cyan-300; }
-            .pma-navigation-toolbar { @@apply flex min-h-9 items-center gap-2 border-b border-[#aeb9c2] bg-gradient-to-b from-[#f6f7f8] to-[#ccd5da] px-2 text-[#435d6d] shadow-sm dark:border-white/10 dark:from-white/[.08] dark:to-white/[.02] dark:text-slate-300; }
+            .pma-navigation-toolbar { @@apply flex min-h-9 shrink-0 items-center gap-2 border-b border-[#aeb9c2] bg-gradient-to-b from-[#f6f7f8] to-[#ccd5da] px-2 text-[#435d6d] shadow-sm dark:border-white/10 dark:from-white/[.08] dark:to-white/[.02] dark:text-slate-300; }
             .pma-home-button { @@apply grid size-7 shrink-0 place-items-center rounded border border-transparent text-[#56788d] hover:border-[#a9b7c0] hover:bg-white/70 dark:text-sky-400 dark:hover:border-white/10 dark:hover:bg-white/[.06]; }
             .pma-home-button svg { @@apply size-4; }
             .pma-navigation-title { @@apply min-w-0 flex-1 truncate text-[10px] font-bold uppercase tracking-[.07em]; }
@@ -233,6 +264,8 @@
             .pma-tree-root strong { @@apply block truncate text-[11px] leading-4; }
             .pma-tree-empty { @@apply p-3 text-[11px] leading-5 text-[#617783] dark:text-slate-500; }
             .pma-tree-caret { @@apply grid size-3.5 shrink-0 place-items-center rounded-sm border border-[#8fa0ab] bg-[#f9fafb] text-[10px] leading-none text-[#3c596b] dark:border-white/20 dark:bg-white/[.05] dark:text-slate-300; }
+            .database-schema-toggle .pma-tree-caret { @@apply transition-transform; }
+            .database-schema-toggle[aria-expanded="true"] .pma-tree-caret { @@apply rotate-90; }
             .pma-schema-node .database-schema-toggle > svg, .database-object > svg { @@apply size-3.5 shrink-0 text-[#5a7d92] dark:text-sky-400/80; }
             .pma-content { @@apply flex min-h-0 flex-col overflow-hidden; }
             .pma-context-bar { @@apply sticky top-[9.5rem] z-20 flex min-h-9 items-center justify-between gap-3 border-b border-[#b6c1c8] bg-[#eef1f3] px-3 py-1.5 text-[10px] text-[#536a78] shadow-sm dark:border-white/10 dark:bg-[#1b232c] dark:text-slate-400; }

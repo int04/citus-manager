@@ -1,6 +1,7 @@
 @model DatabaseExplorerPageViewModel
 @{
-    var groupedObjects = Model.Objects.GroupBy(x => x.Schema).OrderBy(x => x.Key);
+    var topLevelObjects = Model.Objects.Where(x => !x.IsPartition).ToList();
+    var groupedObjects = topLevelObjects.GroupBy(x => x.Schema).OrderBy(x => x.Key);
     var objectKinds = new[]
     {
         (Kind: "table", Label: "Bảng", NodeKind: "table-category"),
@@ -17,14 +18,14 @@
     </button>
 </div>
 <div class="database-tree-scroll pma-tree-scroll">
-    @if (Model.Objects.Count == 0)
+    @if (topLevelObjects.Count == 0)
     {
         <p class="pma-tree-empty">Không tìm thấy object có thể đọc trên target này.</p>
     }
     @foreach (var schema in groupedObjects)
     {
         <section class="database-schema pma-schema-node" data-schema-group data-schema-name="@schema.Key">
-            <button type="button" class="database-schema-toggle" aria-expanded="true" data-context-node
+            <button type="button" class="database-schema-toggle" aria-expanded="false" data-context-node
                     data-node-kind="schema" data-schema="@schema.Key" data-name="@schema.Key"
                     data-can-operate="@Model.CanOperate.ToString().ToLowerInvariant()"
                     data-can-admin="@Model.CanAdmin.ToString().ToLowerInvariant()" data-is-coordinator="@Model.IsCoordinator.ToString().ToLowerInvariant()">
@@ -32,7 +33,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3V7Z"/><path d="M3 7V5h7l2 2"/></svg>
                 <span>@schema.Key</span><small>@schema.Count()</small>
             </button>
-            <div class="database-schema-items">
+            <div class="database-schema-items hidden">
                 @foreach (var objectKind in objectKinds)
                 {
                     var kindItems = schema.Where(x => x.Kind == objectKind.Kind).ToList();
@@ -46,21 +47,41 @@
                         </button>
                         @foreach (var item in kindItems)
                         {
-                            <button type="button" class="database-object" data-database-object data-context-node
-                                    data-schema="@item.Schema" data-table="@item.Name" data-name="@item.Name"
-                                    data-kind="@item.Kind" data-node-kind="@item.ObjectKind.ToString().ToLowerInvariant()"
-                                    data-table-mode="@item.TableMode.ToString().ToLowerInvariant()" data-postgres-kind="@item.PostgreSqlKind"
-                                    data-can-operate="@Model.CanOperate.ToString().ToLowerInvariant()"
-                                    data-can-admin="@Model.CanAdmin.ToString().ToLowerInvariant()" data-is-coordinator="@Model.IsCoordinator.ToString().ToLowerInvariant()"
-                                    data-search-text="@(item.Schema + "." + item.Name + " " + objectKind.Label)">
-                                @if (item.Kind == "view")
-                                { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg> }
-                                else if (item.Kind == "sequence")
-                                { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h4M4 12h7M4 18h10"/><path d="m16 8 4 4-4 4"/></svg> }
-                                else
-                                { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg> }
-                                <span><strong>@item.Name</strong><small>@item.TableType@(item.LocalShardCount > 0 ? $" · {item.LocalShardCount} shard" : string.Empty)</small></span>
-                            </button>
+                            var hasNavigation = item.Kind != "sequence" && Model.IsCoordinator;
+                            var objectKey = $"{item.Schema}.{item.Name}";
+                            <div class="database-object-node" data-database-object-node data-object-key="@objectKey">
+                                <div class="database-object-row">
+                                    @if (hasNavigation)
+                                    {
+                                        <button type="button" class="database-object-toggle" aria-expanded="false" aria-label="Mở rộng @item.Name">
+                                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 3 5 5-5 5"/></svg>
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <span class="database-object-toggle-spacer" aria-hidden="true"></span>
+                                    }
+                                    <button type="button" class="database-object" data-database-object data-context-node
+                                            data-schema="@item.Schema" data-table="@item.Name" data-name="@item.Name"
+                                            data-kind="@item.Kind" data-node-kind="@item.ObjectKind.ToString().ToLowerInvariant()"
+                                            data-table-mode="@item.TableMode.ToString().ToLowerInvariant()" data-postgres-kind="@item.PostgreSqlKind"
+                                            data-can-operate="@Model.CanOperate.ToString().ToLowerInvariant()"
+                                            data-can-admin="@Model.CanAdmin.ToString().ToLowerInvariant()" data-is-coordinator="@Model.IsCoordinator.ToString().ToLowerInvariant()"
+                                            data-search-text="@(item.Schema + "." + item.Name + " " + objectKind.Label)">
+                                        @if (item.Kind == "view")
+                                        { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg> }
+                                        else if (item.Kind == "sequence")
+                                        { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h4M4 12h7M4 18h10"/><path d="m16 8 4 4-4 4"/></svg> }
+                                        else
+                                        { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1"/><path d="M4 10h16M10 5v14"/></svg> }
+                                        <span><strong>@item.Name</strong><small>@item.TableType@(item.LocalShardCount > 0 ? $" · {item.LocalShardCount} shard" : string.Empty)</small></span>
+                                    </button>
+                                </div>
+                                @if (hasNavigation)
+                                {
+                                    <div class="database-object-children hidden" data-object-children data-loaded="false"></div>
+                                }
+                            </div>
                         }
                     </div>
                 }

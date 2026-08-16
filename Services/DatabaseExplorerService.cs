@@ -30,6 +30,8 @@ public interface IDatabaseExplorerService
 {
     Task<DatabaseExplorerPageViewModel> GetPageAsync(
         Guid clusterId, int? nodeId, bool showSystem, CancellationToken cancellationToken);
+    Task<DatabaseTreeChildrenResponse> GetTreeChildrenAsync(
+        Guid clusterId, int? nodeId, string schema, string name, string group, CancellationToken cancellationToken);
     Task<TableDataResponse> BrowseAsync(
         Guid clusterId, BrowseTableRequest request, CancellationToken cancellationToken);
     Task<TableStructureResponse> GetStructureAsync(
@@ -55,6 +57,127 @@ public sealed class DatabaseExplorerService(
                 .Select(x => x.Object).ToList();
         return new(Map(target.Profile), nodeId, target.Label, target.IsCoordinator, showSystem,
             options.CommandTimeoutSeconds, options.MaxRowsPerResultSet, options.AllowedPageSizes, objects);
+    }
+
+    public async Task<DatabaseTreeChildrenResponse> GetTreeChildrenAsync(
+        Guid clusterId, int? nodeId, string schema, string name, string group, CancellationToken cancellationToken)
+    {
+        DatabaseObjectDdlSafety.ValidateIdentifier(schema, nameof(schema));
+        DatabaseObjectDdlSafety.ValidateIdentifier(name, nameof(name));
+        var normalizedGroup = group.Trim().ToLowerInvariant();
+        var sql = normalizedGroup switch
+        {
+            "summary" => """
+                SELECT catalog_group.name, catalog_group.item_count::text,
+                       NULL::text, NULL::text, NULL::text
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                CROSS JOIN LATERAL (VALUES
+                    ('columns', (SELECT count(*) FROM pg_attribute a
+                                 WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped)),
+                    ('keys', (SELECT count(*) FROM pg_constraint con
+                              WHERE con.conrelid = c.oid AND con.contype IN ('p','u','x'))),
+                    ('foreign-keys', (SELECT count(*) FROM pg_constraint con
+                                      WHERE con.conrelid = c.oid AND con.contype = 'f')),
+                    ('indexes', (SELECT count(*) FROM pg_index idx WHERE idx.indrelid = c.oid)),
+                    ('checks', (SELECT count(*) FROM pg_constraint con
+                                WHERE con.conrelid = c.oid AND con.contype = 'c')),
+                    ('partitions', (SELECT count(*) FROM pg_inherits inheritance
+                                    WHERE inheritance.inhparent = c.oid))
+                ) AS catalog_group(name, item_count)
+                WHERE n.nspname = $1 AND c.relname = $2 AND catalog_group.item_count > 0
+                """,
+            "columns" => """
+                SELECT a.attname, format_type(a.atttypid, a.atttypmod) ||
+                       CASE WHEN a.attnotnull THEN ' · NOT NULL' ELSE '' END,
+                       NULL::text, NULL::text, NULL::text
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                WHERE n.nspname = $1 AND c.relname = $2
+                ORDER BY a.attnum
+                """,
+            "keys" => """
+                SELECT con.conname, pg_get_constraintdef(con.oid, true), NULL::text, NULL::text, NULL::text
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_constraint con ON con.conrelid = c.oid AND con.contype IN ('p','u','x')
+                WHERE n.nspname = $1 AND c.relname = $2
+                ORDER BY con.conname
+                """,
+            "foreign-keys" => """
+                SELECT con.conname, pg_get_constraintdef(con.oid, true), NULL::text, NULL::text, NULL::text
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_constraint con ON con.conrelid = c.oid AND con.contype = 'f'
+                WHERE n.nspname = $1 AND c.relname = $2
+                ORDER BY con.conname
+                """,
+            "indexes" => """
+                SELECT index_class.relname,
+                       CASE WHEN idx.indisunique THEN 'UNIQUE' ELSE 'INDEX' END,
+                       NULL::text, NULL::text, NULL::text
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_index idx ON idx.indrelid = c.oid
+                JOIN pg_class index_class ON index_class.oid = idx.indexrelid
+                WHERE n.nspname = $1 AND c.relname = $2
+                ORDER BY index_class.relname
+                """,
+            "checks" => """
+                SELECT con.conname, pg_get_constraintdef(con.oid, true), NULL::text, NULL::text, NULL::text
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_constraint con ON con.conrelid = c.oid AND con.contype = 'c'
+                WHERE n.nspname = $1 AND c.relname = $2
+                ORDER BY con.conname
+                """,
+            "partitions" => """
+                SELECT child.relname, pg_get_expr(child.relpartbound, child.oid, true), child_ns.nspname,
+                       child.relkind::text,
+                       CASE WHEN placement.logicalrelid IS NULL THEN 'local'
+                            WHEN placement.partmethod = 'n' THEN 'reference' ELSE 'distributed' END
+                FROM pg_class parent
+                JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
+                JOIN pg_inherits inheritance ON inheritance.inhparent = parent.oid
+                JOIN pg_class child ON child.oid = inheritance.inhrelid
+                JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
+                LEFT JOIN pg_dist_partition placement ON placement.logicalrelid = child.oid
+                WHERE parent_ns.nspname = $1 AND parent.relname = $2
+                ORDER BY child_ns.nspname, child.relname
+                """,
+            _ => throw new ArgumentException("Unsupported database tree group.", nameof(group))
+        };
+
+        var target = await ResolveTargetAsync(clusterId, nodeId, cancellationToken);
+        if (!target.IsCoordinator) throw new InvalidOperationException("Tree details are read from the coordinator catalog only.");
+        await using var connection = await OpenAsync(target, cancellationToken);
+        await EnsureCoordinatorObjectAsync(connection, schema, name, cancellationToken);
+        var items = new List<DatabaseTreeChildResponse>();
+        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = options.CommandTimeoutSeconds };
+        command.Parameters.AddWithValue(schema);
+        command.Parameters.AddWithValue(name);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (normalizedGroup != "partitions")
+            {
+                items.Add(new(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1)));
+                continue;
+            }
+
+            var relkind = reader.GetString(3)[0];
+            var objectKind = DatabaseObjectDdlSafety.KindFromRelkind(relkind);
+            var tableMode = reader.GetString(4) switch
+            {
+                "reference" => DatabaseTableMode.Reference,
+                "distributed" => DatabaseTableMode.Distributed,
+                _ => DatabaseTableMode.Local
+            };
+            items.Add(new(reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1), reader.GetString(2),
+                "table", objectKind, tableMode, relkind.ToString()));
+        }
+        return new(normalizedGroup, items);
     }
 
     public async Task<TableDataResponse> BrowseAsync(
@@ -254,11 +377,12 @@ public sealed class DatabaseExplorerService(
                      WHEN c.relkind = 'f' THEN 'foreign table'
                      WHEN p.logicalrelid IS NULL THEN 'local'
                      WHEN p.partmethod = 'n' THEN 'reference' ELSE 'distributed' END,
-                   GREATEST(c.reltuples::bigint, 0), pg_total_relation_size(c.oid), c.relkind::text
+                   0::bigint, 0::bigint, c.relkind::text
             FROM pg_class AS c
             JOIN pg_namespace AS ns ON ns.oid = c.relnamespace
             LEFT JOIN pg_dist_partition AS p ON p.logicalrelid = c.oid
             WHERE c.relkind IN ('r','p','v','m','f','S')
+              AND NOT c.relispartition
               AND ($1 OR (ns.nspname NOT IN ('pg_catalog','information_schema','citus','pg_toast')
                            AND ns.nspname NOT LIKE 'pg_temp_%' AND ns.nspname NOT LIKE 'pg_toast_temp_%'))
             ORDER BY ns.nspname, c.relname
