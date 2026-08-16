@@ -260,12 +260,18 @@ public sealed class DatabaseWorkspaceService(
         var catalog = await ReadCatalogAsync(connection, schema, name, ct);
         if (catalog.Kind == DatabaseObjectKind.Sequence)
         {
-            const string sequenceSql = "SELECT data_type, start_value, min_value, max_value, increment_by, cycle, cache_size FROM pg_sequences WHERE schemaname=$1 AND sequencename=$2";
+            // regtype and catalog numeric values aren't guaranteed to materialize as
+            // strings in Npgsql. Ask PostgreSQL for canonical text before building DDL.
+            const string sequenceSql = """
+                SELECT data_type::text, start_value::text, min_value::text, max_value::text,
+                       increment_by::text, cycle, cache_size::text
+                FROM pg_sequences WHERE schemaname=$1 AND sequencename=$2
+                """;
             await using var sequence = new NpgsqlCommand(sequenceSql, connection);
             sequence.Parameters.AddWithValue(schema); sequence.Parameters.AddWithValue(name);
             await using var reader = await sequence.ExecuteReaderAsync(ct);
             if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("Sequence not found.");
-            var sequenceDdl = $"CREATE SEQUENCE {Qualified(schema, name)}\n  AS {reader.GetString(0)}\n  INCREMENT BY {reader.GetInt64(4)}\n  MINVALUE {reader.GetValue(2)}\n  MAXVALUE {reader.GetValue(3)}\n  START WITH {reader.GetValue(1)}\n  CACHE {reader.GetInt64(6)}" + (reader.GetBoolean(5) ? "\n  CYCLE;" : "\n  NO CYCLE;");
+            var sequenceDdl = $"CREATE SEQUENCE {Qualified(schema, name)}\n  AS {reader.GetString(0)}\n  INCREMENT BY {reader.GetString(4)}\n  MINVALUE {reader.GetString(2)}\n  MAXVALUE {reader.GetString(3)}\n  START WITH {reader.GetString(1)}\n  CACHE {reader.GetString(6)}" + (reader.GetBoolean(5) ? "\n  CYCLE;" : "\n  NO CYCLE;");
             return new(schema, name, sequenceDdl);
         }
         if (catalog.Kind is DatabaseObjectKind.View or DatabaseObjectKind.MaterializedView)
