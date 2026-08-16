@@ -23,6 +23,35 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
   const defaultPageSize = 20;
   const defaultRowHeight = 36;
   const pageSizeOptions = [5, 10, 15, 20, 25, 50, 100, 200, 500];
+  const columnCommentTooltip = document.createElement("div");
+  columnCommentTooltip.id = "database-column-comment-tooltip";
+  columnCommentTooltip.className = "database-column-comment-tooltip hidden";
+  columnCommentTooltip.role = "tooltip";
+  document.body.appendChild(columnCommentTooltip);
+  let activeColumnCommentButton = null;
+
+  function closeColumnComment() {
+    activeColumnCommentButton?.setAttribute("aria-expanded", "false");
+    activeColumnCommentButton = null;
+    columnCommentTooltip.classList.add("hidden");
+  }
+  function toggleColumnComment(button) {
+    if (activeColumnCommentButton === button) { closeColumnComment(); return; }
+    closeColumnComment();
+    activeColumnCommentButton = button;
+    button.setAttribute("aria-expanded", "true");
+    columnCommentTooltip.textContent = button.dataset.columnComment || "";
+    columnCommentTooltip.classList.remove("hidden");
+    columnCommentTooltip.style.visibility = "hidden";
+    const anchor = button.getBoundingClientRect();
+    const tooltip = columnCommentTooltip.getBoundingClientRect();
+    const left = Math.max(8, Math.min(innerWidth - tooltip.width - 8, anchor.left + anchor.width / 2 - tooltip.width / 2));
+    const below = anchor.bottom + 8;
+    const top = below + tooltip.height <= innerHeight - 8 ? below : Math.max(8, anchor.top - tooltip.height - 8);
+    columnCommentTooltip.style.left = `${left}px`;
+    columnCommentTooltip.style.top = `${top}px`;
+    columnCommentTooltip.style.visibility = "visible";
+  }
 
   const jsonApi = createJsonApi(token);
   const showError = message => { feedback.textContent = message; feedback.classList.remove("hidden"); feedback.focus(); };
@@ -63,10 +92,15 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
   }
   async function activate(key) {
     const ws = workspaces.get(key); if (!ws) return;
+    const switchingWorkspace = activeKey !== null && activeKey !== key;
     activeKey = key; ws.used = Date.now(); renderTabs(key); empty.classList.add("hidden"); stage.classList.remove("hidden");
     if (!ws.loaded && ws.type !== "sql" && ws.type !== "chart") {
       showWorkspaceLoading();
       try { await hydrateWorkspace(ws); } catch (error) { showError(error.message); stage.innerHTML = `<div class="database-workspace-error">${html(error.message)}</div>`; }
+    } else if (switchingWorkspace && ws.type === "data" && !ws.dirty) {
+      renderWorkspace(ws);
+      try { await loadRows(ws, "Đang làm mới dữ liệu khi chuyển workspace…"); }
+      catch (error) { reportError(error); }
     } else renderWorkspace(ws);
     persist();
   }
@@ -122,7 +156,11 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
   }, { passive: false });
   document.addEventListener("pointerdown", event => {
     document.querySelectorAll(".database-query-suggestions:not(.hidden)").forEach(box => { if (!box.parentElement.contains(event.target)) box.classList.add("hidden"); });
+    if (activeColumnCommentButton && !event.target.closest("[data-column-comment]") && !columnCommentTooltip.contains(event.target)) closeColumnComment();
   });
+  document.addEventListener("keydown", event => { if (event.key === "Escape") closeColumnComment(); });
+  document.addEventListener("scroll", closeColumnComment, true);
+  window.addEventListener("resize", closeColumnComment);
 
   async function openObject(schema, name, type = "data") {
     const key = keyOf(schema, name, type); if (workspaces.has(key)) return activate(key); if (!ensureCapacity()) return;
@@ -204,7 +242,7 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
       ${ws.metadata.canEdit ? "" : `<div class="database-readonly-note">Read-only: ${html(ws.metadata.readOnlyReason || "object không hỗ trợ edit")}</div>`}</div>`;
     bindDataWorkspace(ws); updateFooter(ws);
   }
-  function columnHeaderHtml(ws,column){const sort=sortState(ws,column.name),keyIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="10" r="4"/><path d="m11 13 8 8m-3-3 2-2m-5-1 2-2"/></svg>';const badges=column.isPrimaryKey?`<i class="database-column-key is-primary" title="Primary key">${keyIcon}</i>`:column.isIndexed?`<i class="database-column-key is-indexed" title="${column.isUnique?"Unique index":"Indexed column"}">${keyIcon}</i>`:"";const required=!column.isNullable?'<i class="database-column-required" title="NOT NULL"></i>':"";const sortIcon=sort?`<i class="database-sort-indicator is-${sort.direction.toLowerCase()}" title="Sort ${sort.direction}">${sort.direction==="ASC"?"↑":"↓"}${sort.priority>1?`<sup>${sort.priority}</sup>`:""}</i>`:"";return `<th data-column="${html(column.name)}" style="width:${ws.widths[column.name]||180}px"><span class="database-column-title">${badges}${required}<b>${html(column.name)}</b>${sortIcon}</span><small>${html(column.dataType)}${column.isUnique&&!column.isPrimaryKey?" · UNIQUE":""}</small><i class="database-column-resizer"></i></th>`;}
+  function columnHeaderHtml(ws,column){const sort=sortState(ws,column.name),keyIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="10" r="4"/><path d="m11 13 8 8m-3-3 2-2m-5-1 2-2"/></svg>';const badges=column.isPrimaryKey?`<i class="database-column-key is-primary" title="Primary key">${keyIcon}</i>`:column.isIndexed?`<i class="database-column-key is-indexed" title="${column.isUnique?"Unique index":"Indexed column"}">${keyIcon}</i>`:"";const required=!column.isNullable?'<i class="database-column-required" title="NOT NULL"></i>':"";const comment=column.comment?.trim()?`<button type="button" class="database-column-comment" data-column-comment="${html(column.comment)}" aria-label="Xem comment cột ${html(column.name)}" aria-controls="database-column-comment-tooltip" aria-expanded="false"><i class="fa fa-info-circle" aria-hidden="true"></i></button>`:"";const sortIcon=sort?`<i class="database-sort-indicator is-${sort.direction.toLowerCase()}" title="Sort ${sort.direction}">${sort.direction==="ASC"?"↑":"↓"}${sort.priority>1?`<sup>${sort.priority}</sup>`:""}</i>`:"";return `<th data-column="${html(column.name)}" style="width:${ws.widths[column.name]||180}px"><span class="database-column-title">${badges}${required}<b>${html(column.name)}</b>${comment}${sortIcon}</span><small>${html(column.dataType)}${column.isUnique&&!column.isPrimaryKey?" · UNIQUE":""}</small><i class="database-column-resizer"></i></th>`;}
   function sortState(ws,name){if(!ws.orderBy)return null;const parts=ws.orderBy.split(",").map(value=>value.trim()).filter(Boolean),normalizedName=name.replaceAll('"','');for(let index=0;index<parts.length;index++){const match=parts[index].match(/^(.*?)\s+(ASC|DESC)(?:\s+NULLS\s+(?:FIRST|LAST))?$/i);if(!match)continue;const candidate=match[1].trim().replace(/^"|"$/g,"").replaceAll('""','"');if(candidate===normalizedName||candidate===name)return{direction:match[2].toUpperCase(),priority:index+1};}return null;}
   function cellHtml(ws, row, ri, column, ci) {
     const pending = ws.pending.get(`${ri}:${column.name}`); const cell = row.cells[ci]; const value = pending ? pending.value : cell.value;
@@ -226,7 +264,8 @@ import { createSpecialWorkspaceRenderers } from "./database-workspaces/special-w
     stage.querySelector("[data-csv-page]").onclick = () => exportCsv(ws,true);stage.querySelector("[data-csv-all]").onclick = () => exportCsv(ws,false);
     stage.querySelectorAll("[data-column-visible]").forEach(input=>input.onchange=()=>{ws.hidden=input.checked?ws.hidden.filter(name=>name!==input.dataset.columnVisible):[...new Set([...ws.hidden,input.dataset.columnVisible])];persist();renderDataWorkspace(ws);});
     stage.querySelector("[data-csv-import]").onclick=()=>stage.querySelector("[data-csv-file]").click();stage.querySelector("[data-csv-file]").onchange=e=>{const file=e.target.files[0];if(file)previewCsvImport(ws,file);};
-    stage.querySelectorAll("thead th[data-column]").forEach(th => { th.onclick = e => { if(e.target.closest(".database-column-resizer"))return;if(e.ctrlKey||e.metaKey){const ci=ws.columns.findIndex(c=>c.name===th.dataset.column);ws.selected.clear();ws.rows.forEach((_,ri)=>ws.selected.add(`${ri}:${ci}`));paintSelection(ws);}else sortColumn(ws, th.dataset.column, e.shiftKey); }; bindResize(ws, th); });
+    stage.querySelectorAll("[data-column-comment]").forEach(button => { button.onclick = event => { event.stopPropagation(); toggleColumnComment(button); }; });
+    stage.querySelectorAll("thead th[data-column]").forEach(th => { th.onclick = e => { if(e.target.closest(".database-column-resizer,[data-column-comment]"))return;if(e.ctrlKey||e.metaKey){const ci=ws.columns.findIndex(c=>c.name===th.dataset.column);ws.selected.clear();ws.rows.forEach((_,ri)=>ws.selected.add(`${ri}:${ci}`));paintSelection(ws);}else sortColumn(ws, th.dataset.column, e.shiftKey); }; bindResize(ws, th); });
     stage.querySelectorAll("[data-cell]").forEach(cell => {
       cell.onpointerdown = event => beginCellSelection(ws, cell, event);
       cell.ondblclick = () => editCell(ws, cell); cell.onkeydown = e => { if (e.key === "F2" || e.key === "Enter") editCell(ws, cell); };

@@ -530,7 +530,8 @@ public sealed class DatabaseExplorerService(
         const string sql = """
             SELECT a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull,
                    pg_get_expr(ad.adbin, ad.adrelid),
-                   EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey))
+                   EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey)),
+                   col_description(c.oid, a.attnum)
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
             JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -545,7 +546,8 @@ public sealed class DatabaseExplorerService(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetBoolean(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetBoolean(4)));
+                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetBoolean(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
         return result;
     }
 

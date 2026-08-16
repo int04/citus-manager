@@ -351,6 +351,9 @@
             .database-workspace-grid thead th > span { @@apply block truncate font-medium; }
             .database-workspace-grid thead .database-column-title { @@apply flex min-w-0 items-center gap-1; }
             .database-column-title b { @@apply min-w-0 flex-1 truncate font-medium; }
+            .database-column-comment { @@apply grid size-6 shrink-0 cursor-pointer place-items-center rounded-sm text-sky-600 hover:bg-sky-100 hover:text-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-300 dark:hover:bg-sky-400/15 dark:hover:text-sky-100; }
+            .database-column-comment .fa { @@apply text-xs; }
+            .database-column-comment-tooltip { @@apply fixed z-[80] max-h-60 w-max max-w-80 overflow-auto whitespace-pre-wrap rounded border border-[#81929d] bg-[#fdfefe] px-3 py-2 text-[11px] leading-5 text-[#263f4f] shadow-xl dark:border-white/20 dark:bg-[#161d23] dark:text-slate-200; overflow-wrap: anywhere; }
             .database-column-key { @@apply grid size-3.5 shrink-0 place-items-center not-italic; }
             .database-column-key svg { @@apply size-3.5 fill-none stroke-current; stroke-width: 2; }
             .database-column-key.is-primary { @@apply text-amber-500; }

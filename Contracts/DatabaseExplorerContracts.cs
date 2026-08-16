@@ -374,7 +374,8 @@ public sealed record TableColumnResponse(
     string DataType,
     bool IsNullable,
     string? DefaultValue,
-    bool IsPrimaryKey);
+    bool IsPrimaryKey,
+    string? Comment);
 
 /// <summary>PostgreSQL index metadata for one table.</summary>
 public sealed record TableIndexResponse(string Name, string Definition);
@@ -437,7 +438,8 @@ public sealed record DatabaseWorkspaceMetadataResponse(
 /// <summary>Column behavior and PostgreSQL type information for the workspace grid.</summary>
 public sealed record WorkspaceColumnResponse(
     string Name, string DataType, bool IsNullable, bool IsPrimaryKey, bool IsDistributionColumn,
-    bool IsGenerated, bool IsIdentity, bool CanEdit, bool IsNumeric, bool IsIndexed, bool IsUnique);
+    bool IsGenerated, bool IsIdentity, bool CanEdit, bool IsNumeric, bool IsIndexed, bool IsUnique,
+    string? Comment);
 
 /// <summary>One displayed workspace cell.</summary>
 public sealed record DatabaseCellResponse(string? Value, bool IsNull, bool IsTruncated);

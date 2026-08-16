@@ -46,7 +46,8 @@ public sealed class DatabaseWorkspaceService(
                 new TableStructureRequest { Schema = schema, Table = name, NodeId = nodeId }, ct);
             var workerColumns = structure.Columns.Select(column => new WorkspaceColumnResponse(
                 column.Name, column.DataType, column.IsNullable, column.IsPrimaryKey, false,
-                false, false, false, IsNumericType(column.DataType), column.IsPrimaryKey, column.IsPrimaryKey)).ToList();
+                false, false, false, IsNumericType(column.DataType), column.IsPrimaryKey, column.IsPrimaryKey,
+                column.Comment)).ToList();
             return new(schema, name, DatabaseObjectKind.Table, DatabaseTableMode.Distributed, false, false,
                 "Worker là read-only.", null, null, workerColumns,
                 workerColumns.Where(column => column.IsPrimaryKey).Select(column => column.Name).ToList());
@@ -78,8 +79,7 @@ public sealed class DatabaseWorkspaceService(
                 Schema = request.Schema, Table = request.ObjectName, NodeId = request.NodeId,
                 Page = request.Page, PageSize = request.PageSize
             }, ct);
-            var columns = workerPage.Columns.Select(column => new WorkspaceColumnResponse(column.Name, column.DataType,
-                true, false, false, false, false, false, IsNumericType(column.DataType), false, false)).ToList();
+            var columns = metadata.Columns;
             var workerRows = workerPage.Rows.Select(row => new DatabaseRowResponse(null,
                 row.Select(cell => new DatabaseCellResponse(cell.Value, cell.IsNull, cell.IsTruncated)).ToList())).ToList();
             return new(columns, workerRows, workerPage.Page, workerPage.PageSize, workerPage.HasPrevious, workerPage.HasNext,
@@ -482,7 +482,8 @@ public sealed class DatabaseWorkspaceService(
                    a.attgenerated <> '', a.attidentity <> '', has_column_privilege(a.attrelid,a.attname,'UPDATE'),
                    t.typcategory='N',
                    EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=a.attrelid AND i.indisvalid AND a.attnum=ANY(i.indkey)),
-                   EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=a.attrelid AND i.indisvalid AND i.indisunique AND a.attnum=ANY(i.indkey))
+                   EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=a.attrelid AND i.indisvalid AND i.indisunique AND a.attnum=ANY(i.indkey)),
+                   col_description(a.attrelid, a.attnum)
             FROM pg_attribute a JOIN pg_type t ON t.oid=a.atttypid
             WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum
             """;
@@ -492,8 +493,9 @@ public sealed class DatabaseWorkspaceService(
         {
             var name = reader.GetString(0); var generated = reader.GetBoolean(4); var identity = reader.GetBoolean(5);
             result.Add(new(name, reader.GetString(1), reader.GetBoolean(2), reader.GetBoolean(3), name == distributionColumn,
-                generated, identity, reader.GetBoolean(6) && !generated && name != distributionColumn && !reader.GetBoolean(3),
-                reader.GetBoolean(7), reader.GetBoolean(8), reader.GetBoolean(9)));
+                generated, identity, DatabaseWorkspaceColumnRules.CanEdit(reader.GetBoolean(6), generated, name == distributionColumn),
+                reader.GetBoolean(7), reader.GetBoolean(8), reader.GetBoolean(9),
+                reader.IsDBNull(10) ? null : reader.GetString(10)));
         }
         return result;
     }
@@ -556,6 +558,12 @@ public sealed class DatabaseWorkspaceService(
         value.StartsWith("numeric", StringComparison.OrdinalIgnoreCase) || value.StartsWith("decimal", StringComparison.OrdinalIgnoreCase) ||
         value.StartsWith("real", StringComparison.OrdinalIgnoreCase) || value.StartsWith("double precision", StringComparison.OrdinalIgnoreCase);
     private sealed record CatalogObject(int Oid, DatabaseObjectKind Kind, DatabaseTableMode Mode, long EstimatedRows, string? DistributionColumn, bool CanUpdate);
+}
+
+internal static class DatabaseWorkspaceColumnRules
+{
+    internal static bool CanEdit(bool hasUpdatePrivilege, bool isGenerated, bool isDistributionColumn) =>
+        hasUpdatePrivilege && !isGenerated && !isDistributionColumn;
 }
 
 internal static class DatabaseWorkspaceQueryValidator
