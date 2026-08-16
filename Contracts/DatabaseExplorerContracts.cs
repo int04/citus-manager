@@ -496,6 +496,24 @@ public sealed record DatabaseRowInspectionResponse(
     DatabaseRowInternalsResponse? Internals,
     IReadOnlyList<string> Warnings);
 
+/// <summary>Batch request used by the grid to resolve current-page row servers.</summary>
+public sealed record LocateWorkspaceRowsRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(255)] public required string ObjectName { get; init; }
+    public int? NodeId { get; init; }
+    [Required, MinLength(1), MaxLength(500)]
+    public required IReadOnlyList<DatabaseRowIdentity?> Identities { get; init; }
+}
+
+/// <summary>Server resolution for one row at the matching request index.</summary>
+public sealed record DatabaseWorkspaceRowLocationResponse(
+    int RowIndex, bool Resolved, bool IsExact, string Status, long? ShardId,
+    IReadOnlyList<DatabasePlacementInspectionResponse> Placements);
+
+public sealed record LocateWorkspaceRowsResponse(
+    IReadOnlyList<DatabaseWorkspaceRowLocationResponse> Locations);
+
 /// <summary>One row returned to the workspace grid.</summary>
 public sealed record DatabaseRowResponse(DatabaseRowIdentity? Identity, IReadOnlyList<DatabaseCellResponse> Cells);
 

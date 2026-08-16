@@ -59,6 +59,23 @@ public sealed class DatabaseController(
         { return DatabaseMutationProblem(422, "Không thể đọc chi tiết row", "Database từ chối yêu cầu."); }
     }
 
+    [HttpPost("Rows/Locations"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> LocateRows(
+        Guid clusterId, [FromBody] LocateWorkspaceRowsRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await rowInspector.LocateAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException exception)
+        { return DatabaseMutationProblem(400, "Row identities không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException)
+        { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh workspace rồi thử lại."); }
+        catch (PostgresException exception)
+        { return DatabaseMutationProblem(422, "Không thể xác định worker", "PostgreSQL từ chối topology query.", exception.SqlState); }
+        catch (NpgsqlException)
+        { return DatabaseMutationProblem(422, "Không thể xác định worker", "Database từ chối yêu cầu."); }
+    }
+
     [HttpPost("Rows/Count"), ValidateAntiForgeryToken]
     public async Task<IActionResult> CountRows(Guid clusterId, [FromBody] CountWorkspaceRowsRequest request, CancellationToken cancellationToken)
     {

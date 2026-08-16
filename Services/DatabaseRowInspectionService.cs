@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Globalization;
+using System.Text.Json;
 using CitusManager.Contracts;
 using CitusManager.Data;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +14,8 @@ public interface IDatabaseRowInspectionService
 {
     Task<DatabaseRowInspectionResponse> InspectAsync(
         Guid clusterId, InspectWorkspaceRowRequest request, CancellationToken cancellationToken);
+    Task<LocateWorkspaceRowsResponse> LocateAsync(
+        Guid clusterId, LocateWorkspaceRowsRequest request, CancellationToken cancellationToken);
 }
 
 public sealed class DatabaseRowInspectionService(
@@ -75,6 +78,219 @@ public sealed class DatabaseRowInspectionService(
             catalog.DistributionColumn, row?.DistributionValue, catalog.ColocationId, catalog.ReplicationModel,
             values, partitions, shard, row?.Internals, warnings);
     }
+
+    public async Task<LocateWorkspaceRowsResponse> LocateAsync(
+        Guid clusterId, LocateWorkspaceRowsRequest request, CancellationToken cancellationToken)
+    {
+        DatabaseObjectDdlSafety.ValidateIdentifier(request.Schema, nameof(request.Schema));
+        DatabaseObjectDdlSafety.ValidateIdentifier(request.ObjectName, nameof(request.ObjectName));
+        if (request.Identities.Count is < 1 or > 500)
+            throw new ArgumentException("Current page must contain between 1 and 500 row identities.");
+
+        var cluster = await db.Clusters.AsNoTracking().SingleOrDefaultAsync(x => x.Id == clusterId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cluster not found.");
+        await using var connection = connections.Create(cluster);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        await ExecuteAsync(connection, transaction, "SET TRANSACTION READ ONLY", [], cancellationToken);
+        await ExecuteAsync(connection, transaction,
+            $"SET LOCAL statement_timeout = '{Math.Clamp(options.RowInspectionTimeoutSeconds, 1, 60)}s'", [], cancellationToken);
+
+        var catalog = await ReadCatalogAsync(connection, transaction, request.Schema, request.ObjectName, cancellationToken);
+        if (catalog.Kind == DatabaseObjectKind.ForeignTable)
+            return UniformLocations(request.Identities, "Foreign table dùng foreign server; không phải Citus worker.");
+        if (catalog.Mode == DatabaseTableMode.NotApplicable)
+            return UniformLocations(request.Identities, "Object này không có Citus row placement.");
+
+        var useShardResolver = catalog.Mode == DatabaseTableMode.Distributed &&
+            catalog.DistributionColumn is not null && await HasShardResolverAsync(connection, transaction, cancellationToken);
+        IReadOnlyDictionary<int, LocationRowMatch> matches = new Dictionary<int, LocationRowMatch>();
+        if (useShardResolver)
+        {
+            await transaction.SaveAsync("cm_batch_shard", cancellationToken);
+            try
+            {
+                matches = await ReadLocationRowsAsync(connection, transaction, catalog, request.Identities,
+                    cancellationToken);
+            }
+            catch (PostgresException)
+            {
+                await transaction.RollbackAsync("cm_batch_shard", cancellationToken);
+                useShardResolver = false;
+            }
+        }
+
+        var locations = new List<DatabaseWorkspaceRowLocationResponse>(request.Identities.Count);
+        if (catalog.Mode == DatabaseTableMode.Local)
+        {
+            var target = await ReadTargetAsync(connection, transaction, null, cluster.Host, cluster.Port, cancellationToken);
+            var placement = PlacementForTarget(target, $"{catalog.Schema}.{catalog.Name}", catalog.TotalBytes);
+            for (var index = 0; index < request.Identities.Count; index++)
+                locations.Add(new(index, true, true, "Coordinator", null, [placement]));
+        }
+        else if (catalog.Mode == DatabaseTableMode.Reference)
+        {
+            var placementSet = await ReadLocationPlacementsAsync(connection, transaction, catalog.Oid, [], true, cancellationToken);
+            var shardId = placementSet.ByShard.Keys.FirstOrDefault();
+            var placements = shardId == 0 ? [] : placementSet.ByShard.GetValueOrDefault(shardId) ?? [];
+            for (var index = 0; index < request.Identities.Count; index++)
+                locations.Add(new(index, true, true, $"Reference · {placements.Count} placement",
+                    shardId == 0 ? null : shardId, placements));
+        }
+        else
+        {
+            var shardIds = matches.Values.Where(value => value.ShardId.HasValue)
+                .Select(value => value.ShardId!.Value).Distinct().ToArray();
+            var placementSet = shardIds.Length == 0
+                ? new BatchPlacementResult(new Dictionary<long, IReadOnlyList<DatabasePlacementInspectionResponse>>(), false)
+                : await ReadLocationPlacementsAsync(connection, transaction, catalog.Oid, shardIds, false, cancellationToken);
+            for (var index = 0; index < request.Identities.Count; index++)
+            {
+                if (!useShardResolver)
+                {
+                    locations.Add(new(index, false, false,
+                        "Citus không hỗ trợ get_shard_id_for_distribution_column.", null, []));
+                    continue;
+                }
+                if (!matches.TryGetValue(index, out var match))
+                {
+                    locations.Add(new(index, false, false,
+                        request.Identities[index] is null ? "Không có stable row identity."
+                            : "Identity không chứa distribution column.", null, []));
+                    continue;
+                }
+                if (!match.ShardId.HasValue)
+                {
+                    locations.Add(new(index, true, false,
+                        "Không resolve được shard cho distribution value.", null, []));
+                    continue;
+                }
+                var placements = placementSet.ByShard.GetValueOrDefault(match.ShardId.Value) ?? [];
+                var status = placements.Count == 0 ? "Shard resolved; placement unavailable."
+                    : placementSet.Truncated ? $"{placements.Count} placement · kết quả bị giới hạn"
+                    : $"{placements.Count} placement";
+                locations.Add(new(index, true, true, status, match.ShardId, placements));
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return new(locations);
+    }
+
+    private async Task<IReadOnlyDictionary<int, LocationRowMatch>> ReadLocationRowsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, CatalogInfo catalog,
+        IReadOnlyList<DatabaseRowIdentity?> identities, CancellationToken cancellationToken)
+    {
+        var payloadRows = new List<object>();
+        var payloadCharacters = 0;
+        for (var index = 0; index < identities.Count; index++)
+        {
+            var identity = identities[index];
+            if (identity is null) continue;
+            if (catalog.DistributionColumn is null ||
+                !identity.Keys.TryGetValue(catalog.DistributionColumn, out var value) || value is null) continue;
+            payloadCharacters += value.Length;
+            if (payloadCharacters > 1_048_576)
+                throw new ArgumentException("Row identity payload exceeds 1 MiB.");
+            payloadRows.Add(new { rowIndex = index, value });
+        }
+        if (payloadRows.Count == 0) return new Dictionary<int, LocationRowMatch>();
+
+        var typedValue = $"(jsonb_populate_record(NULL::{Qualified(catalog.Schema, catalog.Name)}, " +
+                         $"jsonb_build_object({Literal(catalog.DistributionColumn!)}, r.value))).{Quote(catalog.DistributionColumn!)}";
+        var sql = $"""
+            WITH requested AS (
+                SELECT (identity->>'rowIndex')::int AS row_index, identity->>'value' AS value
+                FROM jsonb_array_elements(@payload::jsonb) AS rows(identity)
+            )
+            SELECT r.row_index,
+                   get_shard_id_for_distribution_column(@relationOid::oid::regclass, {typedValue})::bigint
+            FROM requested r
+            """;
+        var result = new Dictionary<int, LocationRowMatch>();
+        await using var command = new NpgsqlCommand(sql, connection, transaction)
+        { CommandTimeout = options.RowInspectionTimeoutSeconds };
+        command.Parameters.AddWithValue("payload", NpgsqlTypes.NpgsqlDbType.Jsonb,
+            JsonSerializer.Serialize(payloadRows, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        command.Parameters.AddWithValue("relationOid", NpgsqlTypes.NpgsqlDbType.Bigint, catalog.Oid);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result[reader.GetInt32(0)] = new(reader.IsDBNull(1) ? null : reader.GetInt64(1));
+        return result;
+    }
+
+    private static async Task<bool> HasShardResolverAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1 FROM pg_proc p
+                WHERE p.proname='get_shard_id_for_distribution_column'
+                  AND p.pronargs=2 AND p.proargtypes[0]='regclass'::regtype
+                  AND pg_function_is_visible(p.oid))
+            """;
+        return await ScalarBoolAsync(connection, transaction, sql, cancellationToken);
+    }
+
+    private static async Task<BatchPlacementResult> ReadLocationPlacementsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long relationOid,
+        long[] shardIds, bool reference, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT s.shardid, NULLIF(to_jsonb(p)->>'placementid','')::bigint,
+                   COALESCE(NULLIF(to_jsonb(p)->>'shardstate',''),'active'),
+                   NULLIF(to_jsonb(p)->>'shardlength','')::bigint,
+                   n.nodeid, n.groupid, n.nodename, n.nodeport,
+                   COALESCE(to_jsonb(n)->>'noderole','worker'), n.isactive,
+                   COALESCE((to_jsonb(n)->>'hasmetadata')::boolean,false),
+                   COALESCE((to_jsonb(n)->>'metadatasynced')::boolean,false),
+                   COALESCE((to_jsonb(n)->>'shouldhaveshards')::boolean,true),
+                   NULLIF(to_jsonb(n)->>'noderack',''), NULLIF(to_jsonb(n)->>'nodecluster',''),
+                   ns.nspname, c.relname
+            FROM pg_dist_shard s
+            JOIN pg_class c ON c.oid=s.logicalrelid
+            JOIN pg_namespace ns ON ns.oid=c.relnamespace
+            JOIN pg_dist_placement p ON p.shardid=s.shardid
+            JOIN pg_dist_node n ON n.groupid=p.groupid
+            WHERE (@reference AND s.logicalrelid=@relationOid::oid)
+               OR (NOT @reference AND s.shardid=ANY(@shardIds))
+            ORDER BY s.shardid, n.nodeid
+            LIMIT 2001
+            """;
+        var raw = new Dictionary<long, List<DatabasePlacementInspectionResponse>>();
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("reference", reference);
+        command.Parameters.AddWithValue("relationOid", NpgsqlTypes.NpgsqlDbType.Bigint, relationOid);
+        command.Parameters.AddWithValue("shardIds", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint, shardIds);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var count = 0;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            count++;
+            if (count > 2000) continue;
+            var shardId = reader.GetInt64(0);
+            if (!raw.TryGetValue(shardId, out var placements)) raw[shardId] = placements = [];
+            placements.Add(new(shardId, reader.IsDBNull(1) ? null : reader.GetInt64(1), PlacementState(reader.GetString(2)),
+                reader.IsDBNull(3) ? null : reader.GetInt64(3), reader.GetInt32(4), reader.GetInt32(5),
+                reader.GetString(6), reader.GetInt32(7), reader.GetString(8), reader.GetBoolean(9),
+                reader.GetBoolean(10), reader.GetBoolean(11), reader.GetBoolean(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14),
+                $"{reader.GetString(15)}.{reader.GetString(16)}_{shardId}"));
+        }
+        return new(raw.ToDictionary(pair => pair.Key,
+            pair => (IReadOnlyList<DatabasePlacementInspectionResponse>)pair.Value), count > 2000);
+    }
+
+    private static DatabasePlacementInspectionResponse PlacementForTarget(
+        TargetInfo target, string physicalRelation, long? bytes) =>
+        new(null, null, "local", bytes, target.NodeId, target.GroupId, target.Host, target.Port,
+            target.Role, target.IsActive, target.HasMetadata, target.MetadataSynced,
+            target.ShouldHaveShards, target.Rack, target.NodeCluster, physicalRelation);
+
+    private static LocateWorkspaceRowsResponse UniformLocations(
+        IReadOnlyList<DatabaseRowIdentity?> identities, string status) =>
+        new(identities.Select((identity, index) => new DatabaseWorkspaceRowLocationResponse(
+            index, false, false, identity is null ? "Không có stable row identity." : status, null, [])).ToList());
 
     private async Task<RowDetails> ReadRowAsync(
         NpgsqlConnection connection,
@@ -479,6 +695,7 @@ public sealed class DatabaseRowInspectionService(
     };
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+    private static string Literal(string value) => $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
     private static string Qualified(string schema, string name) => $"{Quote(schema)}.{Quote(name)}";
 
     private sealed record CatalogInfo(
@@ -496,6 +713,9 @@ public sealed class DatabaseRowInspectionService(
     private sealed record PlacementResult(
         IReadOnlyList<long> ShardIds, IReadOnlyList<DatabasePlacementInspectionResponse> Placements,
         IReadOnlyDictionary<long, (string? Minimum, string? Maximum)> Bounds, bool Truncated);
+    private sealed record LocationRowMatch(long? ShardId);
+    private sealed record BatchPlacementResult(
+        IReadOnlyDictionary<long, IReadOnlyList<DatabasePlacementInspectionResponse>> ByShard, bool Truncated);
 }
 
 internal static class DatabaseRowInspectionRules

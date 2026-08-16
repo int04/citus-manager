@@ -16,6 +16,16 @@ public sealed class DatabaseControllerAuthorizationTests
         Assert.NotEmpty(method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.ValidateAntiForgeryTokenAttribute), true));
     }
 
+    [Fact]
+    public void LocateRows_IsViewerAccessibleAndAntiforgeryProtected()
+    {
+        var method = typeof(DatabaseController).GetMethod(nameof(DatabaseController.LocateRows));
+
+        Assert.NotNull(method);
+        Assert.Empty(method!.GetCustomAttributes(typeof(AuthorizeAttribute), true));
+        Assert.NotEmpty(method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.ValidateAntiForgeryTokenAttribute), true));
+    }
+
     [Theory]
     [InlineData(nameof(DatabaseController.CreateSchema), "Operator")]
     [InlineData(nameof(DatabaseController.CreateTable), "Operator")]

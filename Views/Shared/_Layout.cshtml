@@ -377,7 +377,7 @@
             .database-workspace-grid tr.is-inserted td.is-selected { @@apply bg-sky-200 text-sky-950 ring-1 ring-inset ring-sky-500 dark:bg-sky-500/25 dark:text-sky-100; }
             .database-workspace-grid tbody tr.is-row-resized td { @@apply whitespace-pre-wrap break-words align-top; overflow-wrap: anywhere; }
             .database-workspace-grid tbody tr.is-row-resized td > span { @@apply block max-h-full overflow-auto py-1; user-select: text; -webkit-user-select: text; }
-            .database-row-number { @@apply sticky left-0 z-10 w-[58px] min-w-[58px] max-w-[58px] bg-[#e2e7ea] text-center font-normal text-[#667985] dark:bg-[#292f35] dark:text-slate-500; }
+            .database-row-number { @@apply sticky left-0 z-10 bg-[#e2e7ea] text-center font-normal text-[#667985] dark:bg-[#292f35] dark:text-slate-500; width: var(--database-row-number-width, 58px); min-width: var(--database-row-number-width, 58px); max-width: var(--database-row-number-width, 58px); }
             .database-workspace-grid tbody > tr > .database-row-number { position: sticky; left: 0; z-index: 25; background-color: #e2e7ea; background-clip: padding-box; box-shadow: 1px 0 0 #aeb9c2; }
             .database-workspace-grid tbody > tr.is-active-row > .database-row-number { @@apply bg-sky-100 font-semibold text-sky-800 dark:bg-sky-500/20 dark:text-sky-200; box-shadow: inset 3px 0 0 #38bdf8, 1px 0 0 #aeb9c2; }
             .database-workspace-grid tbody > tr > .database-row-number > span { @@apply block; }
@@ -385,6 +385,16 @@
             .database-row-number-content > span { @@apply min-w-4 truncate text-center; }
             .database-row-number-content > button { @@apply grid size-6 shrink-0 place-items-center rounded-sm text-sky-600 opacity-55 transition hover:bg-sky-100 hover:text-sky-800 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-sky-300 dark:hover:bg-sky-400/15 dark:hover:text-sky-100; }
             .database-row-number-content > button .fa { @@apply text-[11px]; }
+            .database-row-number-head { @@apply flex h-full min-h-7 items-center justify-center gap-1; }
+            .database-row-number-head > span { @@apply font-mono font-semibold; }
+            .database-row-number-head > button { @@apply grid size-7 place-items-center rounded-sm text-sky-600 hover:bg-sky-100 hover:text-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 disabled:cursor-wait disabled:opacity-60 dark:text-sky-300 dark:hover:bg-sky-400/15 dark:hover:text-sky-100; }
+            .database-row-number-content.has-location { @@apply justify-start gap-1 px-1; }
+            .database-row-number-content.has-location > .database-row-index { @@apply w-7 min-w-7 shrink-0 text-right font-mono font-semibold; }
+            .database-row-location { @@apply flex min-w-0 flex-1 items-center gap-1 truncate text-left font-mono text-[9px] text-[#71838f] dark:text-slate-500; }
+            .database-row-location::before { content: "—"; }
+            .database-row-location.is-available { @@apply text-emerald-700 dark:text-emerald-300; }
+            .database-row-location .fa { @@apply shrink-0 text-[10px]; }
+            .database-row-number-resizer { @@apply z-40; }
             .database-row-resizer { @@apply absolute -bottom-0.5 left-0 z-30 h-1.5 w-full cursor-row-resize bg-transparent hover:bg-sky-500; touch-action: none; }
             [data-theme="dark"] .database-workspace-grid tbody > tr > .database-row-number { background-color: #292f35; box-shadow: 1px 0 0 rgba(255,255,255,.1); }
             [data-theme="dark"] .database-workspace-grid tbody > tr.is-active-row > .database-row-number { background-color: rgba(14,165,233,.2); color: #bae6fd; box-shadow: inset 3px 0 0 #38bdf8, 1px 0 0 rgba(255,255,255,.1); }
