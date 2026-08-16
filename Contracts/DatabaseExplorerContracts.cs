@@ -409,6 +409,7 @@ public sealed record TableStructureRequest
 public sealed record ExecuteSqlRequest
 {
     [Required, MinLength(1)] public required string Sql { get; init; }
+    public int? NodeId { get; init; }
     public bool Confirmed { get; init; }
 }
 
@@ -426,3 +427,124 @@ public sealed record SqlExecutionResponse(
     bool ResultSetLimitReached,
     TimeSpan Duration,
     string QueryHash);
+
+/// <summary>Catalog metadata used by one data workspace.</summary>
+public sealed record DatabaseWorkspaceMetadataResponse(
+    string Schema, string ObjectName, DatabaseObjectKind ObjectKind, DatabaseTableMode TableMode,
+    bool IsCoordinator, bool CanEdit, string? ReadOnlyReason, string? DistributionColumn,
+    long? EstimatedRows, IReadOnlyList<WorkspaceColumnResponse> Columns, IReadOnlyList<string> PrimaryKey);
+
+/// <summary>Column behavior and PostgreSQL type information for the workspace grid.</summary>
+public sealed record WorkspaceColumnResponse(
+    string Name, string DataType, bool IsNullable, bool IsPrimaryKey, bool IsDistributionColumn,
+    bool IsGenerated, bool IsIdentity, bool CanEdit, bool IsNumeric);
+
+/// <summary>One displayed workspace cell.</summary>
+public sealed record DatabaseCellResponse(string? Value, bool IsNull, bool IsTruncated);
+
+/// <summary>Stable identity and optimistic concurrency token for one row.</summary>
+public sealed record DatabaseRowIdentity(IReadOnlyDictionary<string, string?> Keys, string Fingerprint);
+
+/// <summary>One row returned to the workspace grid.</summary>
+public sealed record DatabaseRowResponse(DatabaseRowIdentity? Identity, IReadOnlyList<DatabaseCellResponse> Cells);
+
+/// <summary>Query request for a data workspace.</summary>
+public sealed record QueryWorkspaceRowsRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(255)] public required string ObjectName { get; init; }
+    public int? NodeId { get; init; }
+    [Range(1, 1_000_000)] public int Page { get; init; } = 1;
+    [Range(1, 500)] public int PageSize { get; init; } = 50;
+    [MaxLength(8000)] public string? Where { get; init; }
+    [MaxLength(4000)] public string? OrderBy { get; init; }
+}
+
+/// <summary>One page returned to a data workspace.</summary>
+public sealed record QueryWorkspaceRowsResponse(
+    IReadOnlyList<WorkspaceColumnResponse> Columns, IReadOnlyList<DatabaseRowResponse> Rows,
+    int Page, int PageSize, bool HasPrevious, bool HasNext, bool HasStableOrder,
+    long? EstimatedRows, TimeSpan Duration);
+
+/// <summary>Exact-count request for the active workspace filter.</summary>
+public sealed record CountWorkspaceRowsRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(255)] public required string ObjectName { get; init; }
+    public int? NodeId { get; init; }
+    [MaxLength(8000)] public string? Where { get; init; }
+}
+
+/// <summary>Exact count returned for a workspace filter.</summary>
+public sealed record CountWorkspaceRowsResponse(long Count, TimeSpan Duration);
+
+public sealed record ReadWorkspaceCellRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(255)] public required string ObjectName { get; init; }
+    [Required, MaxLength(63)] public required string Column { get; init; }
+    public required DatabaseRowIdentity Identity { get; init; }
+}
+
+/// <summary>One staged cell update.</summary>
+public sealed record DatabaseCellChangeRequest
+{
+    [Required, MaxLength(63)] public required string Column { get; init; }
+    public string? Value { get; init; }
+    public bool IsNull { get; init; }
+    public bool UseDefault { get; init; }
+}
+
+/// <summary>One staged row update.</summary>
+public sealed record UpdateWorkspaceRowRequest
+{
+    public required IReadOnlyDictionary<string, string?> Keys { get; init; }
+    [Required] public required string Fingerprint { get; init; }
+    [MinLength(1)] public required IReadOnlyList<DatabaseCellChangeRequest> Changes { get; init; }
+}
+
+/// <summary>One staged inserted row.</summary>
+public sealed record InsertWorkspaceRowRequest
+{
+    [MinLength(1)] public required IReadOnlyList<DatabaseCellChangeRequest> Values { get; init; }
+}
+
+/// <summary>One staged deleted row.</summary>
+public sealed record DeleteWorkspaceRowRequest
+{
+    public required IReadOnlyDictionary<string, string?> Keys { get; init; }
+    [Required] public required string Fingerprint { get; init; }
+}
+
+/// <summary>Atomic set of pending grid changes.</summary>
+public sealed record ApplyTableChangesRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(255)] public required string ObjectName { get; init; }
+    public IReadOnlyList<InsertWorkspaceRowRequest> Inserts { get; init; } = [];
+    public IReadOnlyList<UpdateWorkspaceRowRequest> Updates { get; init; } = [];
+    public IReadOnlyList<DeleteWorkspaceRowRequest> Deletes { get; init; } = [];
+}
+
+/// <summary>Result of one atomic grid save.</summary>
+public sealed record ApplyTableChangesResponse(int Inserted, int Updated, int Deleted, string Message);
+
+/// <summary>Read-only DDL representation for one database object.</summary>
+public sealed record DatabaseDdlResponse(string Schema, string Name, string Sql);
+
+public sealed record ExportWorkspaceCsvRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(255)] public required string ObjectName { get; init; }
+    public int? NodeId { get; init; }
+    [Range(1, 1_000_000)] public int Page { get; init; } = 1;
+    [Range(1, 500)] public int PageSize { get; init; } = 50;
+    [MaxLength(8000)] public string? Where { get; init; }
+    [MaxLength(4000)] public string? OrderBy { get; init; }
+    public bool CurrentPageOnly { get; init; } = true;
+}
+
+public sealed record CsvImportPreviewResponse(
+    IReadOnlyList<string> Headers, IReadOnlyList<IReadOnlyList<string?>> Rows, bool IsTruncated);
+
+public sealed record CsvImportResponse(int Imported, string Message);

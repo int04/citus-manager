@@ -1,3 +1,4 @@
+using System.Data;
 using System.Security.Claims;
 using CitusManager.Contracts;
 using CitusManager.Models;
@@ -11,9 +12,123 @@ namespace CitusManager.Controllers;
 [Authorize, Route("Clusters/{clusterId:guid}/Database")]
 public sealed class DatabaseController(
     IDatabaseExplorerService explorer,
+    IDatabaseWorkspaceService workspaces,
     IDatabaseObjectService objects,
     IOperationService operations) : Controller
 {
+    [HttpGet("Workspaces/Metadata")]
+    public async Task<IActionResult> WorkspaceMetadata(Guid clusterId, int? nodeId, string schema, string name, CancellationToken cancellationToken)
+    {
+        NoStore();
+        try { return Ok(await workspaces.GetMetadataAsync(clusterId, nodeId, schema, name,
+            User.IsInRole("Operator") || User.IsInRole("Admin"), cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không đọc được workspace metadata", "Database từ chối yêu cầu."); }
+    }
+
+    [HttpPost("Rows/Query"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> QueryRows(Guid clusterId, [FromBody] QueryWorkspaceRowsRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await workspaces.QueryAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "WHERE/ORDER BY không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không thể tải dữ liệu", "PostgreSQL từ chối query workspace."); }
+    }
+
+    [HttpPost("Rows/Count"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> CountRows(Guid clusterId, [FromBody] CountWorkspaceRowsRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await workspaces.CountAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "WHERE không hợp lệ", exception.Message); }
+        catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
+        { return SafeDatabaseProblem("Không thể đếm dữ liệu", exception); }
+    }
+
+    [HttpPost("Rows/Apply"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> ApplyRows(Guid clusterId, [FromBody] ApplyTableChangesRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await workspaces.ApplyAsync(clusterId, request, ActorId(), cancellationToken)); }
+        catch (DBConcurrencyException) { return DatabaseMutationProblem(409, "Dữ liệu đã thay đổi", "Refresh workspace và áp dụng lại thay đổi."); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
+        catch (InvalidOperationException exception) { return DatabaseMutationProblem(409, "Không thể lưu", exception.Message); }
+        catch (PostgresException exception) { return DatabaseMutationProblem(422, "PostgreSQL từ chối thay đổi", exception.MessageText, exception.SqlState); }
+    }
+
+    [HttpPost("Rows/Cell"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> ReadCell(Guid clusterId, [FromBody] ReadWorkspaceCellRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await workspaces.ReadCellAsync(clusterId, request, cancellationToken)); }
+        catch (DBConcurrencyException) { return DatabaseMutationProblem(409, "Dữ liệu đã thay đổi", "Refresh workspace trước khi edit."); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Cell không hợp lệ", exception.Message); }
+        catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
+        { return SafeDatabaseProblem("Không thể tải full cell", exception); }
+    }
+
+    [HttpGet("Objects/Ddl")]
+    public async Task<IActionResult> ObjectDdl(Guid clusterId, string schema, string name, CancellationToken cancellationToken)
+    {
+        NoStore();
+        try { return Ok(await workspaces.GetDdlAsync(clusterId, schema, name, cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không dựng được DDL", "Database từ chối catalog query."); }
+    }
+
+    [HttpPost("Csv/Export"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> ExportCsv(
+        Guid clusterId, [FromBody] ExportWorkspaceCsvRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try
+        {
+            Response.ContentType = "text/csv; charset=utf-8";
+            Response.Headers.ContentDisposition = $"attachment; filename=\"{request.Schema}.{request.ObjectName}.csv\"";
+            await workspaces.ExportCsvAsync(clusterId, request, Response.Body, cancellationToken);
+            return new EmptyResult();
+        }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Không thể export CSV", exception.Message); }
+        catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
+        { return SafeDatabaseProblem("Không thể export CSV", exception); }
+    }
+
+    [HttpPost("Csv/Preview"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    [RequestFormLimits(MultipartBodyLengthLimit = 26_214_400)]
+    public async Task<IActionResult> PreviewCsv(IFormFile file, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (file.Length is <= 0 or > 26_214_400)
+            return DatabaseMutationProblem(400, "CSV không hợp lệ", "File phải lớn hơn 0 và không vượt 25 MiB.");
+        try { await using var stream = file.OpenReadStream(); return Ok(await workspaces.PreviewCsvAsync(stream, cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "CSV không hợp lệ", exception.Message); }
+    }
+
+    [HttpPost("Csv/Import"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    [RequestFormLimits(MultipartBodyLengthLimit = 26_214_400)]
+    public async Task<IActionResult> ImportCsv(
+        Guid clusterId, [FromForm] string schema, [FromForm] string objectName, IFormFile file, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (file.Length is <= 0 or > 26_214_400)
+            return DatabaseMutationProblem(400, "CSV không hợp lệ", "File phải lớn hơn 0 và không vượt 25 MiB.");
+        try
+        {
+            await using var stream = file.OpenReadStream();
+            return Ok(await workspaces.ImportCsvAsync(clusterId, schema, objectName, stream, ActorId(), cancellationToken));
+        }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "CSV không hợp lệ", exception.Message); }
+        catch (InvalidOperationException exception) { return DatabaseMutationProblem(409, "Không thể import CSV", exception.Message); }
+        catch (PostgresException exception) { return DatabaseMutationProblem(422, "PostgreSQL từ chối CSV", exception.MessageText, exception.SqlState); }
+    }
     [HttpGet("")]
     public async Task<IActionResult> Index(
         Guid clusterId, int? nodeId, bool showSystem, CancellationToken cancellationToken)
@@ -234,7 +349,7 @@ public sealed class DatabaseController(
     {
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
-        if (!request.Confirmed)
+        if (request.NodeId is null && !request.Confirmed)
             return Problem(statusCode: StatusCodes.Status400BadRequest, title: "Chưa xác nhận thực thi SQL",
                 detail: "Xác nhận đúng coordinator/database trước khi chạy.");
         try

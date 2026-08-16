@@ -267,9 +267,10 @@ public sealed class DatabaseExplorerService(
     public async Task<SqlExecutionResponse> ExecuteSqlAsync(
         Guid clusterId, ExecuteSqlRequest request, Guid actorId, CancellationToken cancellationToken)
     {
-        if (!request.Confirmed) throw new ArgumentException("SQL execution must be confirmed.");
+        if (request.NodeId is null && !request.Confirmed) throw new ArgumentException("SQL execution must be confirmed.");
         if (string.IsNullOrWhiteSpace(request.Sql)) throw new ArgumentException("SQL is required.");
-        var target = await ResolveTargetAsync(clusterId, null, cancellationToken);
+        var target = await ResolveTargetAsync(clusterId, request.NodeId, cancellationToken);
+        if (!target.IsCoordinator) DatabaseWorkspaceQueryValidator.ValidateReadOnlySql(request.Sql);
         var queryHash = DatabaseExplorerSafety.QueryHash(request.Sql);
         var watch = Stopwatch.StartNew();
         var success = false;
@@ -280,7 +281,13 @@ public sealed class DatabaseExplorerService(
         try
         {
             await using var connection = await OpenAsync(target, cancellationToken);
-            await using var command = new NpgsqlCommand(request.Sql, connection)
+            await using var transaction = target.IsCoordinator ? null : await connection.BeginTransactionAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                await using var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction);
+                await readOnly.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await using var command = new NpgsqlCommand(request.Sql, connection, transaction)
             {
                 CommandTimeout = options.CommandTimeoutSeconds
             };
@@ -310,6 +317,7 @@ public sealed class DatabaseExplorerService(
             } while (await reader.NextResultAsync(cancellationToken));
             commandTags.AddRange(DatabaseExplorerSafety.CommandTags(request.Sql));
             affected = reader.RecordsAffected;
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken);
             success = true;
             return new(resultSets, commandTags, affected, resultSetLimitReached, watch.Elapsed, queryHash);
         }
@@ -325,7 +333,9 @@ public sealed class DatabaseExplorerService(
                     durationMs = (long)watch.Elapsed.TotalMilliseconds,
                     resultSets = resultSets.Count,
                     commandTags,
-                    recordsAffected = affected
+                    recordsAffected = affected,
+                    nodeId = request.NodeId,
+                    readOnly = !target.IsCoordinator
                 }));
             await db.SaveChangesAsync(CancellationToken.None);
         }

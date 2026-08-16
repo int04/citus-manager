@@ -4,11 +4,21 @@
 }
 
 <div class="database-page pma-explorer" data-database-explorer
+     data-workspace-user="@User.Identity?.Name"
      data-browse-url="@Url.Action("Browse", "Database", new { clusterId = Model.Cluster.Id })"
      data-structure-url="@Url.Action("Structure", "Database", new { clusterId = Model.Cluster.Id })"
      data-sql-url="@Url.Action("ExecuteSql", "Database", new { clusterId = Model.Cluster.Id })"
      data-tree-url="@Url.Action("Tree", "Database", new { clusterId = Model.Cluster.Id })"
      data-tree-children-url="@Url.Action("TreeChildren", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-metadata-url="@Url.Action("WorkspaceMetadata", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-query-url="@Url.Action("QueryRows", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-count-url="@Url.Action("CountRows", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-cell-url="@Url.Action("ReadCell", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-apply-url="@Url.Action("ApplyRows", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-ddl-url="@Url.Action("ObjectDdl", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-csv-preview-url="@Url.Action("PreviewCsv", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-csv-import-url="@Url.Action("ImportCsv", "Database", new { clusterId = Model.Cluster.Id })"
+     data-workspace-csv-export-url="@Url.Action("ExportCsv", "Database", new { clusterId = Model.Cluster.Id })"
      data-metadata-url="@Url.Action("ActionMetadata", "Database", new { clusterId = Model.Cluster.Id })"
      data-view-definition-url="@Url.Action("ViewDefinition", "Database", new { clusterId = Model.Cluster.Id })"
      data-sequence-inspect-url="@Url.Action("InspectSequence", "Database", new { clusterId = Model.Cluster.Id })"
@@ -103,68 +113,24 @@
             <div id="database-tree-content"><partial name="_Tree" model="Model" /></div>
         </aside>
 
-        <section class="database-content pma-content" aria-live="polite">
-            <div class="pma-context-bar">
-                <div class="pma-context-primary">
-                    <nav class="database-tabs pma-main-tabs" aria-label="Chức năng database" role="tablist">
-                        <button type="button" class="is-active" data-database-tab="data" role="tab" aria-selected="true">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16v14H4zM4 9h16M9 9v10"/></svg>
-                            Duyệt
-                        </button>
-                        <button type="button" data-database-tab="structure" role="tab" aria-selected="false">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
-                            Cấu trúc
-                        </button>
-                        @if (Model.IsCoordinator && Model.CanOperate)
-                        {
-                            <button type="button" data-database-tab="sql" role="tab" aria-selected="false">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></svg>
-                                SQL
-                            </button>
-                        }
-                    </nav>
-                </div>
-                <label class="pma-page-size" for="database-page-size">
-                    <span>Số hàng:</span>
-                    <select id="database-page-size">
-                        @foreach (var size in Model.AllowedPageSizes) { <option value="@size" selected="@(size == 50)">@size</option> }
-                    </select>
-                </label>
-            </div>
-
+        <section class="database-content pma-content database-workspace-host" aria-live="polite">
+            <nav id="database-workspace-tabs" class="database-workspace-tabs" role="tablist" aria-label="Không gian làm việc"></nav>
             <div id="database-feedback" class="connection-result error hidden" role="alert" tabindex="-1"></div>
-            <div id="database-result" class="database-result pma-result-area">
-                <div class="empty-state pma-welcome-state">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
-                    <h3>Chọn một đối tượng từ cây điều hướng</h3>
-                    <p>Mở schema bên trái, sau đó chọn bảng, view hoặc sequence để duyệt dữ liệu và cấu trúc.</p>
+            <div id="database-workspace-stage" class="database-workspace-stage">
+                <div id="database-workspace-empty" class="empty-state pma-welcome-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 9v11"/></svg>
+                    <h3>Chưa có không gian làm việc</h3>
+                    <p>Click table/view trong cây hoặc mở Query Console từ context menu.</p>
                 </div>
+                <div id="database-workspace-content" class="database-workspace-content hidden"></div>
             </div>
-
-            @if (Model.IsCoordinator && Model.CanOperate)
-            {
-                <section id="sql-console" class="sql-console pma-sql-console hidden" aria-labelledby="sql-console-title">
-                    <div class="pma-section-title">
-                        <div><h2 id="sql-console-title">Chạy truy vấn SQL trên database <strong>@Model.Cluster.Database</strong></h2><p>Nhập một hoặc nhiều câu lệnh SQL.</p></div>
-                    </div>
-                    <div class="warning-callout"><strong>Quyền lực đầy đủ:</strong> SQL chạy trực tiếp trên coordinator bằng credential đã lưu. DML, DDL và multi-statement đều được phép.</div>
-                    <label class="pma-editor-label" for="sql-editor">Câu lệnh SQL</label>
-                    <textarea id="sql-editor" spellcheck="false" placeholder="SELECT * FROM public.my_table LIMIT 100;"></textarea>
-                    <div class="sql-actions">
-                        <span>Timeout @Model.CommandTimeoutSeconds s · tối đa @Model.MaxRowsPerResultSet.ToString("N0") hàng/result set</span>
-                        <div>
-                            <button type="button" class="btn btn-ghost hidden" id="cancel-sql-button">Dừng query</button>
-                            <button type="button" class="btn btn-primary" id="prepare-sql-button">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 5 8 7-8 7V5Z"/></svg>
-                                Thực thi
-                            </button>
-                        </div>
-                    </div>
-                    <div id="sql-result" class="pma-sql-result"></div>
-                </section>
-            }
         </section>
     </div>
+
+    <footer id="database-workspace-status" class="database-workspace-status" aria-live="polite">
+        <div class="database-workspace-path"><span>Database</span><b>›</b><span>@Model.TargetLabel</span><b>›</b><strong>@Model.Cluster.Database</strong></div>
+        <div id="database-workspace-statistics" class="database-workspace-statistics">0 row · 0 column · 0 cell</div>
+    </footer>
 
     @if (Model.IsCoordinator && Model.CanOperate)
     {
@@ -209,5 +175,6 @@
 </div>
 
 @section Scripts {
+    <script src="~/js/database-workspaces.js" asp-append-version="true"></script>
     <script src="~/js/database-explorer-actions.js" asp-append-version="true"></script>
 }

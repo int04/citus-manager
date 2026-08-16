@@ -1538,9 +1538,11 @@
     const target = currentTarget();
     try {
       if (action === "refresh") { await refreshTree(); showToast("Đã refresh cây database."); return; }
-      if (action === "query") { document.querySelector("[data-database-tab=sql]")?.click(); return; }
+      if (action === "query") { window.databaseWorkspaces?.openQuery(); return; }
       if (action === "browse" || action === "structure") {
-        contextNode.click(); document.querySelector(`[data-database-tab=${action === "browse" ? "data" : "structure"}]`)?.click(); return;
+        if (action === "browse") window.databaseWorkspaces?.openObject(target.schema, target.name, "data");
+        else window.databaseWorkspaces?.openStructure(target.schema, target.name);
+        return;
       }
       if (action.startsWith("create-")) { await openCreate(action.slice(7), target); return; }
       if (action === "inspect-sequence") {
