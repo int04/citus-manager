@@ -24,6 +24,14 @@ public static class OperationEndpoints
             })
             .WithName("GetOperation").WithSummary("Get operation plan, state, and checkpoints");
 
+        group.MapGet("/{id:guid}/progress", async Task<Results<Ok<OperationProgressResponse>, NotFound>> (
+                Guid id, IOperationService service, CancellationToken cancellationToken) =>
+            {
+                var progress = await service.GetProgressAsync(id, cancellationToken);
+                return progress is null ? TypedResults.NotFound() : TypedResults.Ok(progress);
+            })
+            .WithName("GetOperationProgress").WithSummary("Poll durable operation progress");
+
         group.MapPost("/clusters/{clusterId:guid}", async Task<Accepted<OperationResponse>> (
                 Guid clusterId, CreateOperationRequest request, ClaimsPrincipal user,
                 IOperationService service, CancellationToken cancellationToken) =>

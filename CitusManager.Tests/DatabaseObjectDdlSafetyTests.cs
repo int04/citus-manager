@@ -329,11 +329,74 @@ public sealed class DatabaseObjectDdlSafetyTests
         var plan = JsonSerializer.Deserialize<OperationPlan>(json, options);
         Assert.NotNull(plan);
         Assert.Null(plan.TableConversion);
+        Assert.Equal(1, plan.PlanVersion);
     }
 
     [Fact]
     public void Convert_table_is_impact_risk() =>
         Assert.Equal(OperationRisk.Impact, OperationSafety.RiskFor(OperationKind.ConvertTable));
+
+    [Fact]
+    public void List_partition_requires_unique_typed_values()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            PartitionStrategy = DatabasePartitionStrategy.List,
+            PartitionKey = "tenant_id",
+            ListPartitions =
+            [
+                new() { Name = "events_one", Values = ["1", "2"] },
+                new() { Name = "events_two", Values = ["2", "3"] }
+            ]
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Valid_list_partition_groups_pass()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            PartitionStrategy = DatabasePartitionStrategy.List,
+            PartitionKey = "tenant_id",
+            ListPartitions =
+            [
+                new() { Name = "events_small", Values = ["1", "2"] },
+                new() { Name = "events_large", Values = ["3", "4"] }
+            ]
+        };
+        DatabaseObjectDdlSafety.ValidateCreateTable(request);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(129)]
+    public void Hash_partition_rejects_unsafe_modulus(int modulus)
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            PartitionStrategy = DatabasePartitionStrategy.Hash,
+            PartitionKey = "tenant_id",
+            HashModulus = modulus
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Hash_partition_accepts_128_remainders()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            PartitionStrategy = DatabasePartitionStrategy.Hash,
+            PartitionKey = "tenant_id",
+            HashModulus = 128
+        };
+        DatabaseObjectDdlSafety.ValidateCreateTable(request);
+    }
 
     private static CreateTableRequest Table(DatabaseTableMode mode, string distributionColumn) => new()
     {

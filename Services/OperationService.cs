@@ -19,7 +19,16 @@ public sealed record OperationPlan(
     long? PlacementsOnTarget,
     IReadOnlyList<string> Warnings,
     DateTimeOffset CreatedAt,
-    TableConversionPlan? TableConversion = null);
+    TableConversionPlan? TableConversion = null,
+    int PlanVersion = 1,
+    RangePartitionPlan? RangePartitions = null,
+    MergePartitionPlan? MergePartitions = null,
+    RebuildIndexPlan? RebuildIndex = null,
+    InspectTablePlan? InspectTable = null,
+    ChangeTableModePlan? ChangeTableMode = null,
+    CreatePartitionedTablePlan? CreatePartitionedTable = null);
+
+public sealed record CreatePartitionedTablePlan(CreateTableRequest Request);
 
 public sealed record TableConversionPlan(
     string Schema,
@@ -39,6 +48,13 @@ public interface IOperationService
     Task<OperationResponse> CreateAsync(Guid clusterId, CreateOperationRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> CreateTableConversionAsync(
         Guid clusterId, CreateTableConversionOperationRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> CreateRangePartitionsAsync(Guid clusterId, CreateRangePartitionsRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> CreatePartitionedTableAsync(Guid clusterId, CreateTableRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> CreateMergePartitionsAsync(Guid clusterId, MergeRangePartitionsRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> CreateInspectTableAsync(Guid clusterId, InspectTableOperationRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> CreateRebuildIndexAsync(Guid clusterId, RebuildIndexRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> CreateChangeTableModeAsync(Guid clusterId, ChangeTableModeRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationProgressResponse?> GetProgressAsync(Guid id, CancellationToken cancellationToken);
     Task<OperationResponse> ApproveAsync(Guid id, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> CancelAsync(Guid id, Guid actorId, CancellationToken cancellationToken);
 }
@@ -46,7 +62,8 @@ public interface IOperationService
 public sealed class OperationService(
     ControlDbContext db,
     ICitusInspector inspector,
-    ICitusMutator mutator) : IOperationService
+    ICitusMutator mutator,
+    IDatabaseMaintenanceService maintenance) : IOperationService
 {
     public async Task<IReadOnlyList<OperationResponse>> GetAllAsync(
         Guid? clusterId, CancellationToken cancellationToken)
@@ -62,6 +79,125 @@ public sealed class OperationService(
         var operation = await db.Operations.AsNoTracking().Include(x => x.Steps)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         return operation is null ? null : Map(operation);
+    }
+
+    public async Task<OperationProgressResponse?> GetProgressAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var operation = await db.Operations.AsNoTracking().Include(x => x.Steps)
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (operation is null) return null;
+        int? current = null, total = null;
+        long? processed = null, totalBytes = null, exactRows = null, exactBytes = null;
+        string? warning = null, resultSchema = null, resultTable = null;
+        if (!string.IsNullOrWhiteSpace(operation.ResultJson))
+        {
+            try
+            {
+                using var result = JsonDocument.Parse(operation.ResultJson);
+                var root = result.RootElement;
+                if (root.TryGetProperty("currentItems", out var currentValue) && currentValue.TryGetInt32(out var currentNumber)) current = currentNumber;
+                if (root.TryGetProperty("totalItems", out var totalValue) && totalValue.TryGetInt32(out var totalNumber)) total = totalNumber;
+                if (root.TryGetProperty("processedBytes", out var processedValue) && processedValue.TryGetInt64(out var processedNumber)) processed = processedNumber;
+                if (root.TryGetProperty("totalBytes", out var bytesValue) && bytesValue.TryGetInt64(out var bytesNumber)) totalBytes = bytesNumber;
+                if (root.TryGetProperty("warning", out var warningValue)) warning = warningValue.GetString();
+                if (root.TryGetProperty("Schema", out var schemaValue) || root.TryGetProperty("schema", out schemaValue)) resultSchema = schemaValue.GetString();
+                if (root.TryGetProperty("Table", out var tableValue) || root.TryGetProperty("table", out tableValue)) resultTable = tableValue.GetString();
+                if (root.TryGetProperty("exactRows", out var rowsValue) && rowsValue.ValueKind != JsonValueKind.Null && rowsValue.TryGetInt64(out var rowsNumber)) exactRows = rowsNumber;
+                if (root.TryGetProperty("exactBytes", out var exactBytesValue) && exactBytesValue.ValueKind != JsonValueKind.Null && exactBytesValue.TryGetInt64(out var exactBytesNumber)) exactBytes = exactBytesNumber;
+            }
+            catch (JsonException) { }
+        }
+        var steps = operation.Steps.OrderBy(x => x.Sequence).Select(x => new OperationStepResponse(
+            x.Sequence, x.Name, x.Status, x.Detail, x.StartedAt, x.CompletedAt)).ToList();
+        var phase = steps.LastOrDefault()?.Name ?? operation.Status.ToString();
+        TimeSpan? elapsed = operation.StartedAt.HasValue
+            ? (operation.CompletedAt ?? DateTimeOffset.UtcNow) - operation.StartedAt.Value : null;
+        var canCancel = operation.Status is OperationStatus.AwaitingApproval or OperationStatus.Approved ||
+                        operation.Status == OperationStatus.Running && operation.Kind is OperationKind.CreateRangePartitions or OperationKind.InspectTable;
+        return new(operation.Id, operation.Kind, operation.Risk, operation.Status, phase, current, total,
+            processed, totalBytes, elapsed, canCancel, warning, operation.SafeError, steps,
+            resultSchema, resultTable, exactRows, exactBytes);
+    }
+
+    public async Task<OperationResponse> CreateRangePartitionsAsync(
+        Guid clusterId, CreateRangePartitionsRequest request, Guid actorId, CancellationToken cancellationToken)
+    {
+        var range = await maintenance.BuildRangePlanAsync(clusterId, request, cancellationToken);
+        if (range.Items.Any(x => x.Status == "Conflict")) throw new InvalidOperationException("Partition preflight contains overlapping ranges.");
+        var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
+        var plan = NewPlan(OperationKind.CreateRangePartitions, inventory, range.Warnings, rangePartitions: range);
+        return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.CreateRangePartitions,
+            OperationRisk.Write, plan, autoApprove: true, cancellationToken);
+    }
+
+    public async Task<OperationResponse> CreatePartitionedTableAsync(
+        Guid clusterId, CreateTableRequest request, Guid actorId, CancellationToken cancellationToken)
+    {
+        DatabaseObjectDdlSafety.ValidateCreateTable(request);
+        if (request.PartitionStrategy is not (DatabasePartitionStrategy.List or DatabasePartitionStrategy.Hash))
+            throw new ArgumentException("Durable partitioned table creation requires LIST or HASH strategy.");
+        try
+        {
+            _ = await maintenance.GetTableInformationAsync(clusterId, request.Schema, request.Name, cancellationToken);
+            throw new InvalidOperationException("Table already exists.");
+        }
+        catch (KeyNotFoundException) { }
+        var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
+        var count = request.PartitionStrategy == DatabasePartitionStrategy.Hash
+            ? request.HashModulus!.Value : request.ListPartitions.Count;
+        var warnings = new List<string>
+        {
+            $"This operation creates {count} logical child partitions after the parent and Citus layout.",
+            "Review shard × partition × placement × index relation count before approval."
+        };
+        var plan = NewPlan(OperationKind.CreatePartitionedTable, inventory, warnings,
+            createPartitionedTable: new(request));
+        return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.CreatePartitionedTable,
+            OperationRisk.Write, plan, autoApprove: true, cancellationToken);
+    }
+
+    public async Task<OperationResponse> CreateMergePartitionsAsync(
+        Guid clusterId, MergeRangePartitionsRequest request, Guid actorId, CancellationToken cancellationToken)
+    {
+        var merge = await maintenance.BuildMergePlanAsync(clusterId, request, cancellationToken);
+        var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
+        var plan = NewPlan(OperationKind.MergeRangePartitions, inventory, merge.Warnings, mergePartitions: merge);
+        return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.MergeRangePartitions,
+            OperationRisk.Impact, plan, autoApprove: false, cancellationToken);
+    }
+
+    public async Task<OperationResponse> CreateInspectTableAsync(
+        Guid clusterId, InspectTableOperationRequest request, Guid actorId, CancellationToken cancellationToken)
+    {
+        DatabaseObjectDdlSafety.ValidateIdentifier(request.Schema, nameof(request.Schema));
+        DatabaseObjectDdlSafety.ValidateIdentifier(request.Table, nameof(request.Table));
+        if (!request.ExactRowCount && !request.ExactPlacementSizes) throw new ArgumentException("Select at least one exact inspection.");
+        _ = await maintenance.GetTableInformationAsync(clusterId, request.Schema, request.Table, cancellationToken);
+        var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
+        var inspect = new InspectTablePlan(request.Schema, request.Table, request.ExactRowCount, request.ExactPlacementSizes);
+        var plan = NewPlan(OperationKind.InspectTable, inventory, ["Exact inspection can be expensive and remains cancellable."], inspectTable: inspect);
+        return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.InspectTable,
+            OperationRisk.Read, plan, autoApprove: true, cancellationToken);
+    }
+
+    public async Task<OperationResponse> CreateRebuildIndexAsync(
+        Guid clusterId, RebuildIndexRequest request, Guid actorId, CancellationToken cancellationToken)
+    {
+        var rebuild = await maintenance.BuildReindexPlanAsync(clusterId, request, cancellationToken);
+        var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
+        var plan = NewPlan(OperationKind.RebuildIndex, inventory, rebuild.Warnings, rebuildIndex: rebuild);
+        return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.RebuildIndex,
+            rebuild.Concurrently ? OperationRisk.Impact : OperationRisk.Destructive, plan, autoApprove: false, cancellationToken);
+    }
+
+    public async Task<OperationResponse> CreateChangeTableModeAsync(
+        Guid clusterId, ChangeTableModeRequest request, Guid actorId, CancellationToken cancellationToken)
+    {
+        var change = await maintenance.BuildModePlanAsync(clusterId, request, cancellationToken);
+        var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
+        var plan = NewPlan(OperationKind.ChangeTableMode, inventory, change.Warnings, changeTableMode: change);
+        return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.ChangeTableMode,
+            OperationRisk.Impact, plan, autoApprove: false, cancellationToken);
     }
 
     public async Task<OperationResponse> CreateAsync(
@@ -226,6 +362,49 @@ public sealed class OperationService(
         return Map(operation);
     }
 
+    private async Task<ClusterInventoryResponse> ReadInventoryAsync(Guid clusterId, CancellationToken cancellationToken)
+    {
+        var cluster = await db.Clusters.AsNoTracking().SingleOrDefaultAsync(x => x.Id == clusterId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cluster not found.");
+        return await inspector.CollectAsync(cluster, cancellationToken);
+    }
+
+    private static OperationPlan NewPlan(
+        OperationKind kind, ClusterInventoryResponse inventory, IReadOnlyList<string> warnings,
+        RangePartitionPlan? rangePartitions = null, MergePartitionPlan? mergePartitions = null,
+        RebuildIndexPlan? rebuildIndex = null, InspectTablePlan? inspectTable = null,
+        ChangeTableModePlan? changeTableMode = null,
+        CreatePartitionedTablePlan? createPartitionedTable = null) =>
+        new(kind, null, null, inventory.Capability.CitusVersion, inventory.Capability.Functions,
+            "[]", null, warnings, DateTimeOffset.UtcNow, PlanVersion: 2,
+            RangePartitions: rangePartitions, MergePartitions: mergePartitions,
+            RebuildIndex: rebuildIndex, InspectTable: inspectTable, ChangeTableMode: changeTableMode,
+            CreatePartitionedTable: createPartitionedTable);
+
+    private async Task<OperationResponse> SavePlannedOperationAsync(
+        Guid clusterId, Guid actorId, OperationKind kind, OperationRisk risk, OperationPlan plan,
+        bool autoApprove, CancellationToken cancellationToken)
+    {
+        var planJson = JsonSerializer.Serialize(plan);
+        var operation = new ClusterOperation
+        {
+            ClusterId = clusterId,
+            Kind = kind,
+            Risk = risk,
+            Status = autoApprove ? OperationStatus.Approved : OperationStatus.AwaitingApproval,
+            PlanJson = planJson,
+            PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
+            RequestedBy = actorId,
+            ApprovedBy = autoApprove ? actorId : null,
+            ApprovedAt = autoApprove ? DateTimeOffset.UtcNow : null
+        };
+        db.Operations.Add(operation);
+        db.AuditEvents.Add(ClusterService.Audit(actorId, "operation.request", "operation", operation.Id,
+            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, AutoApproved = autoApprove }));
+        await db.SaveChangesAsync(cancellationToken);
+        return Map(operation);
+    }
+
     private async Task<ClusterOperation> LoadAsync(Guid id, CancellationToken cancellationToken) =>
         await db.Operations.Include(x => x.Steps).SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
         ?? throw new KeyNotFoundException("Operation not found.");
@@ -292,6 +471,9 @@ internal static class OperationSafety
         OperationKind.Rebalance or OperationKind.DrainWorker => OperationRisk.Impact,
         OperationKind.RemoveWorker => OperationRisk.Destructive,
         OperationKind.ConvertTable => OperationRisk.Impact,
+        OperationKind.CreatePartitionedTable or OperationKind.CreateRangePartitions => OperationRisk.Write,
+        OperationKind.InspectTable => OperationRisk.Read,
+        OperationKind.MergeRangePartitions or OperationKind.RebuildIndex or OperationKind.ChangeTableMode => OperationRisk.Impact,
         _ => OperationRisk.Impact
     };
 }

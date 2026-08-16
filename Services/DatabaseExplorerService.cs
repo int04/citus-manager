@@ -87,7 +87,8 @@ public sealed class DatabaseExplorerService(
                     ('partitions', (SELECT count(*) FROM pg_inherits inheritance
                                     WHERE inheritance.inhparent = c.oid))
                 ) AS catalog_group(name, item_count)
-                WHERE n.nspname = $1 AND c.relname = $2 AND catalog_group.item_count > 0
+                WHERE n.nspname = $1 AND c.relname = $2
+                  AND (catalog_group.item_count > 0 OR (catalog_group.name='partitions' AND c.relkind='p'))
                 """,
             "columns" => """
                 SELECT a.attname, format_type(a.atttypid, a.atttypmod) ||

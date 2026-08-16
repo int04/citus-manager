@@ -6,14 +6,21 @@ public enum OperationKind
     Rebalance,
     DrainWorker,
     RemoveWorker,
-    ConvertTable
+    ConvertTable,
+    CreatePartitionedTable,
+    CreateRangePartitions,
+    MergeRangePartitions,
+    InspectTable,
+    RebuildIndex,
+    ChangeTableMode
 }
 
 public enum OperationRisk
 {
     Write,
     Impact,
-    Destructive
+    Destructive,
+    Read
 }
 
 public enum OperationStatus

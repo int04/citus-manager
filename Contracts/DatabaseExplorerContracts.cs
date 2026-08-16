@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using CitusManager.Domain;
 
 namespace CitusManager.Contracts;
 
@@ -17,10 +18,11 @@ public enum DatabaseObjectKind
 /// <summary>Citus placement mode of a table.</summary>
 public enum DatabaseTableMode
 {
-    NotApplicable,
-    Local,
-    Reference,
-    Distributed
+    NotApplicable = 0,
+    Local = 1,
+    Reference = 2,
+    Distributed = 3,
+    ManagedLocal = 4
 }
 
 /// <summary>Action exposed by one database tree node.</summary>
@@ -181,6 +183,13 @@ public enum DatabaseTablePersistence { Persistent, Unlogged }
 /// <summary>Supported declarative partition strategies.</summary>
 public enum DatabasePartitionStrategy { None, Range, List, Hash }
 
+/// <summary>One LIST child partition created with a new partitioned table.</summary>
+public sealed record CreateListPartitionRequest
+{
+    [Required, MaxLength(63)] public required string Name { get; init; }
+    [MinLength(1), MaxLength(1000)] public required IReadOnlyList<string> Values { get; init; }
+}
+
 /// <summary>One role grant applied atomically after table creation.</summary>
 public sealed record CreateTableGrantRequest
 {
@@ -263,6 +272,8 @@ public sealed record CreateTableRequest
     public bool WithOids { get; init; }
     public DatabasePartitionStrategy PartitionStrategy { get; init; }
     [MaxLength(63)] public string? PartitionKey { get; init; }
+    [MaxLength(256)] public IReadOnlyList<CreateListPartitionRequest> ListPartitions { get; init; } = [];
+    [Range(2, 128)] public int? HashModulus { get; init; }
     [Range(10, 100)] public int? FillFactor { get; init; }
     [MaxLength(63)] public string? AccessMethod { get; init; }
     [MaxLength(63)] public string? Tablespace { get; init; }
@@ -359,6 +370,112 @@ public sealed record CreateTableConversionOperationRequest
     public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
     [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
 }
+
+/// <summary>Calendar unit used to generate time RANGE partitions.</summary>
+public enum PartitionIntervalUnit { Day, Week, Month }
+
+/// <summary>One generated RANGE partition preview item.</summary>
+public sealed record PartitionRangePreviewItemResponse(
+    string Name, DateTimeOffset From, DateTimeOffset To, string Status, string? Detail = null);
+
+/// <summary>Read-only preflight for RANGE partition generation.</summary>
+public sealed record PartitionPreflightResponse(
+    string Schema, string Table, string PartitionKey, string PartitionKeyType, string DatabaseTimeZone,
+    string NamingTemplate, int ShardCount, int PlacementCount, int IndexCount, long ProjectedRelationUnits,
+    IReadOnlyList<PartitionRangePreviewItemResponse> Items, IReadOnlyList<string> Warnings, bool CanExecute);
+
+/// <summary>Request used to preview or create calendar-aligned RANGE partitions.</summary>
+public sealed record CreateRangePartitionsRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(63)] public required string Table { get; init; }
+    [Range(1, 366)] public int IntervalCount { get; init; } = 1;
+    public PartitionIntervalUnit IntervalUnit { get; init; } = PartitionIntervalUnit.Month;
+    public DateTimeOffset Target { get; init; }
+    [Required, MaxLength(63)] public required string NamingTemplate { get; init; }
+}
+
+/// <summary>Request for merging adjacent, closed RANGE leaf partitions.</summary>
+public sealed record MergeRangePartitionsRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(63)] public required string Table { get; init; }
+    [MinLength(2), MaxLength(128)] public required IReadOnlyList<string> Partitions { get; init; }
+    [Required, MaxLength(63)] public required string TargetPartition { get; init; }
+    public bool ClosedForWritesAcknowledged { get; init; }
+    public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
+    [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
+}
+
+/// <summary>Request for inspecting a table asynchronously when exact metrics are required.</summary>
+public sealed record InspectTableOperationRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(63)] public required string Table { get; init; }
+    public bool ExactRowCount { get; init; }
+    public bool ExactPlacementSizes { get; init; }
+}
+
+/// <summary>One partition displayed in Table Information.</summary>
+public sealed record TablePartitionInformationResponse(
+    string Schema, string Name, string Bound, string AccessMethod, long EstimatedRows,
+    long TableBytes, long IndexBytes, long TotalBytes,
+    long? ExactRows = null, long? ExactTableBytes = null,
+    long? ExactIndexBytes = null, long? ExactTotalBytes = null);
+
+/// <summary>One index displayed in Table Information or rebuild preflight.</summary>
+public sealed record IndexInformationResponse(
+    string Schema, string Name, string Method, string Definition, bool Unique, bool Primary,
+    bool ConstraintBacked, bool Valid, long Bytes, long Scans, string? ConstraintName,
+    long? ExactBytes = null);
+
+/// <summary>Fast catalog information for one logical table.</summary>
+public sealed record TableInformationResponse(
+    string Database, string Schema, string Name, DatabaseObjectKind Kind, DatabaseTableMode Mode,
+    string Owner, string Persistence, string AccessMethod, string? Tablespace, long EstimatedRows,
+    long TableBytes, long IndexBytes, long TotalBytes, string? DistributionColumn, int ShardCount,
+    int ColocationId, string? ReplicationModel, string? PartitionStrategy, string? PartitionKey,
+    IReadOnlyList<TablePartitionInformationResponse> Partitions,
+    IReadOnlyList<IndexInformationResponse> Indexes, IReadOnlyList<string> Warnings,
+    long? ExactRows = null, long? ExactBytes = null, DateTimeOffset? ExactMeasuredAt = null);
+
+/// <summary>Preflight and execution payload for rebuilding one logical index.</summary>
+public sealed record RebuildIndexRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(63)] public required string Table { get; init; }
+    [Required, MaxLength(63)] public required string Index { get; init; }
+    public bool Concurrently { get; init; } = true;
+    public bool MaintenanceWindowAcknowledged { get; init; }
+    [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
+}
+
+/// <summary>Supported table-mode transition discovered from installed Citus capabilities.</summary>
+public sealed record TableModeTransitionResponse(
+    DatabaseTableMode Source, DatabaseTableMode Target, bool Supported, bool MovesData, string? Reason);
+
+/// <summary>Capability-gated request to change Citus table mode or distributed properties.</summary>
+public sealed record ChangeTableModeRequest
+{
+    [Required, MaxLength(63)] public required string Schema { get; init; }
+    [Required, MaxLength(63)] public required string Table { get; init; }
+    public required DatabaseTableMode TargetMode { get; init; }
+    [MaxLength(63)] public string? DistributionColumn { get; init; }
+    [MaxLength(255)] public string? ColocateWith { get; init; }
+    [Range(1, 4096)] public int? ShardCount { get; init; }
+    public bool CascadeToColocated { get; init; }
+    public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
+    [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
+}
+
+/// <summary>Progress projection safe to poll from the Database page.</summary>
+public sealed record OperationProgressResponse(
+    Guid Id, OperationKind Kind, OperationRisk Risk, OperationStatus Status, string Phase,
+    int? CurrentItems, int? TotalItems, long? ProcessedBytes, long? TotalBytes,
+    TimeSpan? Elapsed, bool CanCancel, string? Warning, string? SafeError,
+    IReadOnlyList<OperationStepResponse> Steps,
+    string? ResultSchema = null, string? ResultTable = null,
+    long? ExactRows = null, long? ExactBytes = null);
 
 /// <summary>One column returned by a database query.</summary>
 public sealed record ResultColumnResponse(string Name, string DataType);

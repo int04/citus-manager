@@ -385,6 +385,31 @@ public sealed class DatabaseObjectService(
                     if (request.Mode != DatabaseTableMode.Local)
                         await ConvertNewTableAsync(connection, transaction, request, cancellationToken);
 
+                    if (request.PartitionStrategy == DatabasePartitionStrategy.List)
+                    {
+                        var partitionType = canonicalTypes[request.Columns.Single(x => x.Name == request.PartitionKey).DataType];
+                        foreach (var partition in request.ListPartitions)
+                        {
+                            var values = string.Join(", ", partition.Values.Select(value =>
+                                $"{DatabaseObjectDdlSafety.QuoteLiteral(value)}::{partitionType}"));
+                            await ExecuteCommandAsync(connection,
+                                $"CREATE TABLE {Qualified(request.Schema, partition.Name)} PARTITION OF {Qualified(request.Schema, request.Name)} FOR VALUES IN ({values})",
+                                cancellationToken, transaction);
+                        }
+                    }
+                    else if (request.PartitionStrategy == DatabasePartitionStrategy.Hash)
+                    {
+                        var modulus = request.HashModulus!.Value;
+                        for (var remainder = 0; remainder < modulus; remainder++)
+                        {
+                            var child = $"{request.Name}_p{remainder:D3}";
+                            DatabaseObjectDdlSafety.ValidateIdentifier(child, nameof(request.HashModulus));
+                            await ExecuteCommandAsync(connection,
+                                $"CREATE TABLE {Qualified(request.Schema, child)} PARTITION OF {Qualified(request.Schema, request.Name)} FOR VALUES WITH (MODULUS {modulus}, REMAINDER {remainder})",
+                                cancellationToken, transaction);
+                        }
+                    }
+
                     if (request.Comment is not null)
                         await ExecuteCommandAsync(connection,
                             $"COMMENT ON TABLE {Qualified(request.Schema, request.Name)} IS {DatabaseObjectDdlSafety.QuoteLiteral(request.Comment)}",
@@ -1265,6 +1290,8 @@ internal static class DatabaseObjectDdlSafety
         if (request.PartitionStrategy == DatabasePartitionStrategy.None)
         {
             if (request.PartitionKey is not null) throw new ArgumentException("Partition key requires a partition strategy.");
+            if (request.ListPartitions.Count > 0 || request.HashModulus.HasValue)
+                throw new ArgumentException("Child partition options require LIST or HASH strategy.");
         }
         else
         {
@@ -1272,6 +1299,37 @@ internal static class DatabaseObjectDdlSafety
             if (!columnNames.Contains(request.PartitionKey!)) throw new ArgumentException("Partition key must exist in the table.");
             if (request.Mode == DatabaseTableMode.Reference) throw new ArgumentException("Reference tables cannot be partitioned by this designer.");
         }
+        if (request.PartitionStrategy == DatabasePartitionStrategy.List)
+        {
+            if (request.HashModulus.HasValue) throw new ArgumentException("HASH modulus cannot be used with LIST partitioning.");
+            if (request.DefinitionFingerprint is null && request.ListPartitions.Count == 0)
+                throw new ArgumentException("LIST partitioning requires at least one child partition.");
+            if (request.ListPartitions.Count > 256 || request.ListPartitions.Sum(x => x.Values.Count) > 1000)
+                throw new ArgumentException("LIST partition limits were exceeded.");
+            foreach (var partition in request.ListPartitions)
+            {
+                ValidateIdentifier(partition.Name, nameof(partition.Name));
+                if (partition.Values.Count == 0 || partition.Values.Any(string.IsNullOrWhiteSpace))
+                    throw new ArgumentException("Each LIST partition requires one or more values.");
+                if (partition.Values.Distinct(StringComparer.Ordinal).Count() != partition.Values.Count)
+                    throw new ArgumentException("LIST values must be unique inside each partition.");
+            }
+            if (request.ListPartitions.SelectMany(x => x.Values).Distinct(StringComparer.Ordinal).Count() !=
+                request.ListPartitions.Sum(x => x.Values.Count))
+                throw new ArgumentException("A LIST value can belong to only one partition.");
+            if (request.ListPartitions.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count() != request.ListPartitions.Count)
+                throw new ArgumentException("LIST partition names must be unique.");
+        }
+        else if (request.ListPartitions.Count > 0)
+            throw new ArgumentException("LIST child definitions require LIST partitioning.");
+        if (request.PartitionStrategy == DatabasePartitionStrategy.Hash)
+        {
+            if (request.DefinitionFingerprint is null && request.HashModulus is null)
+                throw new ArgumentException("HASH partitioning requires a modulus.");
+            if (request.HashModulus is < 2 or > 128) throw new ArgumentException("HASH modulus must be between 2 and 128.");
+        }
+        else if (request.HashModulus.HasValue)
+            throw new ArgumentException("HASH modulus requires HASH partitioning.");
 
         foreach (var grant in request.Grants)
         {

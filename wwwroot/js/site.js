@@ -364,7 +364,7 @@
         const button = document.createElement("button"); button.type = "button";
         button.className = `database-tree-group-row database-tree-group-toggle${group === "partitions" ? " is-partitions" : ""}`;
         button.setAttribute("aria-expanded", "false"); button.dataset.treeGroup = group;
-        if (group !== "partitions") applyTableDesignerContext(button, parentObject, group);
+        applyTableDesignerContext(button, parentObject, group);
         const caret = document.createElement("span"); caret.textContent = "›";
         const icon = document.createElement("span"); icon.className = `database-tree-folder-icon is-${group}`;
         icon.innerHTML = `<i class="fa ${treeGroupIcon(group)}" aria-hidden="true"></i>`;

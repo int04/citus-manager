@@ -30,6 +30,12 @@ public sealed class OperationSafetyTests
     [InlineData(OperationKind.DrainWorker, OperationRisk.Impact)]
     [InlineData(OperationKind.RemoveWorker, OperationRisk.Destructive)]
     [InlineData(OperationKind.ConvertTable, OperationRisk.Impact)]
+    [InlineData(OperationKind.CreatePartitionedTable, OperationRisk.Write)]
+    [InlineData(OperationKind.CreateRangePartitions, OperationRisk.Write)]
+    [InlineData(OperationKind.MergeRangePartitions, OperationRisk.Impact)]
+    [InlineData(OperationKind.InspectTable, OperationRisk.Read)]
+    [InlineData(OperationKind.RebuildIndex, OperationRisk.Impact)]
+    [InlineData(OperationKind.ChangeTableMode, OperationRisk.Impact)]
     public void Operation_risk_is_fixed(OperationKind kind, OperationRisk expected) =>
         Assert.Equal(expected, OperationSafety.RiskFor(kind));
 

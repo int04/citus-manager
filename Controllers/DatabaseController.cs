@@ -21,6 +21,7 @@ public sealed class DatabaseController(
     IDatabaseWorkspaceService workspaces,
     IDatabaseRowInspectionService rowInspector,
     IDatabaseObjectService objects,
+    IDatabaseMaintenanceService maintenance,
     IOperationService operations,
     IStringLocalizer<DatabaseResource> text) : Controller
 {
@@ -295,8 +296,12 @@ public sealed class DatabaseController(
         RunMutationAsync(clusterId, () => objects.CreateSchemaAsync(clusterId, request, ActorId(), cancellationToken), created: true);
 
     [HttpPost("Tables"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
-    public Task<IActionResult> CreateTable(Guid clusterId, CreateTableRequest request, CancellationToken cancellationToken) =>
-        RunMutationAsync(clusterId, () => objects.CreateTableAsync(clusterId, request, ActorId(), cancellationToken), created: true);
+    public async Task<IActionResult> CreateTable(Guid clusterId, CreateTableRequest request, CancellationToken cancellationToken)
+    {
+        if (request.PartitionStrategy is DatabasePartitionStrategy.List or DatabasePartitionStrategy.Hash)
+            return await CreateDatabaseOperationAsync(() => operations.CreatePartitionedTableAsync(clusterId, request, ActorId(), cancellationToken));
+        return await RunMutationAsync(clusterId, () => objects.CreateTableAsync(clusterId, request, ActorId(), cancellationToken), created: true);
+    }
 
     [HttpPost("Tables/Modify"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
     public Task<IActionResult> ModifyTable(Guid clusterId, CreateTableRequest request, CancellationToken cancellationToken) =>
@@ -355,6 +360,112 @@ public sealed class DatabaseController(
         {
             return DatabaseMutationProblem(StatusCodes.Status422UnprocessableEntity, text["Problem.Metadata.Title"], text["Problem.DdlExecute.Detail"]);
         }
+    }
+
+    [HttpGet("Tables/Information")]
+    public async Task<IActionResult> TableInformation(
+        Guid clusterId, string schema, string name, CancellationToken cancellationToken)
+    {
+        NoStore();
+        try { return Ok(await maintenance.GetTableInformationAsync(clusterId, schema, name, cancellationToken)); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
+    }
+
+    [HttpPost("Tables/Information/Exact"), ValidateAntiForgeryToken]
+    public Task<IActionResult> InspectTableExact(
+        Guid clusterId, [FromBody] InspectTableOperationRequest request, CancellationToken cancellationToken) =>
+        CreateDatabaseOperationAsync(() => operations.CreateInspectTableAsync(clusterId, request, ActorId(), cancellationToken));
+
+    [HttpPost("Partitions/Range/Preflight"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> PreflightRangePartitions(
+        Guid clusterId, [FromBody] CreateRangePartitionsRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await maintenance.PreflightRangeAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
+    }
+
+    [HttpPost("Partitions/Range/Operations"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public Task<IActionResult> CreateRangePartitionsOperation(
+        Guid clusterId, [FromBody] CreateRangePartitionsRequest request, CancellationToken cancellationToken) =>
+        CreateDatabaseOperationAsync(() => operations.CreateRangePartitionsAsync(clusterId, request, ActorId(), cancellationToken));
+
+    [HttpPost("Partitions/Merge/Preflight"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> PreflightMergePartitions(
+        Guid clusterId, [FromBody] MergeRangePartitionsRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await maintenance.BuildMergePlanAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
+    }
+
+    [HttpPost("Partitions/Merge/Operations"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public Task<IActionResult> CreateMergePartitionsOperation(
+        Guid clusterId, [FromBody] MergeRangePartitionsRequest request, CancellationToken cancellationToken) =>
+        CreateDatabaseOperationAsync(() => operations.CreateMergePartitionsAsync(clusterId, request, ActorId(), cancellationToken));
+
+    [HttpPost("Indexes/Rebuild/Preflight"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> PreflightRebuildIndex(
+        Guid clusterId, [FromBody] RebuildIndexRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await maintenance.BuildReindexPlanAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
+    }
+
+    [HttpPost("Indexes/Rebuild/Operations"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public Task<IActionResult> CreateRebuildIndexOperation(
+        Guid clusterId, [FromBody] RebuildIndexRequest request, CancellationToken cancellationToken) =>
+        CreateDatabaseOperationAsync(() => operations.CreateRebuildIndexAsync(clusterId, request, ActorId(), cancellationToken));
+
+    [HttpPost("Tables/Mode/Preflight"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> PreflightTableMode(
+        Guid clusterId, [FromBody] ChangeTableModeRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await maintenance.BuildModePlanAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
+    }
+
+    [HttpPost("Tables/Mode/Operations"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public Task<IActionResult> CreateTableModeOperation(
+        Guid clusterId, [FromBody] ChangeTableModeRequest request, CancellationToken cancellationToken) =>
+        CreateDatabaseOperationAsync(() => operations.CreateChangeTableModeAsync(clusterId, request, ActorId(), cancellationToken));
+
+    [HttpGet("Operations/{operationId:guid}/Progress")]
+    public async Task<IActionResult> DatabaseOperationProgress(
+        Guid operationId, CancellationToken cancellationToken)
+    {
+        NoStore();
+        var progress = await operations.GetProgressAsync(operationId, cancellationToken);
+        return progress is null ? NotFoundProblem() : Ok(progress);
+    }
+
+    [HttpPost("Operations/{operationId:guid}/Cancel"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> CancelDatabaseOperation(Guid operationId, CancellationToken cancellationToken)
+    {
+        NoStore();
+        try { return Ok(await operations.CancelAsync(operationId, ActorId(), cancellationToken)); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (InvalidOperationException) { return ConflictProblem(); }
     }
 
     [HttpPost("Browse"), ValidateAntiForgeryToken]
@@ -609,6 +720,30 @@ public sealed class DatabaseController(
             return DatabaseMutationProblem(StatusCodes.Status422UnprocessableEntity, text["Problem.DdlExecute.Title"],
                 text["Problem.DdlExecute.Detail"]);
         }
+    }
+
+    private async Task<IActionResult> CreateDatabaseOperationAsync(Func<Task<OperationResponse>> create)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try
+        {
+            var operation = await create();
+            var redirectUrl = Url.Action("Details", "Operations", new { id = operation.Id });
+            return Accepted(redirectUrl, new
+            {
+                operation.Id,
+                operation.Kind,
+                operation.Risk,
+                operation.Status,
+                redirectUrl
+            });
+        }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (DBConcurrencyException) { return ConflictProblem(); }
+        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.DdlExecute.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     private ObjectResult DatabaseMutationProblem(int status, string title, string detail, string? sqlState = null)

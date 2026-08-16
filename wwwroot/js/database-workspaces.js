@@ -119,6 +119,7 @@ import { cycleGridSort, gridSelectionStatistics, gridSortState, normalizeColumnO
       const response = await fetch(url); if (!response.ok) throw new Error(await problem(response)); ws.metadata = await response.json(); await loadRows(ws);
     } else if (ws.type === "structure") await loadStructure(ws);
     else if (ws.type === "ddl") await loadDdl(ws);
+    else if (ws.type === "info") await loadTableInformation(ws);
     ws.loaded = true;
   }
   function closeWorkspaces(keys, force = false) {
@@ -215,11 +216,51 @@ import { cycleGridSort, gridSelectionStatistics, gridSortState, normalizeColumnO
     const url = new URL(explorer.dataset.workspaceDdlUrl, location.origin); url.searchParams.set("schema", ws.schema); url.searchParams.set("name", ws.name);
     const response = await fetch(url); if (!response.ok) throw new Error(await problem(response)); ws.ddl = (await response.json()).sql; if(activeKey===ws.key)renderWorkspace(ws);
   }
+  async function loadTableInformation(ws) {
+    const url = new URL(explorer.dataset.tableInformationUrl, location.origin);
+    url.searchParams.set("schema", ws.schema); url.searchParams.set("name", ws.name);
+    const response = await fetch(url); if (!response.ok) throw new Error(await problem(response));
+    ws.information = await response.json(); if (activeKey === ws.key) renderWorkspace(ws);
+  }
+  const bytes = value => {
+    const amount = Number(value || 0); if (!amount) return "0 B";
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"]; const unit = Math.min(units.length - 1, Math.floor(Math.log(amount) / Math.log(1024)));
+    return `${number(amount / (1024 ** unit))} ${units[unit]}`;
+  };
+  function renderTableInformation(ws) {
+    const info = ws.information; if (!info) return showWorkspaceLoading();
+    const metric = (label, value) => `<div><span>${html(label)}</span><strong>${html(value ?? "—")}</strong></div>`;
+    stage.innerHTML = `<div class="database-table-information">
+      <header class="database-information-heading"><div><p>POSTGRESQL · CITUS</p><h2><i class="fa fa-info-circle" aria-hidden="true"></i> ${html(info.schema)}.${html(info.name)}</h2><span>${html(info.mode)} · ${html(info.kind)}</span></div><div><button type="button" data-info-refresh><i class="fa fa-refresh" aria-hidden="true"></i> Refresh</button><button type="button" data-info-exact><i class="fa fa-calculator" aria-hidden="true"></i> Exact metrics</button></div></header>
+      <section><h3>Summary</h3><div class="database-information-metrics">${metric("Owner",info.owner)}${metric("Persistence",info.persistence)}${metric("Access method",info.accessMethod)}${metric("Estimated rows",number(info.estimatedRows))}${info.exactRows != null ? metric("Exact rows",number(info.exactRows)) : ""}${metric("Table size",bytes(info.tableBytes))}${metric("Indexes",bytes(info.indexBytes))}${metric("Total",bytes(info.totalBytes))}${info.exactBytes != null ? metric("Exact physical size",bytes(info.exactBytes)) : ""}${info.exactMeasuredAt ? metric("Exact measured",new Date(info.exactMeasuredAt).toLocaleString()) : ""}${metric("Tablespace",info.tablespace)}</div></section>
+      <section><h3>Citus placement</h3><div class="database-information-metrics">${metric("Table mode",info.mode)}${metric("Distribution column",info.distributionColumn)}${metric("Shard count",number(info.shardCount))}${metric("Colocation",info.colocationId||"—")}${metric("Replication model",info.replicationModel)}${metric("Partition strategy",info.partitionStrategy)}${metric("Partition key",info.partitionKey)}</div></section>
+      <section><h3>Partitions <small>${info.partitions.length}</small></h3>${info.partitions.length?`<div class="database-information-table-wrap"><table><thead><tr><th>Name</th><th>Bound</th><th>Rows</th><th>Table</th><th>Indexes</th><th>Total</th></tr></thead><tbody>${info.partitions.map(p=>`<tr><td><i class="fa fa-code-fork" aria-hidden="true"></i> ${html(p.schema)}.${html(p.name)}</td><td><code>${html(p.bound)}</code></td><td>${number(p.exactRows ?? p.estimatedRows)}${p.exactRows == null?' ~':' <small>EXACT</small>'}</td><td>${bytes(p.exactTableBytes ?? p.tableBytes)}${p.exactTableBytes == null?' ~':' <small>EXACT</small>'}</td><td>${bytes(p.exactIndexBytes ?? p.indexBytes)}${p.exactIndexBytes == null?' ~':' <small>EXACT</small>'}</td><td>${bytes(p.exactTotalBytes ?? p.totalBytes)}${p.exactTotalBytes == null?' ~':' <small>EXACT</small>'}</td></tr>`).join("")}</tbody></table></div>`:'<p class="database-information-empty">No partitions.</p>'}</section>
+      <section><h3>Indexes <small>${info.indexes.length}</small></h3>${info.indexes.length?`<div class="database-information-table-wrap"><table><thead><tr><th>Name</th><th>Method</th><th>Size</th><th>Scans</th><th>State</th><th></th></tr></thead><tbody>${info.indexes.map(i=>`<tr><td><i class="fa ${i.primary?'fa-key':'fa-bolt'}" aria-hidden="true"></i> ${html(i.name)}</td><td>${html(i.method)}</td><td>${bytes(i.exactBytes ?? i.bytes)}${i.exactBytes == null?' ~':' <small>EXACT</small>'}</td><td>${number(i.scans)}</td><td>${i.valid?'Valid':'Invalid'}${i.constraintBacked?' · constraint':''}</td><td><button type="button" data-info-reindex="${html(i.name)}">Rebuild…</button></td></tr>`).join("")}</tbody></table></div>`:'<p class="database-information-empty">No indexes.</p>'}</section>
+      ${(info.warnings||[]).length?`<div class="database-information-warnings">${info.warnings.map(w=>`<p><i class="fa fa-exclamation-triangle" aria-hidden="true"></i>${html(w)}</p>`).join("")}</div>`:""}
+    </div>`;
+    stage.querySelector("[data-info-refresh]").onclick=async()=>{showWorkspaceLoading();await loadTableInformation(ws);renderTableInformation(ws);};
+    stage.querySelector("[data-info-exact]").onclick=()=>window.databaseMaintenance?.inspectExact(ws.schema,ws.name);
+    stage.querySelectorAll("[data-info-reindex]").forEach(button=>button.onclick=()=>window.databaseMaintenance?.rebuildIndex(ws.schema,ws.name,button.dataset.infoReindex));
+  }
+  window.addEventListener("database-operation-terminal", async event => {
+    const operation = event.detail;
+    if (operation?.status !== "Succeeded" || operation.kind !== "InspectTable" || !operation.resultSchema || !operation.resultTable) return;
+    const ws = [...workspaces.values()].find(item => item.type === "info" && item.schema === operation.resultSchema && item.name === operation.resultTable);
+    if (!ws?.information) return;
+    ws.information.exactRows = operation.exactRows;
+    ws.information.exactBytes = operation.exactBytes;
+    ws.information.exactMeasuredAt = new Date().toISOString();
+    if (operation.warning && !(ws.information.warnings || []).includes(operation.warning))
+      ws.information.warnings = [...(ws.information.warnings || []), operation.warning];
+    try { await loadTableInformation(ws); }
+    catch (error) { showError(error.message); if (activeKey === ws.key) renderTableInformation(ws); }
+  });
   function renderWorkspace(ws) {
     clearError();
     if (ws.type === "data") return ws.metadata && ws.rows ? renderDataWorkspace(ws) : showWorkspaceLoading();
     if (ws.type === "structure") stage.innerHTML = `<div class="database-simple-workspace">${ws.html || ""}</div>`;
     else if (ws.type === "ddl") stage.innerHTML = `<div class="database-ddl-workspace"><div class="database-grid-toolbar"><button data-copy-ddl>Copy</button><button data-ddl-console>Open copy in SQL Console</button><button data-download-ddl>Download</button></div><pre><code>${html(ws.ddl || "")}</code></pre></div>`;
+    else if (ws.type === "info") renderTableInformation(ws);
     else if (ws.type === "sql") renderSqlWorkspace(ws);
     else if (ws.type === "chart") renderChartWorkspace(ws);
     updateFooter(ws);
@@ -428,7 +469,7 @@ import { cycleGridSort, gridSelectionStatistics, gridSortState, normalizeColumnO
 
   stage.addEventListener("click",event=>{const ws=workspaces.get(activeKey);if(!ws)return;if(event.target.closest("[data-copy-ddl]"))navigator.clipboard.writeText(ws.ddl||"");if(event.target.closest("[data-download-ddl]")){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([ws.ddl||""],{type:"text/sql"}));a.download=`${ws.schema}.${ws.name}.sql`;a.click();URL.revokeObjectURL(a.href);}if(event.target.closest("[data-ddl-console]")){openQuery();const consoleWs=workspaces.get(activeKey);consoleWs.sql=ws.ddl||"";renderWorkspace(consoleWs);}});
   document.getElementById("database-tree-content")?.addEventListener("click",event=>{const object=event.target.closest("[data-database-object]");if(!object)return;event.stopImmediatePropagation();event.preventDefault();document.querySelectorAll("[data-database-object]").forEach(x=>x.classList.remove("is-active"));object.classList.add("is-active");openObject(object.dataset.schema,object.dataset.table,object.dataset.nodeKind==="sequence"?"ddl":"data");},true);
-  window.databaseWorkspaces={openObject,openStructure:(s,n)=>openObject(s,n,"structure"),openDdl:(s,n)=>openObject(s,n,"ddl"),openQuery,openChart};
+  window.databaseWorkspaces={openObject,openStructure:(s,n)=>openObject(s,n,"structure"),openDdl:(s,n)=>openObject(s,n,"ddl"),openInformation:(s,n)=>openObject(s,n,"info"),openQuery,openChart};
   document.addEventListener("copy",event=>{const ws=workspaces.get(activeKey);if(!ws||ws.type!=="data"||!ws.selected.size||event.target.matches?.("input,textarea"))return;const cells=[...ws.selected].map(k=>k.split(":").map(Number));const minR=Math.min(...cells.map(x=>x[0])),maxR=Math.max(...cells.map(x=>x[0])),minC=Math.min(...cells.map(x=>x[1])),maxC=Math.max(...cells.map(x=>x[1]));const text=[];for(let r=minR;r<=maxR;r++){const line=[];for(let c=minC;c<=maxC;c++)line.push(ws.selected.has(`${r}:${c}`)?(workspaceCellValue(ws,r,c)??""):"");text.push(line.join("\t"));}event.clipboardData.setData("text/plain",text.join("\r\n"));event.preventDefault();});
   try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||"{}");(saved.workspaces||[]).slice(0,20).forEach(ws=>{ws.rows=[];ws.metadata=null;ws.pending=new Map();ws.deleted=new Set();ws.inserted=[];ws.selected=new Set();ws.rowHeights||={};ws.columnOrder||=[];ws.dirty=false;ws.loaded=false;ws.used=Date.now();workspaces.set(ws.key,ws);});renderTabs();if(saved.activeKey&&workspaces.has(saved.activeKey))activate(saved.activeKey);}catch{}
   addEventListener("beforeunload",event=>{if([...workspaces.values()].some(x=>x.dirty)){event.preventDefault();event.returnValue="";}});

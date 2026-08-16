@@ -54,6 +54,15 @@
      data-restart-sequence-url="@Url.Action("RestartSequence", "Database", new { clusterId = Model.Cluster.Id })"
      data-refresh-materialized-view-url="@Url.Action("RefreshMaterializedView", "Database", new { clusterId = Model.Cluster.Id })"
      data-convert-table-url="@Url.Action("PlanTableConversion", "Database", new { clusterId = Model.Cluster.Id })"
+     data-table-information-url="@Url.Action("TableInformation", "Database", new { clusterId = Model.Cluster.Id })"
+     data-table-information-exact-url="@Url.Action("InspectTableExact", "Database", new { clusterId = Model.Cluster.Id })"
+     data-range-preflight-url="@Url.Action("PreflightRangePartitions", "Database", new { clusterId = Model.Cluster.Id })"
+     data-range-operation-url="@Url.Action("CreateRangePartitionsOperation", "Database", new { clusterId = Model.Cluster.Id })"
+     data-merge-operation-url="@Url.Action("CreateMergePartitionsOperation", "Database", new { clusterId = Model.Cluster.Id })"
+     data-reindex-operation-url="@Url.Action("CreateRebuildIndexOperation", "Database", new { clusterId = Model.Cluster.Id })"
+     data-table-mode-operation-url="@Url.Action("CreateTableModeOperation", "Database", new { clusterId = Model.Cluster.Id })"
+     data-operation-progress-template="@Url.Action("DatabaseOperationProgress", "Database", new { clusterId = Model.Cluster.Id, operationId = Guid.Empty })"
+     data-operation-cancel-template="@Url.Action("CancelDatabaseOperation", "Database", new { clusterId = Model.Cluster.Id, operationId = Guid.Empty })"
      data-show-system="@Model.ShowSystem.ToString().ToLowerInvariant()"
      data-node-id="@Model.NodeId">
     <form id="database-antiforgery" class="hidden">@Html.AntiForgeryToken()</form>
@@ -163,6 +172,10 @@
             </form>
         </div>
     </div>
+    <aside id="database-operation-drawer" class="database-operation-drawer hidden" aria-label="Database operations">
+        <header><div><i class="fa fa-tasks" aria-hidden="true"></i><strong>Operations</strong></div><button id="database-operation-close" type="button" aria-label="@T["Action.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>
+        <div id="database-operation-list" class="database-operation-list" aria-live="polite"></div>
+    </aside>
     <div id="database-toast" class="database-toast hidden" role="status" aria-live="polite"></div>
 </div>
 

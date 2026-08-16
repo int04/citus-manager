@@ -119,6 +119,7 @@ builder.Services.AddScoped<IDatabaseQueryConsoleService, DatabaseQueryConsoleSer
 builder.Services.AddScoped<IDatabaseWorkspaceService, DatabaseWorkspaceService>();
 builder.Services.AddScoped<IDatabaseRowInspectionService, DatabaseRowInspectionService>();
 builder.Services.AddScoped<IDatabaseObjectService, DatabaseObjectService>();
+builder.Services.AddScoped<IDatabaseMaintenanceService, DatabaseMaintenanceService>();
 builder.Services.AddScoped<IOperationService, OperationService>();
 builder.Services.AddScoped<IOperationExecutor, OperationExecutor>();
 builder.Services.AddScoped<IPrometheusCollector, PrometheusCollector>();

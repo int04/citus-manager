@@ -16,6 +16,8 @@ public sealed class OperationExecutor(
     ControlDbContext db,
     ICitusInspector inspector,
     ICitusMutator mutator,
+    IDatabaseMaintenanceService maintenance,
+    IDatabaseObjectService objects,
     IControlPlaneLeaseProvider leases,
     ILogger<OperationExecutor> logger) : IOperationExecutor
 {
@@ -67,6 +69,24 @@ public sealed class OperationExecutor(
                 case OperationKind.ConvertTable:
                     await ExecuteTableConversionAsync(operation, cluster, plan, hostStoppingToken);
                     break;
+                case OperationKind.CreateRangePartitions:
+                    await ExecuteRangePartitionsAsync(operation, cluster, plan, hostStoppingToken);
+                    break;
+                case OperationKind.CreatePartitionedTable:
+                    await ExecuteCreatePartitionedTableAsync(operation, plan, hostStoppingToken);
+                    break;
+                case OperationKind.MergeRangePartitions:
+                    await ExecuteMergePartitionsAsync(operation, cluster, plan, hostStoppingToken);
+                    break;
+                case OperationKind.InspectTable:
+                    await ExecuteInspectTableAsync(operation, cluster, plan, hostStoppingToken);
+                    break;
+                case OperationKind.RebuildIndex:
+                    await ExecuteRebuildIndexAsync(operation, cluster, plan, hostStoppingToken);
+                    break;
+                case OperationKind.ChangeTableMode:
+                    await ExecuteChangeTableModeAsync(operation, cluster, plan, hostStoppingToken);
+                    break;
                 default:
                     throw new InvalidOperationException("Unsupported operation kind.");
             }
@@ -78,15 +98,23 @@ public sealed class OperationExecutor(
         }
         catch (Exception exception)
         {
-            logger.LogError("Operation {OperationId} failed ({ErrorType}, SQLSTATE {SqlState}).",
+            logger.LogError(exception, "Operation {OperationId} failed ({ErrorType}, SQLSTATE {SqlState}).",
                 operation.Id, exception.GetType().Name, (exception as PostgresException)?.SqlState);
             operation.Status = operation.Kind == OperationKind.RemoveWorker ||
-                               (operation.Kind == OperationKind.ConvertTable && HasStep(operation, "table-preflight"))
+                               (operation.Kind == OperationKind.ConvertTable && HasStep(operation, "table-preflight")) ||
+                               (operation.Kind == OperationKind.MergeRangePartitions && HasStep(operation, "merge-stage-created")) ||
+                               (operation.Kind == OperationKind.RebuildIndex && HasStep(operation, "reindex-started")) ||
+                               (operation.Kind == OperationKind.ChangeTableMode && HasStep(operation, "mode-change-started"))
                 ? OperationStatus.RecoveryRequired
                 : OperationStatus.Failed;
-            operation.SafeError = exception is PostgresException postgres
-                ? $"Citus/PostgreSQL command failed (SQLSTATE {postgres.SqlState}). Review server logs and operation checkpoints."
-                : "Operation failed. Review preflight and checkpoints.";
+            operation.SafeError = exception switch
+            {
+                PostgresException postgres =>
+                    $"Citus/PostgreSQL command failed (SQLSTATE {postgres.SqlState}): {SafeMessage(postgres.MessageText)}",
+                InvalidOperationException invalid when operation.Kind == OperationKind.InspectTable =>
+                    $"Exact metrics failed: {SafeMessage(invalid.Message)}",
+                _ => "Operation failed. Review preflight and checkpoints."
+            };
             operation.CompletedAt = DateTimeOffset.UtcNow;
             operation.Version++;
             await SaveStepAsync(operation, "failure", "Failed", operation.SafeError, CancellationToken.None);
@@ -235,6 +263,189 @@ public sealed class OperationExecutor(
         }, cancellationToken);
     }
 
+    private async Task ExecuteRangePartitionsAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan plan, CancellationToken cancellationToken)
+    {
+        var range = plan.RangePartitions ?? throw new InvalidOperationException("RANGE partition plan is missing.");
+        if (!HasStep(operation, "partition-catalog-check"))
+        {
+            var fingerprint = await maintenance.ReadFingerprintAsync(cluster, range.Schema, range.Table, cancellationToken);
+            if (!string.Equals(fingerprint, range.CatalogFingerprint, StringComparison.Ordinal))
+                throw new InvalidOperationException("Partition catalog changed after operation creation.");
+            await SaveStepAsync(operation, "partition-catalog-check", "Succeeded", "Catalog fingerprint matched.", cancellationToken);
+        }
+        var creates = range.Items.Where(x => x.Status == "Create").ToList();
+        var completed = 0;
+        foreach (var item in creates)
+        {
+            await db.Entry(operation).ReloadAsync(cancellationToken);
+            if (operation.Status == OperationStatus.Cancelling)
+            {
+                operation.Status = OperationStatus.Cancelled; operation.CompletedAt = DateTimeOffset.UtcNow; operation.Version++;
+                await SaveStepAsync(operation, "cancel", "Succeeded", $"Cancelled after {completed} of {creates.Count} partitions.", cancellationToken);
+                return;
+            }
+            var step = $"partition-{item.Name}";
+            if (!HasStep(operation, step))
+            {
+                await maintenance.ExecuteRangePartitionAsync(cluster, range, item, cancellationToken);
+                await SaveStepAsync(operation, step, "Succeeded", $"{item.From:O} → {item.To:O}", cancellationToken);
+            }
+            completed++;
+            operation.ResultJson = JsonSerializer.Serialize(new { currentItems = completed, totalItems = creates.Count });
+            operation.Version++; await db.SaveChangesAsync(cancellationToken);
+        }
+        await CompleteAsync(operation, new { currentItems = completed, totalItems = creates.Count, range.Schema, range.Table }, cancellationToken);
+    }
+
+    private async Task ExecuteCreatePartitionedTableAsync(
+        ClusterOperation operation, OperationPlan plan, CancellationToken cancellationToken)
+    {
+        var create = plan.CreatePartitionedTable?.Request
+            ?? throw new InvalidOperationException("Partitioned table creation plan is missing.");
+        if (operation.Status == OperationStatus.Cancelling)
+        {
+            operation.Status = OperationStatus.Cancelled; operation.CompletedAt = DateTimeOffset.UtcNow; operation.Version++;
+            await SaveStepAsync(operation, "cancel", "Succeeded", "Cancelled before table creation.", cancellationToken); return;
+        }
+        if (!HasStep(operation, "partitioned-table-created"))
+        {
+            var expectedChildren = create.PartitionStrategy == DatabasePartitionStrategy.Hash
+                ? create.HashModulus!.Value : create.ListPartitions.Count;
+            operation.ResultJson = JsonSerializer.Serialize(new
+            {
+                phase = "creating-partitioned-table",
+                currentItems = 0,
+                totalItems = expectedChildren
+            });
+            await SaveStepAsync(operation, "partitioned-table-started", "Running",
+                $"strategy={create.PartitionStrategy}; children={expectedChildren}", cancellationToken);
+            try
+            {
+                var existing = await maintenance.GetTableInformationAsync(operation.ClusterId, create.Schema, create.Name, cancellationToken);
+                if (existing.PartitionStrategy != create.PartitionStrategy.ToString().ToUpperInvariant() ||
+                    existing.Partitions.Count != expectedChildren)
+                    throw new InvalidOperationException("An existing table does not match the approved partition plan.");
+            }
+            catch (KeyNotFoundException)
+            {
+                await objects.CreateTableAsync(operation.ClusterId, create, operation.RequestedBy, cancellationToken);
+            }
+            await SaveStepAsync(operation, "partitioned-table-created", "Succeeded",
+                $"strategy={create.PartitionStrategy}; children={expectedChildren}", cancellationToken);
+        }
+        await CompleteAsync(operation, new { create.Schema, create.Name, create.PartitionStrategy,
+            childPartitions = create.PartitionStrategy == DatabasePartitionStrategy.Hash ? create.HashModulus : create.ListPartitions.Count }, cancellationToken);
+    }
+
+    private async Task ExecuteMergePartitionsAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan plan, CancellationToken cancellationToken)
+    {
+        var merge = plan.MergePartitions ?? throw new InvalidOperationException("Merge partition plan is missing.");
+        if (operation.Status == OperationStatus.Cancelling)
+        {
+            operation.Status = OperationStatus.Cancelled; operation.CompletedAt = DateTimeOffset.UtcNow; operation.Version++;
+            await SaveStepAsync(operation, "cancel", "Succeeded", "Cancelled before merge started.", cancellationToken); return;
+        }
+        await SaveStepAsync(operation, "merge-preflight", "Succeeded",
+            $"sources={merge.Partitions.Count}; estimated_rows={merge.EstimatedRows}; bytes={merge.Bytes}", cancellationToken);
+        await maintenance.ExecuteMergeAsync(cluster, merge, async (name, detail) =>
+        {
+            await SaveStepAsync(operation, name, "Succeeded", detail, cancellationToken);
+            operation.ResultJson = JsonSerializer.Serialize(new { processedBytes = merge.Bytes, totalBytes = merge.Bytes, warning = merge.Warnings.FirstOrDefault() });
+            operation.Version++; await db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+        await CompleteAsync(operation, new { merge.Schema, merge.Table, merge.TargetPartition, sourcePartitionsRetained = true }, cancellationToken);
+    }
+
+    private async Task ExecuteInspectTableAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan plan, CancellationToken cancellationToken)
+    {
+        var inspect = plan.InspectTable ?? throw new InvalidOperationException("Inspect table plan is missing.");
+        if (operation.Status == OperationStatus.Cancelling)
+        {
+            operation.Status = OperationStatus.Cancelled; operation.CompletedAt = DateTimeOffset.UtcNow; operation.Version++;
+            await SaveStepAsync(operation, "cancel", "Succeeded", "Inspection cancelled.", cancellationToken); return;
+        }
+        long? exactRows = null;
+        long? exactBytes = null;
+        string? warning = null;
+        var partitionMetrics = new Dictionary<string, ExactPartitionMetricsResult>(StringComparer.Ordinal);
+        IReadOnlyList<ExactIndexMetricsResult> indexMetrics = [];
+        if (inspect.ExactRowCount)
+        {
+            await SaveStepAsync(operation, "exact-row-count-started", "Running", "Exact COUNT(*) started.", cancellationToken);
+            var count = await maintenance.InspectExactAsync(cluster,
+                inspect with { ExactPlacementSizes = false }, cancellationToken);
+            exactRows = count.Rows;
+            foreach (var partition in count.Partitions ?? [])
+                partitionMetrics[$"{partition.Schema}.{partition.Name}"] = partition;
+            await SaveStepAsync(operation, "exact-row-count-completed", "Succeeded",
+                $"rows={exactRows?.ToString() ?? "unavailable"}", cancellationToken);
+        }
+        if (inspect.ExactPlacementSizes)
+        {
+            await SaveStepAsync(operation, "exact-placement-size-started", "Running", "Exact physical-size inspection started.", cancellationToken);
+            var size = await maintenance.InspectExactAsync(cluster,
+                inspect with { ExactRowCount = false }, cancellationToken);
+            exactBytes = size.Bytes;
+            warning = size.Warning;
+            foreach (var partition in size.Partitions ?? [])
+            {
+                var key = $"{partition.Schema}.{partition.Name}";
+                partitionMetrics[key] = partitionMetrics.TryGetValue(key, out var existing)
+                    ? existing with
+                    {
+                        TableBytes = partition.TableBytes,
+                        IndexBytes = partition.IndexBytes,
+                        TotalBytes = partition.TotalBytes
+                    }
+                    : partition;
+            }
+            indexMetrics = size.Indexes ?? [];
+            await SaveStepAsync(operation, "exact-placement-size-completed", "Succeeded",
+                exactBytes.HasValue ? $"bytes={exactBytes.Value}" : warning, cancellationToken);
+        }
+        await CompleteAsync(operation, new
+        {
+            inspect.Schema, inspect.Table, exactRows, exactBytes, warning,
+            partitions = partitionMetrics.Values.OrderBy(x => x.Schema).ThenBy(x => x.Name),
+            indexes = indexMetrics
+        }, cancellationToken);
+    }
+
+    private async Task ExecuteRebuildIndexAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan plan, CancellationToken cancellationToken)
+    {
+        var rebuild = plan.RebuildIndex ?? throw new InvalidOperationException("Rebuild index plan is missing.");
+        if (operation.Status == OperationStatus.Cancelling)
+        {
+            operation.Status = OperationStatus.Cancelled; operation.CompletedAt = DateTimeOffset.UtcNow; operation.Version++;
+            await SaveStepAsync(operation, "cancel", "Succeeded", "Cancelled before REINDEX command.", cancellationToken); return;
+        }
+        await SaveStepAsync(operation, "reindex-started", "Running",
+            $"index={rebuild.Schema}.{rebuild.Index}; concurrently={rebuild.Concurrently}; bytes={rebuild.Bytes}", cancellationToken);
+        await maintenance.ExecuteReindexAsync(cluster, rebuild, cancellationToken);
+        await SaveStepAsync(operation, "reindex-validated", "Succeeded", "Index is valid after rebuild.", cancellationToken);
+        await CompleteAsync(operation, new { rebuild.Schema, rebuild.Table, rebuild.Index, rebuild.Concurrently }, cancellationToken);
+    }
+
+    private async Task ExecuteChangeTableModeAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan plan, CancellationToken cancellationToken)
+    {
+        var change = plan.ChangeTableMode ?? throw new InvalidOperationException("Table-mode plan is missing.");
+        if (operation.Status == OperationStatus.Cancelling)
+        {
+            operation.Status = OperationStatus.Cancelled; operation.CompletedAt = DateTimeOffset.UtcNow; operation.Version++;
+            await SaveStepAsync(operation, "cancel", "Succeeded", "Cancelled before Citus mode command.", cancellationToken); return;
+        }
+        await SaveStepAsync(operation, "mode-change-started", "Running",
+            $"{change.SourceMode} → {change.TargetMode}; capability={change.CapabilityName}", cancellationToken);
+        await maintenance.ExecuteModeChangeAsync(cluster, change, cancellationToken);
+        await SaveStepAsync(operation, "mode-change-command", "Succeeded", "Citus command completed.", cancellationToken);
+        await CompleteAsync(operation, new { change.Schema, change.Table, change.SourceMode, change.TargetMode }, cancellationToken);
+    }
+
     private static void ValidateConvertedState(TableConversionState state, TableConversionPlan plan)
     {
         if (state.Mode != plan.TargetMode)
@@ -325,6 +536,13 @@ public sealed class OperationExecutor(
             existing.CompletedAt = DateTimeOffset.UtcNow;
         }
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static string SafeMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return "No additional database message was returned.";
+        var singleLine = string.Join(" ", message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)).Trim();
+        return singleLine.Length <= 500 ? singleLine : singleLine[..500];
     }
 
     private static bool HasStep(ClusterOperation operation, string name) =>

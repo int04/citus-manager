@@ -67,6 +67,10 @@
       "rename": ["blue", '<path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z"/><path d="m13.5 7 3.5 3.5"/>'],
       "edit-view": ["purple", '<path d="M3 5h18v14H3z"/><path d="m7 10 2 2-2 2M11 15h5"/>'],
       "convert": ["cyan", '<ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="m15 16 3 3 3-3M18 19v-6"/>'],
+      "table-info": ["blue", '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>'],
+      "create-partition": ["green", '<path d="M4 5h16v14H4zM4 10h16M10 10v9"/><path d="M17 2v6M14 5h6"/>'],
+      "merge-partitions": ["amber", '<path d="M5 4v5c0 2 2 3 4 3h6M5 20v-5c0-2 2-3 4-3h10"/><path d="m16 9 3 3-3 3"/>'],
+      "rebuild-index": ["amber", '<path d="M4 6h16M4 12h16M4 18h16"/><path d="m18 3 3 3-3 3"/>'],
       "refresh-materialized": ["cyan", '<path d="M20 11a8 8 0 1 0-2.3 5.7L20 14"/><path d="M20 4v7h-7"/>'],
       "restart-sequence": ["amber", '<path d="M4 6h4M4 12h7M4 18h10"/><path d="M20 8v8M17 13l3 3 3-3"/>'],
       "truncate": ["red", '<path d="M4 6h16M7 10h10M9 14h6M11 18h2"/>'],
@@ -110,9 +114,11 @@
         item(t("menu.browse"), "browse"), create
           ? item(t("menu.modify"), "modify-table", { shortcut: "Ctrl+F6" })
           : item(t("menu.structure"), "structure", { shortcut: "Ctrl+F6" }),
+        item(t("maintenance.tableInfo"), "table-info"),
+        ...(create && target.kind === "partitionedtable" ? [item(t("maintenance.newPartition"), "create-partition"), item(t("maintenance.mergePartitions"), "merge-partitions")] : []),
         item(t("common.refresh"), "refresh", { shortcut: "Ctrl+F5" }),
         ...(create ? [separator(), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" }),
-          ...(target.tableMode === "local" ? [item(t("menu.convert"), "convert")] : [])] : []),
+          item(t("menu.convert"), "convert")] : []),
         ...(admin ? [separator(), item(t("menu.truncate"), "truncate", { dangerous: true }), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])
       ];
       case "foreigntable": return [item(t("menu.browse"), "browse"), item(t("menu.structure"), "structure"), item(t("common.refresh"), "refresh"),
@@ -129,6 +135,8 @@
         ...(admin ? [item(t("menu.restart"), "restart-sequence", { dangerous: true }), separator(), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])];
       case "table-section":
       case "table-child": return [
+        ...(target.treeGroup === "partitions" ? [item(t("maintenance.tableInfo"), "table-info"), ...(create ? [item(t("maintenance.newPartition"), "create-partition"), item(t("maintenance.mergePartitions"), "merge-partitions")] : [])] : []),
+        ...(["indexes", "keys"].includes(target.treeGroup) && target.childName ? [item(t("maintenance.tableInfo"), "table-info"), ...(create ? [item(t("maintenance.rebuildIndex"), "rebuild-index", { dangerous: true })] : [])] : []),
         ...(create ? [item(t("menu.modify"), "modify-table", { shortcut: "Enter" })] : [item(t("menu.structure"), "structure")]),
         item(t("common.refresh"), "refresh")
       ];
@@ -452,6 +460,100 @@
   });
 
   const post = (url, data) => $.ajax({ url, method: "POST", data: { __RequestVerificationToken: token, ...data } });
+  const jsonPost = async (url, data) => {
+    const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "RequestVerificationToken": token }, body: JSON.stringify(data) });
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw { responseJSON: body }; }
+    return response.json();
+  };
+
+  const operationDrawer = document.getElementById("database-operation-drawer");
+  const operationList = document.getElementById("database-operation-list");
+  const operationClose = document.getElementById("database-operation-close");
+  const progressTemplate = explorer.dataset.operationProgressTemplate;
+  const cancelTemplate = explorer.dataset.operationCancelTemplate;
+  const operationStorageKey = `cm-database-operations:${explorer.dataset.clusterId}`;
+  const trackedOperations = new Map();
+  const progressUrl = id => progressTemplate.replace(/00000000-0000-0000-0000-000000000000/i, id);
+  const cancelUrl = id => cancelTemplate.replace(/00000000-0000-0000-0000-000000000000/i, id);
+  const persistTrackedOperations = () => sessionStorage.setItem(operationStorageKey, JSON.stringify([...trackedOperations.keys()]));
+  operationClose?.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    operationDrawer.classList.add("hidden");
+  });
+  operationDrawer?.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    operationDrawer.classList.add("hidden");
+  });
+  function renderOperation(operation) {
+    let row = operationList.querySelector(`[data-operation-id="${operation.id}"]`);
+    if (!row) { row = document.createElement("article"); row.dataset.operationId = operation.id; operationList.prepend(row); }
+    const total = operation.totalItems || 0, current = operation.currentItems || 0;
+    const percent = total ? Math.min(100, Math.round(current * 100 / total)) : null;
+    row.className = `database-operation-item is-${String(operation.status).toLowerCase()}`;
+    row.innerHTML = `<header><i class="fa ${operation.status === "Running" ? "fa-spinner fa-spin" : operation.status === "Succeeded" ? "fa-check-circle" : operation.status === "Failed" || operation.status === "RecoveryRequired" ? "fa-exclamation-triangle" : "fa-clock-o"}" aria-hidden="true"></i><div><strong>${html(operation.kind)}</strong><small>${html(operation.phase)} · ${html(operation.status)}</small></div>${operation.canCancel?`<button type="button" data-cancel-operation="${operation.id}" aria-label="Cancel operation" title="Cancel"><i class="fa fa-stop-circle"></i></button>`:""}<a href="/Operations/Details/${operation.id}" aria-label="Open operation"><i class="fa fa-external-link"></i></a></header>${percent == null ? '<div class="database-operation-indeterminate"></div>' : `<div class="database-operation-progress"><span style="width:${percent}%"></span></div><small>${current}/${total} · ${percent}%</small>`}${operation.safeError ? `<p class="is-error">${html(operation.safeError)}</p>` : ""}`;
+    row.querySelector("[data-cancel-operation]")?.addEventListener("click", async buttonEvent=>{buttonEvent.currentTarget.disabled=true;try{await jsonPost(cancelUrl(operation.id),{});pollOperation(operation.id);}catch(error){showToast(problemText(error));buttonEvent.currentTarget.disabled=false;}});
+  }
+  async function pollOperation(id) {
+    try {
+      const response = await fetch(progressUrl(id), { cache: "no-store" }); if (!response.ok) return;
+      const operation = await response.json(); renderOperation(operation);
+      if (["Succeeded", "Failed", "Cancelled", "RecoveryRequired"].includes(operation.status)) {
+        trackedOperations.delete(id);
+        persistTrackedOperations();
+        window.dispatchEvent(new CustomEvent("database-operation-terminal", { detail: operation }));
+        refreshTree().catch(() => {});
+        return;
+      }
+      trackedOperations.set(id, setTimeout(() => pollOperation(id), 1800));
+    } catch { trackedOperations.set(id, setTimeout(() => pollOperation(id), 3500)); }
+  }
+  function trackOperation(result) {
+    const id = result.id; if (!id) return;
+    operationDrawer.classList.remove("hidden");
+    renderOperation({ id, kind: result.kind, status: result.status, phase: result.status });
+    clearTimeout(trackedOperations.get(id)); pollOperation(id);
+    persistTrackedOperations();
+    showToast(t("maintenance.operationCreated", String(id).slice(0, 8)));
+  }
+
+  async function openRangePartition(target) {
+    const defaultTarget = new Date(); defaultTarget.setMonth(defaultTarget.getMonth() + 6);
+    let preflight = null;
+    openModal({ title: t("maintenance.rangeTitle"), eyebrow: "DURABLE WRITE OPERATION", description: `${target.schema}.${target.name}`,
+      body: `<div class="database-partition-operation-form"><div class="database-action-grid">${field("Every", input("IntervalCount", "1", "number", "required min=1 max=366"))}${field("Unit", '<select name="IntervalUnit"><option value="Day">day(s)</option><option value="Week">week(s)</option><option value="Month" selected>month(s)</option></select>')}${field("Create through", input("Target", defaultTarget.toISOString().slice(0,16), "datetime-local", "required"))}${field("Naming template", input("NamingTemplate", `${target.name}_p_{yyyy}_{MM}`, "text", "required maxlength=63"))}</div><p class="database-action-hint"><i class="fa fa-clock-o"></i> Bounds align to the database calendar and timezone.</p><div id="database-partition-preview" class="database-partition-preview hidden"></div></div>`,
+      button: t("maintenance.preview"), onSubmit: async () => {
+        const body = { schema: target.schema, table: target.name, intervalCount: Number(form.elements.IntervalCount.value), intervalUnit: form.elements.IntervalUnit.value, target: new Date(form.elements.Target.value).toISOString(), namingTemplate: form.elements.NamingTemplate.value };
+        if (!preflight) {
+          preflight = await jsonPost(explorer.dataset.rangePreflightUrl, body);
+          const preview = document.getElementById("database-partition-preview"); preview.classList.remove("hidden");
+          preview.innerHTML = `<header><strong>${preflight.items.length} ranges</strong><span>${html(preflight.databaseTimeZone)} · relation units ${preflight.projectedRelationUnits}</span></header><div>${preflight.items.map(item=>`<p class="is-${item.status.toLowerCase()}"><i class="fa ${item.status === "Create" ? "fa-plus-circle" : item.status === "Skip" ? "fa-forward" : "fa-exclamation-triangle"}"></i><strong>${html(item.name)}</strong><code>${html(item.from)} → ${html(item.to)}</code><span>${html(item.status)}</span></p>`).join("")}</div>`;
+          submit.textContent = t("maintenance.createOperation"); if (!preflight.canExecute) submit.disabled = true; return;
+        }
+        const result = await jsonPost(explorer.dataset.rangeOperationUrl, body); closeModal(); trackOperation(result);
+      } });
+    form.addEventListener("input", () => { if (preflight) { preflight = null; submit.textContent = t("maintenance.preview"); submit.disabled = false; document.getElementById("database-partition-preview")?.classList.add("hidden"); } });
+  }
+
+  async function openMergePartitions(target) {
+    const url = new URL(explorer.dataset.tableInformationUrl, location.origin); url.searchParams.set("schema", target.schema); url.searchParams.set("name", target.name);
+    const response = await fetch(url); if (!response.ok) throw { responseJSON: { detail: await response.text() } }; const info = await response.json();
+    const qualified = `${target.schema}.${target.name}`;
+    openModal({ title: t("maintenance.mergeTitle"), eyebrow: "IMPACT · APPROVAL REQUIRED", description: t("maintenance.mergeHelp"),
+      body: `<div class="database-partition-choice">${info.partitions.map(p=>`<label><input type="checkbox" name="Partitions" value="${html(p.name)}"><span><strong>${html(p.name)}</strong><small>${html(p.bound)} · ${Number(p.totalBytes).toLocaleString()} bytes</small></span></label>`).join("")}</div>${field("Target partition",input("TargetPartition",`${target.name}_merged`,"text","required maxlength=63"))}<label class="database-action-check database-impact-check"><input name="Closed" type="checkbox" required> Application no longer writes to these ranges</label><label class="database-action-check database-impact-check"><input name="Acknowledged" type="checkbox" required> Capacity, backup and recovery owner verified</label>${field(`Type ${qualified}`,input("TypedConfirmation","","text","required autocomplete=off"))}`,
+      button: "Create merge plan", danger: true, onSubmit: async()=>{const partitions=[...form.querySelectorAll('input[name="Partitions"]:checked')].map(x=>x.value);if(partitions.length<2)throw{responseJSON:{detail:"Select at least two adjacent partitions."}};const result=await jsonPost(explorer.dataset.mergeOperationUrl,{schema:target.schema,table:target.name,partitions,targetPartition:form.elements.TargetPartition.value,closedForWritesAcknowledged:form.elements.Closed.checked,externalCapacityAndBackupChecksAcknowledged:form.elements.Acknowledged.checked,typedConfirmation:form.elements.TypedConfirmation.value});closeModal();trackOperation(result);} });
+  }
+
+  async function openRebuildIndex(schema, table, index) {
+    const qualified = `${schema}.${index}`;
+    openModal({title:t("maintenance.rebuildTitle"),eyebrow:"IMPACT OPERATION",description:`${qualified}. Concurrent mode is safer for live writers but performs more work.`,body:`<label class="database-action-check"><input name="Concurrently" type="checkbox" checked> Rebuild concurrently</label><label class="database-action-check"><input name="Maintenance" type="checkbox"> Blocking maintenance window acknowledged</label>${field(`Type ${qualified}`,input("TypedConfirmation","","text","required autocomplete=off"))}`,button:"Create rebuild plan",danger:true,onSubmit:async()=>{const result=await jsonPost(explorer.dataset.reindexOperationUrl,{schema,table,index,concurrently:form.elements.Concurrently.checked,maintenanceWindowAcknowledged:form.elements.Maintenance.checked,typedConfirmation:form.elements.TypedConfirmation.value});closeModal();trackOperation(result);}});
+    const update=()=>{form.elements.Maintenance.closest("label").classList.toggle("hidden",form.elements.Concurrently.checked);};form.elements.Concurrently.onchange=update;update();
+  }
+
+  async function inspectExact(schema, table) { const result=await jsonPost(explorer.dataset.tableInformationExactUrl,{schema,table,exactRowCount:true,exactPlacementSizes:true});trackOperation(result); }
+  window.databaseMaintenance={rebuildIndex:openRebuildIndex,inspectExact};
+  try { (JSON.parse(sessionStorage.getItem(operationStorageKey) || "[]") || []).forEach(id=>{operationDrawer.classList.remove("hidden");trackedOperations.set(id,null);pollOperation(id);}); } catch { sessionStorage.removeItem(operationStorageKey); }
   const finish = async response => {
     closeModal();
     showToast(response.message || t("action.success"));
@@ -1278,9 +1380,21 @@
       document.getElementById("database-partition-key-row").classList.toggle("is-disabled", partitionStrategy.value === "None");
       document.querySelector("[name=PartitionKey]").disabled = partitionStrategy.value === "None";
       document.querySelector("[name=PartitionKey]").required = partitionStrategy.value !== "None";
+      document.getElementById("database-range-partition-note")?.classList.toggle("hidden", partitionStrategy.value !== "Range");
+      document.getElementById("database-list-partitions")?.classList.toggle("hidden", partitionStrategy.value !== "List");
+      document.getElementById("database-hash-partitions")?.classList.toggle("hidden", partitionStrategy.value !== "Hash");
+      if (partitionStrategy.value === "List" && !document.querySelector(".dg-list-partition-row")) addListPartitionRow();
     };
     document.querySelector("[name=Mode]").addEventListener("change", update); update();
     document.querySelector("[name=PartitionStrategy]").addEventListener("change", update);
+    document.getElementById("database-add-list-partition")?.addEventListener("click", () => addListPartitionRow());
+  }
+
+  function addListPartitionRow(value = {}) {
+    const list = document.getElementById("database-list-partition-rows"); if (!list) return;
+    const row = document.createElement("div"); row.className = "dg-list-partition-row";
+    row.innerHTML = `<label><span>Partition name</span><input data-list-partition-name maxlength="63" value="${html(value.name || "")}" placeholder="orders_active" required></label><label><span>Values</span><input data-list-partition-values value="${html((value.values || []).join(", "))}" placeholder="active, processing" required><small>Comma-separated typed values</small></label><button type="button" aria-label="Remove LIST partition" title="Remove"><i class="fa fa-trash-o" aria-hidden="true"></i></button>`;
+    row.querySelector("button").onclick=()=>{row.remove();updateTableSqlPreview();};row.addEventListener("input",updateTableSqlPreview);list.appendChild(row);updateTableSqlPreview();
   }
 
   function bindSqlPreviewSplitter() {
@@ -1372,6 +1486,8 @@
     if (form.elements.FillFactor?.value) sql += ` WITH (fillfactor = ${Number(form.elements.FillFactor.value)})`;
     if (form.elements.Tablespace?.value) sql += ` TABLESPACE ${quoteId(form.elements.Tablespace.value)}`;
     sql += ";";
+    if (partitionStrategy === "List") document.querySelectorAll(".dg-list-partition-row").forEach(row=>{const name=row.querySelector("[data-list-partition-name]").value.trim()||`${table}_partition`,values=row.querySelector("[data-list-partition-values]").value.split(",").map(x=>x.trim()).filter(Boolean);sql+=`\n\nCREATE TABLE ${quoteId(schema)}.${quoteId(name)} PARTITION OF ${quoteId(schema)}.${quoteId(table)} FOR VALUES IN (${(values.length?values:["value"]).map(quoteLiteral).join(", ")});`;});
+    if (partitionStrategy === "Hash") {const modulus=Number(form.elements.HashModulus?.value||32);for(let remainder=0;remainder<modulus;remainder++)sql+=`\n\nCREATE TABLE ${quoteId(schema)}.${quoteId(`${table}_p${String(remainder).padStart(3,"0")}`)} PARTITION OF ${quoteId(schema)}.${quoteId(table)} FOR VALUES WITH (MODULUS ${modulus}, REMAINDER ${remainder});`;}
     document.querySelectorAll(".dg-index-row").forEach(row => {
       const index = indexRowData(row);
       const indexColumns = (index.columns.length ? index.columns : [{ name: "column_name", order: "None", collation: "", operatorClass: "" }]).map(column =>
@@ -1489,6 +1605,9 @@
                   </div>
                   <label><span>Partition Expression</span><select name="PartitionStrategy"><option value="None">None</option><option value="Range">RANGE</option><option value="List">LIST</option><option value="Hash">HASH</option></select></label>
                   <label id="database-partition-key-row" class="is-disabled"><span>Partition Key</span><select name="PartitionKey" disabled></select></label>
+                  <div id="database-range-partition-note" class="dg-partition-strategy-panel hidden"><p><i class="fa fa-info-circle" aria-hidden="true"></i><span>After creating the table, right-click the table or its <strong>Partitions</strong> group and choose <strong>New Partition…</strong> to generate calendar-aligned RANGE partitions.</span></p></div>
+                  <div id="database-list-partitions" class="dg-partition-strategy-panel hidden"><header><div><strong>LIST partitions</strong><small>Group one or more typed values into each child partition.</small></div><button type="button" id="database-add-list-partition"><i class="fa fa-plus" aria-hidden="true"></i> Add</button></header><div id="database-list-partition-rows"></div></div>
+                  <div id="database-hash-partitions" class="dg-partition-strategy-panel hidden"><label><span>Hash modulus</span><span class="dg-property-stack"><select name="HashModulus"><option>8</option><option>16</option><option selected>32</option><option>64</option><option>128</option></select><small>Creates every remainder from 0 through modulus − 1. Review shard × partition × index relation count.</small></span></label></div>
                   <label><span>Options</span><span class="dg-option-input"><small>fillfactor</small><input name="FillFactor" type="number" min="10" max="100" placeholder="server default"></span></label>
                   <label><span>Access Method</span><span class="dg-property-stack"><select name="AccessMethod"><option value="">server default</option><optgroup label="Installed table methods">${accessMethodOptions}</optgroup>${unavailableKnownMethods.length ? `<optgroup label="Unavailable on this server" disabled>${unavailableKnownMethods.map(method => `<option>${method} (not installed)</option>`).join("")}</optgroup>` : ""}</select><small>${t("designer.accessMethodHelp")}</small></span></label>
                   <label><span>Tablespace</span><select name="Tablespace"><option value="">server default</option>${(metadata.tablespaces || []).map(item => `<option value="${html(item)}">${html(item)}</option>`).join("")}</select></label>
@@ -1611,6 +1730,7 @@
           Schema: form.elements.Schema.value, Name: form.elements.Name.value, Mode: form.elements.Mode.value,
           Comment: form.elements.Comment.value || null, Persistence: form.elements.Persistence.value, WithOids: false,
           PartitionStrategy: form.elements.PartitionStrategy.value, PartitionKey: form.elements.PartitionStrategy.value === "None" ? null : form.elements.PartitionKey.value || null,
+          HashModulus: form.elements.PartitionStrategy.value === "Hash" ? Number(form.elements.HashModulus.value) : null,
           FillFactor: form.elements.FillFactor.value ? Number(form.elements.FillFactor.value) : null,
           AccessMethod: form.elements.AccessMethod.value || null, Tablespace: form.elements.Tablespace.value || null, Owner: form.elements.Owner.value || null,
           DistributionColumn: form.elements.DistributionColumn?.value || null, ColocateWith: form.elements.ColocateWith?.value || null,
@@ -1662,7 +1782,14 @@
           data[`Grants[${index}].Role`] = role;
           privileges.forEach((privilege, privilegeIndex) => { data[`Grants[${index}].Privileges[${privilegeIndex}]`] = privilege; });
         });
-        await finish(await post(definition ? $explorer.data("modify-table-url") : $explorer.data("create-table-url"), data));
+        if (form.elements.PartitionStrategy.value === "List") [...document.querySelectorAll(".dg-list-partition-row")].forEach((row,index)=>{
+          const name=row.querySelector("[data-list-partition-name]").value.trim();const values=row.querySelector("[data-list-partition-values]").value.split(",").map(x=>x.trim()).filter(Boolean);
+          if(!name||!values.length)throw{responseJSON:{detail:"Every LIST partition requires a name and at least one value."}};
+          data[`ListPartitions[${index}].Name`]=name;values.forEach((value,valueIndex)=>data[`ListPartitions[${index}].Values[${valueIndex}]`]=value);
+        });
+        const response = await post(definition ? $explorer.data("modify-table-url") : $explorer.data("create-table-url"), data);
+        if (response.id) { closeModal(); trackOperation(response); }
+        else await finish(response);
       } });
     fields.dataset.designerMode = definition ? "modify" : "create";
     designerMetadata = metadata;
@@ -1680,6 +1807,8 @@
       form.elements.Persistence.value = definition.persistence;
       form.elements.Mode.value = definition.mode;
       form.elements.PartitionStrategy.value = definition.partitionStrategy;
+      if (definition.hashModulus) form.elements.HashModulus.value = definition.hashModulus;
+      (definition.listPartitions || []).forEach(item => addListPartitionRow(item));
       form.elements.FillFactor.value = definition.fillFactor ?? "";
       selectValue(form.elements.AccessMethod, definition.accessMethod || "");
       selectValue(form.elements.Tablespace, definition.tablespace || "");
@@ -1706,7 +1835,7 @@
       form.elements.DistributionColumn.value = definition.distributionColumn || "";
       form.elements.ShardCount.value = definition.shardCount ?? "";
       [form.elements.Schema, form.elements.Name, form.elements.Persistence, form.elements.Mode,
-        form.elements.PartitionStrategy, form.elements.PartitionKey, form.elements.AccessMethod,
+        form.elements.PartitionStrategy, form.elements.PartitionKey, form.elements.HashModulus, form.elements.AccessMethod,
         form.elements.DistributionColumn, form.elements.ColocateWith, form.elements.ShardCount].forEach(control => {
         if (!control) return; control.setAttribute("aria-disabled", "true"); control.classList.add("is-immutable");
         control.addEventListener("keydown", event => { if (event.key !== "Tab") event.preventDefault(); });
@@ -1750,6 +1879,10 @@
       if (action === "refresh") { await refreshTree(); showToast(t("action.treeRefreshed")); return; }
       if (action === "query") { window.databaseWorkspaces?.openQuery({ kind: target.kind, schema: target.schema, name: target.name }); return; }
       if (action === "modify-table") { await openModify(target); return; }
+      if (action === "table-info") { window.databaseWorkspaces?.openInformation(target.schema, target.name); return; }
+      if (action === "create-partition") { await openRangePartition(target); return; }
+      if (action === "merge-partitions") { await openMergePartitions(target); return; }
+      if (action === "rebuild-index") { await openRebuildIndex(target.schema, target.name, target.childName); return; }
       if (action === "browse" || action === "structure") {
         if (action === "browse") window.databaseWorkspaces?.openObject(target.schema, target.name, "data");
         else if (target.coordinator && target.canOperate && ["table", "partitionedtable", "table-section", "table-child"].includes(target.kind))
@@ -1818,32 +1951,42 @@
       if (action === "convert") {
         const metadata = await getMetadata();
         const qualified = `${target.schema}.${target.name}`;
+        const current = String(target.tableMode || "local").toLowerCase();
+        const modeOptions = current === "local"
+          ? '<option value="ManagedLocal">Citus-managed Local</option><option value="Reference">Reference</option><option value="Distributed">Distributed</option>'
+          : current === "distributed"
+            ? '<option value="Distributed">Distributed settings</option><option value="Local">Local (undistribute)</option>'
+            : '<option value="Local">Local (undistribute)</option>';
         openModal({ title: "Citus table conversion", eyebrow: "IMPACT OPERATION",
           description: t("designer.convertHelp"),
-          body: field("Target mode", `<select name="TargetMode"><option value="Distributed">Distributed</option><option value="Reference">Reference</option></select>`) +
-            field("Distribution column", input("DistributionColumn", "", "text", "required maxlength=63")) +
+          body: field("Current mode", `<input value="${html(target.tableMode)}" readonly>`) + field("Target mode", `<select name="TargetMode">${modeOptions}</select>`) +
+            field("Distribution column", input("DistributionColumn", "", "text", "maxlength=63")) +
             colocationField("Colocate with") +
             field("Shard count", input("ShardCount", "", "number", "min=1 max=4096 placeholder='server default'")) +
+            '<label class="database-action-check"><input name="CascadeToColocated" type="checkbox"/> Apply shard/layout change to colocated tables</label>' +
             `<label class="database-action-check database-impact-check"><input name="Acknowledged" type="checkbox" required/> ${t("designer.convertAcknowledgement")}</label>` +
             field(t("designer.typeToConfirm", qualified), input("TypedConfirmation", "", "text", "required autocomplete=off")), button: t("designer.createConversionPlan"),
           onSubmit: async () => {
             if (form.elements.TypedConfirmation.value !== qualified) throw { responseJSON: { detail: t("action.exactConfirmation", qualified) } };
-            const reference = form.elements.TargetMode.value === "Reference";
-            await finish(await post($explorer.data("convert-table-url"), { Schema: target.schema, Table: target.name,
-              TargetMode: form.elements.TargetMode.value, DistributionColumn: reference ? null : form.elements.DistributionColumn.value,
-              ColocateWith: reference ? null : form.elements.ColocateWith.value || null,
-              ShardCount: reference || !form.elements.ShardCount.value ? null : Number(form.elements.ShardCount.value),
-              ExternalCapacityAndBackupChecksAcknowledged: form.elements.Acknowledged.checked,
-              TypedConfirmation: form.elements.TypedConfirmation.value }));
+            const distributed = form.elements.TargetMode.value === "Distributed";
+            const result = await jsonPost(explorer.dataset.tableModeOperationUrl, { schema: target.schema, table: target.name,
+              targetMode: form.elements.TargetMode.value, distributionColumn: distributed ? form.elements.DistributionColumn.value || null : null,
+              colocateWith: distributed ? form.elements.ColocateWith.value || null : null,
+              shardCount: distributed && form.elements.ShardCount.value ? Number(form.elements.ShardCount.value) : null,
+              cascadeToColocated: form.elements.CascadeToColocated.checked,
+              externalCapacityAndBackupChecksAcknowledged: form.elements.Acknowledged.checked,
+              typedConfirmation: form.elements.TypedConfirmation.value });
+            closeModal(); trackOperation(result);
           } });
         const colocatePicker = bindColocationPicker(metadata.distributedTables, () => target.schema || "public");
         const mode = form.elements.TargetMode;
         mode.addEventListener("change", () => {
-          const reference = mode.value === "Reference";
-          [form.elements.DistributionColumn, form.elements.ColocateWith, form.elements.ShardCount].forEach(x => x.disabled = reference);
-          colocatePicker?.setDisabled(reference);
-          form.elements.DistributionColumn.required = !reference;
+          const distributed = mode.value === "Distributed";
+          [form.elements.DistributionColumn, form.elements.ColocateWith, form.elements.ShardCount, form.elements.CascadeToColocated].forEach(x => x.disabled = !distributed);
+          colocatePicker?.setDisabled(!distributed);
+          form.elements.DistributionColumn.required = distributed && current !== "distributed";
         });
+        mode.dispatchEvent(new Event("change"));
       }
     } catch (xhr) {
       showToast(problemText(xhr));
