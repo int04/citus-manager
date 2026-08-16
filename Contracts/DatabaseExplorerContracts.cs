@@ -392,6 +392,7 @@ public sealed record CreateRangePartitionsRequest
     [Range(1, 366)] public int IntervalCount { get; init; } = 1;
     public PartitionIntervalUnit IntervalUnit { get; init; } = PartitionIntervalUnit.Month;
     public DateTimeOffset Target { get; init; }
+    [RegularExpression(@"^\d{4}-\d{2}-\d{2}$")] public string? TargetDate { get; init; }
     [Required, MaxLength(63)] public required string NamingTemplate { get; init; }
 }
 

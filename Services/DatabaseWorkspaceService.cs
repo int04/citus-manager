@@ -108,7 +108,8 @@ public sealed class DatabaseWorkspaceService(
         // to this text-only response projection.
         var projection = string.Join(", ", metadata.Columns.Select((column, index) =>
             $"cm.{Quote(column.Name)}::text AS {Quote($"__cm_value_{index}")}"));
-        var sql = $"SELECT {projection}, md5(to_jsonb(cm)::text) AS __cm_fingerprint FROM {qualified} AS cm" +
+        var fingerprint = DatabaseRowFingerprint.Sql("cm", metadata.Columns.Select(x => x.Name));
+        var sql = $"SELECT {projection}, {fingerprint} AS __cm_fingerprint FROM {qualified} AS cm" +
                   (where.Length == 0 ? "" : $" WHERE ({where})") +
                   (order.Length == 0 ? "" : $" ORDER BY {order}") + $" LIMIT {pageSize + 1} OFFSET {offset}";
         DatabaseWorkspaceQueryValidator.Validate(sql, request.Schema, request.ObjectName);
@@ -174,7 +175,7 @@ public sealed class DatabaseWorkspaceService(
         var parameters = new List<NpgsqlParameter>(); var index = 1;
         var predicates = KeyPredicates(request.Identity.Keys, keys, parameters, ref index);
         parameters.Add(new($"p{index}", request.Identity.Fingerprint));
-        predicates.Add($"md5(to_jsonb(t)::text) = @p{index}");
+        predicates.Add($"{DatabaseRowFingerprint.Sql("t", metadata.Columns.Select(x => x.Name))} = @p{index}");
         var sql = $"SELECT t.{Quote(request.Column)}::text FROM {Qualified(request.Schema, request.ObjectName)} AS t WHERE {string.Join(" AND ", predicates)}";
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction)) await readOnly.ExecuteNonQueryAsync(ct);
@@ -211,7 +212,7 @@ public sealed class DatabaseWorkspaceService(
             {
                 ValidateChanges(row.Changes, columnMap, false);
                 await EnsureFingerprintAsync(connection, transaction, request.Schema, request.ObjectName,
-                    row.Keys, row.Fingerprint, keys, ct);
+                    row.Keys, row.Fingerprint, keys, columns, ct);
                 var parameters = new List<NpgsqlParameter>(); var index = 1;
                 var sets = row.Changes.Select(change => change.UseDefault ? $"{Quote(change.Column)} = DEFAULT" :
                     $"{Quote(change.Column)} = {AddValue(parameters, ref index, change, columnMap[change.Column].DataType)}").ToList();
@@ -222,7 +223,7 @@ public sealed class DatabaseWorkspaceService(
             foreach (var row in request.Deletes)
             {
                 await EnsureFingerprintAsync(connection, transaction, request.Schema, request.ObjectName,
-                    row.Keys, row.Fingerprint, keys, ct);
+                    row.Keys, row.Fingerprint, keys, columns, ct);
                 var parameters = new List<NpgsqlParameter>(); var index = 1;
                 var predicates = KeyPredicates(row.Keys, keys, parameters, ref index);
                 await ExecuteOneAsync(connection, transaction,
@@ -542,11 +543,13 @@ public sealed class DatabaseWorkspaceService(
     private static async Task EnsureFingerprintAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, string schema, string table,
         IReadOnlyDictionary<string, string?> values, string expectedFingerprint,
-        IReadOnlyList<WorkspaceColumnResponse> keys, CancellationToken ct)
+        IReadOnlyList<WorkspaceColumnResponse> keys, IReadOnlyList<WorkspaceColumnResponse> columns,
+        CancellationToken ct)
     {
         var parameters = new List<NpgsqlParameter>(); var index = 1;
         var predicates = KeyPredicates(values, keys, parameters, ref index);
-        var sql = $"SELECT md5(to_jsonb(t)::text) FROM {Qualified(schema, table)} AS t WHERE {string.Join(" AND ", predicates)}";
+        var sql = $"SELECT {DatabaseRowFingerprint.Sql("t", columns.Select(x => x.Name))} " +
+                  $"FROM {Qualified(schema, table)} AS t WHERE {string.Join(" AND ", predicates)}";
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         foreach (var parameter in parameters) command.Parameters.Add(parameter);
         var actual = await command.ExecuteScalarAsync(ct);
@@ -568,6 +571,18 @@ internal static class DatabaseWorkspaceColumnRules
 {
     internal static bool CanEdit(bool hasUpdatePrivilege, bool isGenerated, bool isDistributionColumn) =>
         hasUpdatePrivilege && !isGenerated && !isDistributionColumn;
+}
+
+internal static class DatabaseRowFingerprint
+{
+    internal static string Sql(string alias, IEnumerable<string> columns)
+    {
+        var values = columns.Select(column => $"{alias}.{Quote(column)}::text").ToArray();
+        if (values.Length == 0) throw new ArgumentException("Row fingerprint requires at least one column.");
+        return $"md5(to_jsonb(ARRAY[{string.Join(", ", values)}]::text[])::text)";
+    }
+
+    private static string Quote(string value) => $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
 }
 
 internal static class DatabaseWorkspaceQueryValidator

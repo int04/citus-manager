@@ -103,21 +103,32 @@ public sealed class OperationExecutor(
             operation.Status = operation.Kind == OperationKind.RemoveWorker ||
                                (operation.Kind == OperationKind.ConvertTable && HasStep(operation, "table-preflight")) ||
                                (operation.Kind == OperationKind.MergeRangePartitions && HasStep(operation, "merge-stage-created")) ||
-                               (operation.Kind == OperationKind.RebuildIndex && HasStep(operation, "reindex-started")) ||
+                               (operation.Kind == OperationKind.RebuildIndex &&
+                                operation.Steps.Any(x => x.Name == "reindex-started")) ||
                                (operation.Kind == OperationKind.ChangeTableMode && HasStep(operation, "mode-change-started"))
                 ? OperationStatus.RecoveryRequired
                 : OperationStatus.Failed;
             operation.SafeError = exception switch
             {
+                PostgresException postgres when operation.Kind == OperationKind.RebuildIndex &&
+                                                postgres.SqlState == PostgresErrorCodes.UniqueViolation =>
+                    HasLongDistributedReindexName(operation)
+                        ? "Concurrent rebuild recovery required (SQLSTATE 23505): long leaf index names collided while Citus " +
+                          "generated shard and _ccnew/_ccold names. Inspect every placement for INVALID transient artifacts. " +
+                          "After verified cleanup, use blocking mode in an approved maintenance window or rename the logical index shorter."
+                        : "Concurrent rebuild recovery required (SQLSTATE 23505): an INVALID transient index " +
+                          "with a _ccnew/_ccold suffix probably remains from an earlier attempt. Inspect the coordinator " +
+                          "and every Citus placement; drop only the proven transient INVALID artifact, never the original valid index, then retry.",
                 PostgresException postgres =>
                     $"Citus/PostgreSQL command failed (SQLSTATE {postgres.SqlState}): {SafeMessage(postgres.MessageText)}",
-                InvalidOperationException invalid when operation.Kind == OperationKind.InspectTable =>
-                    $"Exact metrics failed: {SafeMessage(invalid.Message)}",
+                InvalidOperationException invalid => $"Operation preflight failed: {SafeMessage(invalid.Message)}",
                 _ => "Operation failed. Review preflight and checkpoints."
             };
             operation.CompletedAt = DateTimeOffset.UtcNow;
             operation.Version++;
-            await SaveStepAsync(operation, "failure", "Failed", operation.SafeError, CancellationToken.None);
+            await SaveStepAsync(operation, "failure",
+                operation.Status == OperationStatus.RecoveryRequired ? "RecoveryRequired" : "Failed",
+                operation.SafeError, CancellationToken.None);
             return true;
         }
     }
@@ -425,7 +436,17 @@ public sealed class OperationExecutor(
         }
         await SaveStepAsync(operation, "reindex-started", "Running",
             $"index={rebuild.Schema}.{rebuild.Index}; concurrently={rebuild.Concurrently}; bytes={rebuild.Bytes}", cancellationToken);
-        await maintenance.ExecuteReindexAsync(cluster, rebuild, cancellationToken);
+        await maintenance.ExecuteReindexAsync(cluster, rebuild, async (step, detail) =>
+        {
+            await SaveStepAsync(operation, step, "Succeeded", detail, cancellationToken);
+            operation.ResultJson = JsonSerializer.Serialize(new
+            {
+                currentItems = operation.Steps.Count(x => x.Name.StartsWith("reindex-leaf-", StringComparison.Ordinal)),
+                totalItems = rebuild.Targets?.Count ?? 1
+            });
+            operation.Version++;
+            await db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
         await SaveStepAsync(operation, "reindex-validated", "Succeeded", "Index is valid after rebuild.", cancellationToken);
         await CompleteAsync(operation, new { rebuild.Schema, rebuild.Table, rebuild.Index, rebuild.Concurrently }, cancellationToken);
     }
@@ -547,6 +568,21 @@ public sealed class OperationExecutor(
 
     private static bool HasStep(ClusterOperation operation, string name) =>
         operation.Steps.Any(x => x.Name == name && x.Status == "Succeeded");
+
+    private static bool HasLongDistributedReindexName(ClusterOperation operation)
+    {
+        try
+        {
+            var rebuild = JsonSerializer.Deserialize<OperationPlan>(operation.PlanJson)?.RebuildIndex;
+            return rebuild?.Distributed == true &&
+                   rebuild.Targets?.Any(x => x.RenameTo is null &&
+                                              System.Text.Encoding.UTF8.GetByteCount(x.Index) > 48) == true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
     private static bool SameNode(string leftHost, int leftPort, string rightHost, int rightPort) =>
         leftPort == rightPort && string.Equals(leftHost, rightHost, StringComparison.OrdinalIgnoreCase);
     private static void EnsureSameMajorVersion(string planned, string current)

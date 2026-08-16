@@ -520,11 +520,13 @@
 
   async function openRangePartition(target) {
     const defaultTarget = new Date(); defaultTarget.setMonth(defaultTarget.getMonth() + 6);
+    const targetDate = `${defaultTarget.getFullYear()}-${String(defaultTarget.getMonth()+1).padStart(2,"0")}-${String(defaultTarget.getDate()).padStart(2,"0")}`;
     let preflight = null;
     openModal({ title: t("maintenance.rangeTitle"), eyebrow: "DURABLE WRITE OPERATION", description: `${target.schema}.${target.name}`,
-      body: `<div class="database-partition-operation-form"><div class="database-action-grid">${field("Every", input("IntervalCount", "1", "number", "required min=1 max=366"))}${field("Unit", '<select name="IntervalUnit"><option value="Day">day(s)</option><option value="Week">week(s)</option><option value="Month" selected>month(s)</option></select>')}${field("Create through", input("Target", defaultTarget.toISOString().slice(0,16), "datetime-local", "required"))}${field("Naming template", input("NamingTemplate", `${target.name}_p_{yyyy}_{MM}`, "text", "required maxlength=63"))}</div><p class="database-action-hint"><i class="fa fa-clock-o"></i> Bounds align to the database calendar and timezone.</p><div id="database-partition-preview" class="database-partition-preview hidden"></div></div>`,
+      body: `<div class="database-partition-operation-form"><div class="database-action-grid">${field("Every", input("IntervalCount", "1", "number", "required min=1 max=366"))}${field("Unit", '<select name="IntervalUnit"><option value="Day">day(s)</option><option value="Week">week(s)</option><option value="Month" selected>month(s)</option></select>')}${field("Create through · 23:59:59", input("TargetDate", targetDate, "date", "required"))}${field("Naming template", input("NamingTemplate", `${target.name}_p_{yyyy}_{MM}`, "text", "required maxlength=63"))}</div><p class="database-action-hint"><i class="fa fa-clock-o"></i> Target always ends at 23:59:59 in the database timezone; bounds align to its calendar.</p><div id="database-partition-preview" class="database-partition-preview hidden"></div></div>`,
       button: t("maintenance.preview"), onSubmit: async () => {
-        const body = { schema: target.schema, table: target.name, intervalCount: Number(form.elements.IntervalCount.value), intervalUnit: form.elements.IntervalUnit.value, target: new Date(form.elements.Target.value).toISOString(), namingTemplate: form.elements.NamingTemplate.value };
+        const selectedDate = form.elements.TargetDate.value;
+        const body = { schema: target.schema, table: target.name, intervalCount: Number(form.elements.IntervalCount.value), intervalUnit: form.elements.IntervalUnit.value, targetDate: selectedDate, target: `${selectedDate}T23:59:59Z`, namingTemplate: form.elements.NamingTemplate.value };
         if (!preflight) {
           preflight = await jsonPost(explorer.dataset.rangePreflightUrl, body);
           const preview = document.getElementById("database-partition-preview"); preview.classList.remove("hidden");

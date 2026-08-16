@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using CitusManager.Contracts;
@@ -22,7 +24,10 @@ public sealed record MergePartitionPlan(
 
 public sealed record RebuildIndexPlan(
     string Schema, string Table, string Index, bool Concurrently, string CatalogFingerprint,
-    long Bytes, bool ConstraintBacked, bool Partitioned, bool Distributed, IReadOnlyList<string> Warnings);
+    long Bytes, bool ConstraintBacked, bool Partitioned, bool Distributed, IReadOnlyList<string> Warnings,
+    IReadOnlyList<RebuildIndexTarget>? Targets = null);
+
+public sealed record RebuildIndexTarget(string Schema, string Index, string? RenameTo = null);
 
 public sealed record InspectTablePlan(string Schema, string Table, bool ExactRowCount, bool ExactPlacementSizes);
 
@@ -49,7 +54,8 @@ public interface IDatabaseMaintenanceService
     Task<MergePartitionPlan> BuildMergePlanAsync(Guid clusterId, MergeRangePartitionsRequest request, CancellationToken cancellationToken);
     Task ExecuteMergeAsync(ClusterProfile cluster, MergePartitionPlan plan, Func<string, string, Task> checkpoint, CancellationToken cancellationToken);
     Task<RebuildIndexPlan> BuildReindexPlanAsync(Guid clusterId, RebuildIndexRequest request, CancellationToken cancellationToken);
-    Task ExecuteReindexAsync(ClusterProfile cluster, RebuildIndexPlan plan, CancellationToken cancellationToken);
+    Task ExecuteReindexAsync(ClusterProfile cluster, RebuildIndexPlan plan,
+        Func<string, string, Task>? checkpoint, CancellationToken cancellationToken);
     Task<ChangeTableModePlan> BuildModePlanAsync(Guid clusterId, ChangeTableModeRequest request, CancellationToken cancellationToken);
     Task ExecuteModeChangeAsync(ClusterProfile cluster, ChangeTableModePlan plan, CancellationToken cancellationToken);
     Task<ExactTableMetricsResult> InspectExactAsync(ClusterProfile cluster, InspectTablePlan plan, CancellationToken cancellationToken);
@@ -249,11 +255,22 @@ public sealed partial class DatabaseMaintenanceService(
     {
         ValidateObject(request.Schema, request.Table);
         ValidateNameTemplate(request.NamingTemplate);
-        if (request.Target == default) throw new ArgumentException("Target time is required.");
         var cluster = await GetClusterAsync(clusterId, cancellationToken);
         await using var connection = connections.Create(cluster); await connection.OpenAsync(cancellationToken);
         var catalog = await ReadRangeCatalogAsync(connection, request.Schema, request.Table, cancellationToken);
-        var points = await GenerateCalendarPointsAsync(connection, request, catalog.TimeZone, cancellationToken);
+        DateOnly targetDate;
+        if (!string.IsNullOrWhiteSpace(request.TargetDate))
+        {
+            if (!DateOnly.TryParseExact(request.TargetDate, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out targetDate))
+                throw new ArgumentException("Target date must use yyyy-MM-dd format.");
+        }
+        else
+        {
+            if (request.Target == default) throw new ArgumentException("Target date is required.");
+            targetDate = DateOnly.FromDateTime(ConvertToDatabaseTime(request.Target, catalog.TimeZone).DateTime);
+        }
+        var points = await GenerateCalendarPointsAsync(connection, request, targetDate, catalog.TimeZone, cancellationToken);
         if (points.Count < 2) throw new ArgumentException("Target must be after the current calendar boundary.");
         if (points.Count - 1 > 512) throw new ArgumentException("One operation can create at most 512 partitions.");
         var items = new List<PartitionRangePreviewItemResponse>();
@@ -389,25 +406,78 @@ public sealed partial class DatabaseMaintenanceService(
         else warnings.Add("Blocking rebuild can block writers for the full operation duration.");
         if (info.Mode is DatabaseTableMode.Distributed or DatabaseTableMode.Reference)
             warnings.Add("Citus propagation and every shard placement are validated after rebuild.");
+        await using var targetConnection = connections.Create(cluster);
+        await targetConnection.OpenAsync(cancellationToken);
+        var targets = await ReadLeafIndexesAsync(targetConnection, request.Schema, request.Index, cancellationToken);
+        if (targets.Count == 0) throw new InvalidOperationException("No rebuildable leaf index was found.");
+        if (request.Concurrently && info.Mode is DatabaseTableMode.Distributed or DatabaseTableMode.Reference &&
+            targets.Any(x => Encoding.UTF8.GetByteCount(x.Index) > 48))
+        {
+            if (index.ConstraintBacked)
+                throw new InvalidOperationException(
+                    "Concurrent rebuild requires shorter leaf index names, but this index backs a constraint. " +
+                    "Automatic rename is disabled for constraint-backed indexes; use blocking mode or rename through a separately reviewed constraint migration.");
+            targets = await PlanShortLeafIndexNamesAsync(targetConnection, request.Index, targets, cancellationToken);
+            warnings.Add($"{targets.Count(x => x.RenameTo is not null)} long leaf index names will be shortened automatically before concurrent rebuild; the parent index name remains unchanged.");
+        }
+        var invalidArtifacts = await ReadInvalidConcurrentIndexArtifactsAsync(targetConnection, targets, cancellationToken);
+        if (invalidArtifacts.Count > 0)
+            throw new InvalidOperationException(
+                $"Concurrent rebuild recovery is required before retry. Invalid transient indexes: {string.Join(", ", invalidArtifacts)}. " +
+                "Verify each artifact and its Citus placements before dropping it; do not drop the original valid index.");
+        if (targets.Count > 1)
+            warnings.Add($"Partitioned index will be rebuilt leaf-by-leaf ({targets.Count} indexes). Each leaf has an independent checkpoint.");
         return new(request.Schema, request.Table, request.Index, request.Concurrently, fingerprint, index.Bytes,
             index.ConstraintBacked, info.Kind == DatabaseObjectKind.PartitionedTable,
-            info.Mode is DatabaseTableMode.Distributed or DatabaseTableMode.Reference, warnings);
+            info.Mode is DatabaseTableMode.Distributed or DatabaseTableMode.Reference, warnings, targets);
     }
 
-    public async Task ExecuteReindexAsync(ClusterProfile cluster, RebuildIndexPlan plan, CancellationToken cancellationToken)
+    public async Task ExecuteReindexAsync(ClusterProfile cluster, RebuildIndexPlan plan,
+        Func<string, string, Task>? checkpoint, CancellationToken cancellationToken)
     {
         if (!string.Equals(await ReadFingerprintAsync(cluster, plan.Schema, plan.Table, cancellationToken), plan.CatalogFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("Table catalog changed after approval.");
         await using var connection = connections.Create(cluster); await connection.OpenAsync(cancellationToken);
         var concurrently = plan.Concurrently ? " CONCURRENTLY" : string.Empty;
-        await ExecuteAsync(connection, $"REINDEX INDEX{concurrently} {Qualified(plan.Schema, plan.Index)}", cancellationToken);
-        await using var command = new NpgsqlCommand("""
-            SELECT i.indisvalid FROM pg_index i JOIN pg_class ci ON ci.oid=i.indexrelid
-            JOIN pg_namespace n ON n.oid=ci.relnamespace WHERE n.nspname=$1 AND ci.relname=$2
-            """, connection);
-        command.Parameters.AddWithValue(plan.Schema); command.Parameters.AddWithValue(plan.Index);
-        if (await command.ExecuteScalarAsync(cancellationToken) is not true)
-            throw new InvalidOperationException("Rebuilt index is not valid.");
+        var targets = plan.Targets is { Count: > 0 }
+            ? plan.Targets
+            : await ReadLeafIndexesAsync(connection, plan.Schema, plan.Index, cancellationToken);
+        foreach (var target in targets)
+        {
+            var effectiveIndex = target.Index;
+            if (!string.IsNullOrWhiteSpace(target.RenameTo))
+            {
+                var originalExists = await IndexExistsAsync(connection, target.Schema, target.Index, cancellationToken);
+                var renamedExists = await IndexExistsAsync(connection, target.Schema, target.RenameTo, cancellationToken);
+                if (originalExists && renamedExists)
+                    throw new InvalidOperationException($"Cannot shorten {target.Schema}.{target.Index}: target name {target.RenameTo} already exists.");
+                if (originalExists)
+                {
+                    await ExecuteAsync(connection,
+                        $"ALTER INDEX {Qualified(target.Schema, target.Index)} RENAME TO {Quote(target.RenameTo)}",
+                        cancellationToken);
+                    if (checkpoint is not null)
+                        await checkpoint($"rename-leaf-{target.Index}",
+                            $"{target.Schema}.{target.Index} renamed to {target.RenameTo} before concurrent rebuild.");
+                }
+                else if (!renamedExists)
+                {
+                    throw new InvalidOperationException($"Neither planned index name exists: {target.Schema}.{target.Index} / {target.RenameTo}.");
+                }
+                effectiveIndex = target.RenameTo;
+            }
+
+            await ExecuteAsync(connection, $"REINDEX INDEX{concurrently} {Qualified(target.Schema, effectiveIndex)}", cancellationToken);
+            await using var command = new NpgsqlCommand("""
+                SELECT i.indisvalid FROM pg_index i JOIN pg_class ci ON ci.oid=i.indexrelid
+                JOIN pg_namespace n ON n.oid=ci.relnamespace WHERE n.nspname=$1 AND ci.relname=$2
+                """, connection);
+            command.Parameters.AddWithValue(target.Schema); command.Parameters.AddWithValue(effectiveIndex);
+            if (await command.ExecuteScalarAsync(cancellationToken) is not true)
+                throw new InvalidOperationException($"Rebuilt leaf index {target.Schema}.{effectiveIndex} is not valid.");
+            if (checkpoint is not null)
+                await checkpoint($"reindex-leaf-{effectiveIndex}", $"{target.Schema}.{effectiveIndex} rebuilt and validated.");
+        }
     }
 
     public async Task<ChangeTableModePlan> BuildModePlanAsync(
@@ -730,6 +800,123 @@ public sealed partial class DatabaseMaintenanceService(
         return result;
     }
 
+    private async Task<List<RebuildIndexTarget>> ReadLeafIndexesAsync(
+        NpgsqlConnection connection, string schema, string index, CancellationToken token)
+    {
+        await using var command = new NpgsqlCommand("""
+            WITH RECURSIVE index_tree(oid, schema_name, index_name) AS (
+                SELECT parent.oid, parent_namespace.nspname, parent.relname
+                FROM pg_class parent
+                JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace
+                WHERE parent_namespace.nspname = $1 AND parent.relname = $2
+                  AND parent.relkind IN ('i','I')
+                UNION ALL
+                SELECT child.oid, child_namespace.nspname, child.relname
+                FROM index_tree parent
+                JOIN pg_inherits inheritance ON inheritance.inhparent = parent.oid
+                JOIN pg_class child ON child.oid = inheritance.inhrelid
+                JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace
+            )
+            SELECT leaf.schema_name, leaf.index_name
+            FROM index_tree leaf
+            WHERE NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhparent = leaf.oid)
+            ORDER BY leaf.schema_name, leaf.index_name
+            """, connection) { CommandTimeout = options.CommandTimeoutSeconds };
+        command.Parameters.AddWithValue(schema);
+        command.Parameters.AddWithValue(index);
+        var result = new List<RebuildIndexTarget>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) result.Add(new(reader.GetString(0), reader.GetString(1)));
+        return result;
+    }
+
+    private async Task<List<RebuildIndexTarget>> PlanShortLeafIndexNamesAsync(
+        NpgsqlConnection connection, string parentIndex, IReadOnlyList<RebuildIndexTarget> targets,
+        CancellationToken token)
+    {
+        var result = new List<RebuildIndexTarget>(targets.Count);
+        var reserved = new HashSet<string>(StringComparer.Ordinal);
+        var stem = Regex.Replace(parentIndex, "[^A-Za-z0-9_]+", "_").Trim('_').ToLowerInvariant();
+        if (stem.StartsWith("ix_", StringComparison.Ordinal)) stem = stem[3..];
+        if (stem.Length == 0) stem = "index";
+        if (stem.Length > 24) stem = stem[..24].TrimEnd('_');
+
+        foreach (var target in targets)
+        {
+            if (Encoding.UTF8.GetByteCount(target.Index) <= 48)
+            {
+                result.Add(target);
+                reserved.Add($"{target.Schema}.{target.Index}");
+                continue;
+            }
+
+            string? renameTo = null;
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                var source = Encoding.UTF8.GetBytes($"{target.Schema}.{target.Index}:{attempt}");
+                var hash = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant()[..10];
+                var candidate = $"ix_{stem}_{hash}";
+                DatabaseObjectDdlSafety.ValidateIdentifier(candidate, nameof(RebuildIndexTarget.RenameTo));
+                var key = $"{target.Schema}.{candidate}";
+                if (reserved.Contains(key) || await IndexExistsAsync(connection, target.Schema, candidate, token)) continue;
+                renameTo = candidate;
+                reserved.Add(key);
+                break;
+            }
+            if (renameTo is null)
+                throw new InvalidOperationException($"Could not allocate a collision-free short name for leaf index {target.Schema}.{target.Index}.");
+            result.Add(target with { RenameTo = renameTo });
+        }
+        return result;
+    }
+
+    private async Task<bool> IndexExistsAsync(
+        NpgsqlConnection connection, string schema, string index, CancellationToken token)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT EXISTS (
+                SELECT 1 FROM pg_class index_relation
+                JOIN pg_namespace namespace ON namespace.oid = index_relation.relnamespace
+                WHERE namespace.nspname = $1 AND index_relation.relname = $2
+                  AND index_relation.relkind IN ('i','I')
+            )
+            """, connection) { CommandTimeout = options.CommandTimeoutSeconds };
+        command.Parameters.AddWithValue(schema);
+        command.Parameters.AddWithValue(index);
+        return await command.ExecuteScalarAsync(token) is true;
+    }
+
+    private async Task<List<string>> ReadInvalidConcurrentIndexArtifactsAsync(
+        NpgsqlConnection connection, IReadOnlyList<RebuildIndexTarget> targets, CancellationToken token)
+    {
+        var artifacts = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var target in targets)
+        {
+            await using var command = new NpgsqlCommand("""
+                WITH target_table AS (
+                    SELECT target_index.indrelid
+                    FROM pg_index target_index
+                    JOIN pg_class target_class ON target_class.oid = target_index.indexrelid
+                    JOIN pg_namespace target_namespace ON target_namespace.oid = target_class.relnamespace
+                    WHERE target_namespace.nspname = $1 AND target_class.relname = $2
+                )
+                SELECT artifact_namespace.nspname, artifact_class.relname
+                FROM target_table
+                JOIN pg_index artifact_index ON artifact_index.indrelid = target_table.indrelid
+                JOIN pg_class artifact_class ON artifact_class.oid = artifact_index.indexrelid
+                JOIN pg_namespace artifact_namespace ON artifact_namespace.oid = artifact_class.relnamespace
+                WHERE NOT artifact_index.indisvalid
+                  AND artifact_class.relname ~ '_cc(new|old)[0-9]*$'
+                ORDER BY artifact_class.relname
+                """, connection) { CommandTimeout = options.CommandTimeoutSeconds };
+            command.Parameters.AddWithValue(target.Schema);
+            command.Parameters.AddWithValue(target.Index);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) artifacts.Add($"{reader.GetString(0)}.{reader.GetString(1)}");
+        }
+        return artifacts.OrderBy(x => x, StringComparer.Ordinal).ToList();
+    }
+
     private async Task<long?> ReadRelationTreeBytesAsync(
         NpgsqlConnection connection, string sql, string schema, string relation, CancellationToken token)
     {
@@ -852,7 +1039,8 @@ public sealed partial class DatabaseMaintenanceService(
     }
 
     private async Task<List<DateTimeOffset>> GenerateCalendarPointsAsync(
-        NpgsqlConnection connection, CreateRangePartitionsRequest request, string timeZone, CancellationToken token)
+        NpgsqlConnection connection, CreateRangePartitionsRequest request, DateOnly targetDate,
+        string timeZone, CancellationToken token)
     {
         var unit = request.IntervalUnit switch { PartitionIntervalUnit.Day => "day", PartitionIntervalUnit.Week => "week", _ => "month" };
         var interval = request.IntervalUnit switch
@@ -864,7 +1052,7 @@ public sealed partial class DatabaseMaintenanceService(
         await using var command = new NpgsqlCommand("""
             WITH limits AS (
               SELECT date_trunc($1, now() AT TIME ZONE $2) AS start_local,
-                     ($3::timestamptz AT TIME ZONE $2) AS target_local
+                     ($3::date + time '23:59:59') AS target_local
             )
             SELECT point AT TIME ZONE $2
             FROM limits, LATERAL generate_series(start_local, target_local + $4::interval, $4::interval) point
@@ -872,7 +1060,7 @@ public sealed partial class DatabaseMaintenanceService(
             ORDER BY point
             """, connection);
         command.Parameters.AddWithValue(unit); command.Parameters.AddWithValue(timeZone);
-        command.Parameters.AddWithValue(request.Target); command.Parameters.AddWithValue(interval);
+        command.Parameters.AddWithValue(targetDate); command.Parameters.AddWithValue(interval);
         var result = new List<DateTimeOffset>();
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token)) result.Add(new DateTimeOffset(reader.GetDateTime(0), TimeSpan.Zero));
@@ -901,6 +1089,9 @@ public sealed partial class DatabaseMaintenanceService(
             key=reader.GetString(0); keyType=reader.GetString(1); timezone=reader.GetString(2); shards=reader.GetInt32(3);
             placements=reader.GetInt32(4); indexes=reader.GetInt32(5); fingerprint=reader.GetString(6); oid=reader.GetFieldValue<uint>(7);
         }
+        // Planning and execution must use the identical fingerprint algorithm. This includes
+        // existing child bounds so a real catalog change aborts, while an unchanged plan runs.
+        fingerprint = await ReadFingerprintAsync(connection, schema, table, token);
         if (!(keyType == "date" || keyType.StartsWith("timestamp", StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException("Automatic RANGE generation requires date, timestamp, or timestamptz partition key.");
         var bounds = new List<ExistingRange>();
@@ -909,7 +1100,7 @@ public sealed partial class DatabaseMaintenanceService(
             FROM pg_inherits i JOIN pg_class child ON child.oid=i.inhrelid
             WHERE i.inhparent=$1 ORDER BY child.relname
             """, connection);
-        boundCommand.Parameters.AddWithValue(oid);
+        boundCommand.Parameters.AddWithValue(NpgsqlTypes.NpgsqlDbType.Oid, oid);
         await using var boundReader = await boundCommand.ExecuteReaderAsync(token);
         while (await boundReader.ReadAsync(token))
         {

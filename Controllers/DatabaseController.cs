@@ -105,9 +105,11 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await workspaces.ApplyAsync(clusterId, request, ActorId(), cancellationToken)); }
-        catch (DBConcurrencyException) { return ConflictProblem(); }
+        catch (DBConcurrencyException exception)
+        { return DatabaseMutationProblem(409, text["Problem.Conflict.Title"], exception.Message); }
         catch (ArgumentException) { return InvalidRequest(); }
-        catch (InvalidOperationException) { return DatabaseMutationProblem(409, text["Problem.Save.Title"], text["Problem.Conflict.Detail"]); }
+        catch (InvalidOperationException exception)
+        { return DatabaseMutationProblem(422, text["Problem.Save.Title"], exception.Message); }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.SerializationFailure)
         { return DatabaseMutationProblem(409, text["Problem.Conflict.Title"], text["Problem.Conflict.Detail"], exception.SqlState); }
         catch (PostgresException exception) { return DatabaseMutationProblem(422, text["Problem.Save.Title"], exception.MessageText, exception.SqlState); }
@@ -385,9 +387,11 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await maintenance.PreflightRangeAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException) { return InvalidRequest(); }
+        catch (ArgumentException exception)
+        { return DatabaseMutationProblem(400, text["Problem.Invalid.Title"], exception.Message); }
         catch (KeyNotFoundException) { return NotFoundProblem(); }
-        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (InvalidOperationException exception)
+        { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], exception.Message); }
         catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
@@ -403,9 +407,11 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await maintenance.BuildMergePlanAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException) { return InvalidRequest(); }
+        catch (ArgumentException exception)
+        { return DatabaseMutationProblem(400, text["Problem.Invalid.Title"], exception.Message); }
         catch (KeyNotFoundException) { return NotFoundProblem(); }
-        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (InvalidOperationException exception)
+        { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], exception.Message); }
         catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
@@ -421,9 +427,11 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await maintenance.BuildReindexPlanAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException) { return InvalidRequest(); }
+        catch (ArgumentException exception)
+        { return DatabaseMutationProblem(400, text["Problem.Invalid.Title"], exception.Message); }
         catch (KeyNotFoundException) { return NotFoundProblem(); }
-        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (InvalidOperationException exception)
+        { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], exception.Message); }
         catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
@@ -439,9 +447,11 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await maintenance.BuildModePlanAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException) { return InvalidRequest(); }
+        catch (ArgumentException exception)
+        { return DatabaseMutationProblem(400, text["Problem.Invalid.Title"], exception.Message); }
         catch (KeyNotFoundException) { return NotFoundProblem(); }
-        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (InvalidOperationException exception)
+        { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], exception.Message); }
         catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
@@ -739,10 +749,13 @@ public sealed class DatabaseController(
                 redirectUrl
             });
         }
-        catch (ArgumentException) { return InvalidRequest(); }
+        catch (ArgumentException exception)
+        { return DatabaseMutationProblem(400, text["Problem.Invalid.Title"], exception.Message); }
         catch (KeyNotFoundException) { return NotFoundProblem(); }
-        catch (DBConcurrencyException) { return ConflictProblem(); }
-        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (DBConcurrencyException exception)
+        { return DatabaseMutationProblem(409, text["Problem.Conflict.Title"], exception.Message); }
+        catch (InvalidOperationException exception)
+        { return DatabaseMutationProblem(422, text["Problem.DdlExecute.Title"], exception.Message); }
         catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.DdlExecute.Title"], text["Problem.DatabaseRejected"]); }
     }
 

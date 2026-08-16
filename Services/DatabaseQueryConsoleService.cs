@@ -532,7 +532,8 @@ public sealed class DatabaseQueryConsoleService(
             predicates.Add($"({string.Join(" AND ", clauses)})");
         }
         var keyProjection = string.Join(", ", primaryKey.Select(key => $"cm.{QuoteIdentifier(key)}::text"));
-        fingerprintCommand.CommandText = $"SELECT {keyProjection}, md5(to_jsonb(cm)::text) FROM {Qualified(origin.Schema, origin.ObjectName)} AS cm WHERE {string.Join(" OR ", predicates)}";
+        fingerprintCommand.CommandText = $"SELECT {keyProjection}, {DatabaseRowFingerprint.Sql("cm", columns.Select(x => x.Name))} " +
+                                         $"FROM {Qualified(origin.Schema, origin.ObjectName)} AS cm WHERE {string.Join(" OR ", predicates)}";
         var fingerprints = new Dictionary<string, string>(StringComparer.Ordinal);
         await using (var fingerprintReader = await fingerprintCommand.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct))
         {

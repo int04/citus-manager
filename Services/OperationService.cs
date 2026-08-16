@@ -187,7 +187,8 @@ public sealed class OperationService(
         var inventory = await ReadInventoryAsync(clusterId, cancellationToken);
         var plan = NewPlan(OperationKind.RebuildIndex, inventory, rebuild.Warnings, rebuildIndex: rebuild);
         return await SavePlannedOperationAsync(clusterId, actorId, OperationKind.RebuildIndex,
-            rebuild.Concurrently ? OperationRisk.Impact : OperationRisk.Destructive, plan, autoApprove: false, cancellationToken);
+            rebuild.Concurrently ? OperationRisk.Impact : OperationRisk.Destructive, plan,
+            autoApprove: rebuild.Concurrently, cancellationToken);
     }
 
     public async Task<OperationResponse> CreateChangeTableModeAsync(
@@ -328,7 +329,7 @@ public sealed class OperationService(
         var operation = await LoadAsync(id, cancellationToken);
         if (operation.Status != OperationStatus.AwaitingApproval)
             throw new InvalidOperationException("Only an operation awaiting approval can be approved.");
-        if (operation.RequestedBy == actorId)
+        if (operation.RequestedBy == actorId && !CanRequesterApprove(operation))
             throw new InvalidOperationException("Requester cannot approve their own operation.");
         var competing = await db.Operations.AnyAsync(x => x.ClusterId == operation.ClusterId && x.Id != id &&
             (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running ||
@@ -343,6 +344,19 @@ public sealed class OperationService(
             new { operation.PlanHash }));
         await db.SaveChangesAsync(cancellationToken);
         return Map(operation);
+    }
+
+    private static bool CanRequesterApprove(ClusterOperation operation)
+    {
+        if (operation.Kind != OperationKind.RebuildIndex) return false;
+        try
+        {
+            return JsonSerializer.Deserialize<OperationPlan>(operation.PlanJson)?.RebuildIndex?.Concurrently == true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     public async Task<OperationResponse> CancelAsync(Guid id, Guid actorId, CancellationToken cancellationToken)

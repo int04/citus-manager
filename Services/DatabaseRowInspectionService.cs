@@ -312,10 +312,11 @@ public sealed class DatabaseRowInspectionService(
         var parameterIndex = 1;
         var predicates = KeyPredicates(identity.Keys, keys, parameters, ref parameterIndex);
         parameters.Add(new($"p{parameterIndex}", identity.Fingerprint));
-        predicates.Add($"md5(to_jsonb(t)::text) = @p{parameterIndex}");
+        var fingerprintSql = DatabaseRowFingerprint.Sql("t", columns.Select(x => x.Name));
+        predicates.Add($"{fingerprintSql} = @p{parameterIndex}");
         var projection = string.Join(", ", columns.Select((column, index) =>
             $"t.{Quote(column.Name)}::text AS {Quote($"__cm_value_{index}")}"));
-        var sql = $"SELECT {projection}, md5(to_jsonb(t)::text) FROM {Qualified(catalog.Schema, catalog.Name)} AS t " +
+        var sql = $"SELECT {projection}, {fingerprintSql} FROM {Qualified(catalog.Schema, catalog.Name)} AS t " +
                   $"WHERE {string.Join(" AND ", predicates)} LIMIT 1";
 
         await using var command = NewCommand(sql, connection, transaction, parameters);
@@ -343,7 +344,7 @@ public sealed class DatabaseRowInspectionService(
         try
         {
             var internalSql = $"SELECT tableoid::bigint, tableoid::regclass::text, ctid::text, xmin::text, xmax::text, " +
-                              $"pg_column_size(t), md5(to_jsonb(t)::text) FROM {Qualified(catalog.Schema, catalog.Name)} AS t " +
+                              $"pg_column_size(t), {fingerprintSql} FROM {Qualified(catalog.Schema, catalog.Name)} AS t " +
                               $"WHERE {string.Join(" AND ", predicates)} LIMIT 1";
             await using var internalCommand = NewCommand(internalSql, connection, transaction, parameters);
             await using var internalReader = await internalCommand.ExecuteReaderAsync(cancellationToken);
