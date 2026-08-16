@@ -22,6 +22,18 @@ public sealed class DatabaseObjectDdlSafetyTests
     }
 
     [Fact]
+    public void Modify_column_original_name_is_validated_as_identifier()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            Columns = [new() { OriginalName = "id\0DROP", Name = "id", DataType = "bigint", Nullable = false }]
+        };
+
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
     public void Distributed_primary_key_requires_distribution_column()
     {
         var request = Table(DatabaseTableMode.Distributed, "tenant_id") with

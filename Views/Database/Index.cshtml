@@ -8,6 +8,7 @@
 
 @section Styles {
     <link rel="stylesheet" href="~/css/query-console.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/database-designer.css" asp-append-version="true" />
 }
 
 <div class="database-page pma-explorer" data-database-explorer
@@ -39,10 +40,12 @@
      data-workspace-csv-export-url="@Url.Action("ExportCsv", "Database", new { clusterId = Model.Cluster.Id })"
      data-metadata-url="@Url.Action("ActionMetadata", "Database", new { clusterId = Model.Cluster.Id })"
      data-view-definition-url="@Url.Action("ViewDefinition", "Database", new { clusterId = Model.Cluster.Id })"
+     data-table-definition-url="@Url.Action("TableDesignerDefinition", "Database", new { clusterId = Model.Cluster.Id })"
      data-sequence-inspect-url="@Url.Action("InspectSequence", "Database", new { clusterId = Model.Cluster.Id })"
      data-dependencies-url="@Url.Action("Dependencies", "Database", new { clusterId = Model.Cluster.Id })"
      data-create-schema-url="@Url.Action("CreateSchema", "Database", new { clusterId = Model.Cluster.Id })"
      data-create-table-url="@Url.Action("CreateTable", "Database", new { clusterId = Model.Cluster.Id })"
+     data-modify-table-url="@Url.Action("ModifyTable", "Database", new { clusterId = Model.Cluster.Id })"
      data-create-view-url="@Url.Action("CreateView", "Database", new { clusterId = Model.Cluster.Id })"
      data-create-sequence-url="@Url.Action("CreateSequence", "Database", new { clusterId = Model.Cluster.Id })"
      data-rename-url="@Url.Action("Rename", "Database", new { clusterId = Model.Cluster.Id })"

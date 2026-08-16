@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using CitusManager.Contracts;
 using CitusManager.Data;
 using CitusManager.Domain;
@@ -10,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Localization;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace CitusManager.Services;
 
@@ -17,10 +20,12 @@ public interface IDatabaseObjectService
 {
     Task<DatabaseActionMetadataResponse> GetMetadataAsync(Guid clusterId, CancellationToken cancellationToken);
     Task<DatabaseObjectDefinitionResponse> GetViewDefinitionAsync(Guid clusterId, string schema, string name, CancellationToken cancellationToken);
+    Task<TableDesignerDefinitionResponse> GetTableDesignerDefinitionAsync(Guid clusterId, string schema, string name, CancellationToken cancellationToken);
     Task<SequenceInspectionResponse> InspectSequenceAsync(Guid clusterId, string schema, string name, CancellationToken cancellationToken);
     Task<DatabaseDependencyResponse> GetDependenciesAsync(Guid clusterId, DatabaseObjectKind kind, string schema, string? name, CancellationToken cancellationToken);
     Task<DatabaseMutationResponse> CreateSchemaAsync(Guid clusterId, CreateSchemaRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<DatabaseMutationResponse> CreateTableAsync(Guid clusterId, CreateTableRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<DatabaseMutationResponse> ModifyTableAsync(Guid clusterId, CreateTableRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<DatabaseMutationResponse> CreateViewAsync(Guid clusterId, CreateViewRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<DatabaseMutationResponse> CreateSequenceAsync(Guid clusterId, CreateSequenceRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<DatabaseMutationResponse> RenameAsync(Guid clusterId, RenameDatabaseObjectRequest request, Guid actorId, CancellationToken cancellationToken);
@@ -37,6 +42,16 @@ public sealed class DatabaseObjectService(
     IStringLocalizer<DatabaseResource> text) : IDatabaseObjectService
 {
     private readonly DatabaseExplorerOptions options = configuredOptions.Value;
+
+    public async Task<TableDesignerDefinitionResponse> GetTableDesignerDefinitionAsync(
+        Guid clusterId, string schema, string name, CancellationToken cancellationToken)
+    {
+        DatabaseObjectDdlSafety.ValidateIdentifier(schema, nameof(schema));
+        DatabaseObjectDdlSafety.ValidateIdentifier(name, nameof(name));
+        var cluster = await GetClusterAsync(clusterId, cancellationToken);
+        await using var connection = await OpenAsync(cluster, cancellationToken);
+        return await ReadTableDesignerDefinitionAsync(connection, schema, name, cancellationToken);
+    }
 
     public async Task<DatabaseObjectDefinitionResponse> GetViewDefinitionAsync(
         Guid clusterId, string schema, string name, CancellationToken cancellationToken)
@@ -393,6 +408,170 @@ public sealed class DatabaseObjectService(
             }, cancellationToken);
     }
 
+    public async Task<DatabaseMutationResponse> ModifyTableAsync(
+        Guid clusterId, CreateTableRequest request, Guid actorId, CancellationToken cancellationToken)
+    {
+        DatabaseObjectDdlSafety.ValidateCreateTable(request);
+        if (string.IsNullOrWhiteSpace(request.DefinitionFingerprint))
+            throw new ArgumentException("A table definition fingerprint is required.");
+        return await ExecuteAsync(clusterId, actorId, "database.table.modify", "table", $"{request.Schema}.{request.Name}",
+            async connection =>
+            {
+                var current = await ReadTableDesignerDefinitionAsync(connection, request.Schema, request.Name, cancellationToken);
+                if (!CryptographicOperations.FixedTimeEquals(
+                        Encoding.ASCII.GetBytes(current.Fingerprint), Encoding.ASCII.GetBytes(request.DefinitionFingerprint)))
+                    throw new DBConcurrencyException("The table definition changed after the designer was opened.");
+                if (current.Definition.Mode != request.Mode ||
+                    current.Definition.PartitionStrategy != request.PartitionStrategy ||
+                    !string.Equals(current.Definition.PartitionKey, request.PartitionKey, StringComparison.Ordinal) ||
+                    !string.Equals(current.Definition.DistributionColumn, request.DistributionColumn, StringComparison.Ordinal) ||
+                    !string.Equals(current.Definition.ColocateWith, request.ColocateWith, StringComparison.Ordinal) ||
+                    current.Definition.ShardCount != request.ShardCount ||
+                    current.Definition.Persistence != request.Persistence ||
+                    !string.Equals(current.Definition.AccessMethod, request.AccessMethod, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Table mode, distribution, partitioning, persistence, and access method are immutable in direct Modify mode.");
+
+                var comparable = request with { DefinitionFingerprint = null };
+                var currentComparable = current.Definition with { DefinitionFingerprint = null };
+                if (DatabaseExplorerSafety.QueryHash(JsonSerializer.Serialize(comparable)) ==
+                    DatabaseExplorerSafety.QueryHash(JsonSerializer.Serialize(currentComparable)))
+                    return new(text["Mutation.NoTableChanges"], request.Schema, request.Name);
+
+                var canonicalTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var type in request.Columns.Select(column => column.DataType).Distinct(StringComparer.OrdinalIgnoreCase))
+                    canonicalTypes[type] = await ResolveTypeAsync(connection, type, cancellationToken);
+                foreach (var index in request.Indexes)
+                {
+                    _ = DatabaseObjectDdlSafety.IndexMethodSql(index.Method);
+                    if (index.NullsNotDistinct && connection.PostgreSqlVersion.Major < 15)
+                        throw new ArgumentException("NULLS NOT DISTINCT requires PostgreSQL 15 or newer.");
+                }
+
+                static string SnapshotHash(object value) =>
+                    DatabaseExplorerSafety.QueryHash(JsonSerializer.Serialize(value));
+                var keysChanged = SnapshotHash(new
+                    {
+                        PrimaryColumns = current.Definition.Columns.Where(column => column.PrimaryKey).Select(column => column.Name),
+                        current.Definition.Keys
+                    }) != SnapshotHash(new
+                    {
+                        PrimaryColumns = request.Columns.Where(column => column.PrimaryKey).Select(column => column.Name),
+                        request.Keys
+                    });
+                var foreignKeysChanged = SnapshotHash(current.Definition.ForeignKeys) != SnapshotHash(request.ForeignKeys);
+                var checksChanged = SnapshotHash(current.Definition.Checks) != SnapshotHash(request.Checks);
+                var indexesChanged = SnapshotHash(current.Definition.Indexes) != SnapshotHash(request.Indexes);
+
+                var currentColumns = current.Definition.Columns.ToDictionary(column => column.Name, StringComparer.Ordinal);
+                var originalNames = request.Columns.Where(column => column.OriginalName is not null)
+                    .Select(column => column.OriginalName!).ToList();
+                if (originalNames.Distinct(StringComparer.Ordinal).Count() != originalNames.Count ||
+                    currentColumns.Keys.Except(originalNames, StringComparer.Ordinal).Any())
+                    throw new InvalidOperationException("Dropping existing columns is not supported by direct Modify mode.");
+                foreach (var column in request.Columns.Where(column => column.OriginalName is not null))
+                {
+                    if (!currentColumns.ContainsKey(column.OriginalName!))
+                        throw new DBConcurrencyException("A column changed after the designer was opened.");
+                    if (!string.Equals(column.OriginalName, column.Name, StringComparison.Ordinal) &&
+                        currentColumns.ContainsKey(column.Name))
+                        throw new ArgumentException("A renamed column conflicts with an existing column.");
+                }
+
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                try
+                {
+                    var table = Qualified(request.Schema, request.Name);
+                    foreach (var column in request.Columns.Where(column => column.OriginalName is not null))
+                    {
+                        var original = currentColumns[column.OriginalName!];
+                        if (original.Identity != column.Identity || original.IdentityKind != column.IdentityKind)
+                            throw new InvalidOperationException("Changing identity mode on an existing column is not supported by direct Modify mode.");
+                        var originalQuoted = Quote(column.OriginalName!);
+                        if (!string.Equals(column.OriginalName, column.Name, StringComparison.Ordinal))
+                        {
+                            await ExecuteCommandAsync(connection,
+                                $"ALTER TABLE {table} RENAME COLUMN {originalQuoted} TO {Quote(column.Name)}", cancellationToken, transaction);
+                            originalQuoted = Quote(column.Name);
+                        }
+                        var canonicalType = canonicalTypes[column.DataType];
+                        if (!string.Equals(original.DataType, canonicalType, StringComparison.OrdinalIgnoreCase))
+                            await ExecuteCommandAsync(connection,
+                                $"ALTER TABLE {table} ALTER COLUMN {originalQuoted} TYPE {canonicalType} USING {originalQuoted}::{canonicalType}", cancellationToken, transaction);
+                        if (!column.Identity)
+                        {
+                            var defaultSql = ColumnDefaultSql(column, canonicalType);
+                            await ExecuteCommandAsync(connection,
+                                $"ALTER TABLE {table} ALTER COLUMN {originalQuoted} {(defaultSql is null ? "DROP DEFAULT" : $"SET {defaultSql}")}", cancellationToken, transaction);
+                        }
+                        await ExecuteCommandAsync(connection,
+                            $"ALTER TABLE {table} ALTER COLUMN {originalQuoted} {(column.Nullable && !column.PrimaryKey ? "DROP" : "SET")} NOT NULL", cancellationToken, transaction);
+                        await ExecuteCommandAsync(connection,
+                            $"COMMENT ON COLUMN {table}.{originalQuoted} IS {(column.Comment is null ? "NULL" : DatabaseObjectDdlSafety.QuoteLiteral(column.Comment))}",
+                            cancellationToken, transaction);
+                    }
+
+                    foreach (var column in request.Columns.Where(column => column.OriginalName is null))
+                        await ExecuteCommandAsync(connection,
+                            $"ALTER TABLE {table} ADD COLUMN {BuildColumnSql(column, canonicalTypes[column.DataType])}", cancellationToken, transaction);
+
+                    var constraintNames = new List<string?>();
+                    if (keysChanged) constraintNames.AddRange(current.Definition.Keys.Select(key => key.Name));
+                    if (foreignKeysChanged) constraintNames.AddRange(current.Definition.ForeignKeys.Select(key => key.Name));
+                    if (checksChanged) constraintNames.AddRange(current.Definition.Checks.Select(check => check.Name));
+                    foreach (var name in constraintNames.Distinct(StringComparer.Ordinal))
+                        if (!string.IsNullOrWhiteSpace(name))
+                            await ExecuteCommandAsync(connection, $"ALTER TABLE {table} DROP CONSTRAINT {Quote(name)}", cancellationToken, transaction);
+                    if (indexesChanged)
+                        foreach (var index in current.Definition.Indexes)
+                            await ExecuteCommandAsync(connection, $"DROP INDEX {Qualified(request.Schema, index.Name)}", cancellationToken, transaction);
+
+                    var withoutImplicitPrimary = request.Columns.Select(column => column with { PrimaryKey = false }).ToList();
+                    if (keysChanged)
+                        foreach (var definition in BuildConstraintSql(request with { ForeignKeys = [], Checks = [] }))
+                            await ExecuteCommandAsync(connection, $"ALTER TABLE {table} ADD {definition}", cancellationToken, transaction);
+                    if (foreignKeysChanged)
+                        foreach (var definition in BuildConstraintSql(request with { Columns = withoutImplicitPrimary, Keys = [], Checks = [] }))
+                            await ExecuteCommandAsync(connection, $"ALTER TABLE {table} ADD {definition}", cancellationToken, transaction);
+                    if (checksChanged)
+                        foreach (var definition in BuildConstraintSql(request with { Columns = withoutImplicitPrimary, Keys = [], ForeignKeys = [] }))
+                            await ExecuteCommandAsync(connection, $"ALTER TABLE {table} ADD {definition}", cancellationToken, transaction);
+                    if (indexesChanged) foreach (var index in request.Indexes)
+                    {
+                        await ExecuteCommandAsync(connection, BuildIndexSql(request.Schema, request.Name, index), cancellationToken, transaction);
+                        if (index.Comment is not null)
+                            await ExecuteCommandAsync(connection,
+                                $"COMMENT ON INDEX {Qualified(request.Schema, index.Name)} IS {DatabaseObjectDdlSafety.QuoteLiteral(index.Comment)}",
+                                cancellationToken, transaction);
+                    }
+                    await ExecuteCommandAsync(connection,
+                        $"COMMENT ON TABLE {table} IS {(request.Comment is null ? "NULL" : DatabaseObjectDdlSafety.QuoteLiteral(request.Comment))}",
+                        cancellationToken, transaction);
+                    if (request.FillFactor.HasValue)
+                        await ExecuteCommandAsync(connection, $"ALTER TABLE {table} SET (fillfactor={request.FillFactor.Value})", cancellationToken, transaction);
+                    else if (current.Definition.FillFactor.HasValue)
+                        await ExecuteCommandAsync(connection, $"ALTER TABLE {table} RESET (fillfactor)", cancellationToken, transaction);
+                    if (!string.Equals(current.Definition.Tablespace, request.Tablespace, StringComparison.Ordinal))
+                        await ExecuteCommandAsync(connection,
+                            $"ALTER TABLE {table} SET TABLESPACE {Quote(request.Tablespace ?? "pg_default")}", cancellationToken, transaction);
+                    foreach (var grant in request.Grants)
+                    {
+                        var privileges = string.Join(", ", grant.Privileges.Select(DatabaseObjectDdlSafety.TablePrivilegeSql));
+                        await ExecuteCommandAsync(connection, $"GRANT {privileges} ON TABLE {table} TO {Quote(grant.Role)}", cancellationToken, transaction);
+                    }
+                    if (!string.Equals(current.Definition.Owner, request.Owner, StringComparison.Ordinal) && request.Owner is not null)
+                        await ExecuteCommandAsync(connection, $"ALTER TABLE {table} OWNER TO {Quote(request.Owner)}", cancellationToken, transaction);
+                    await transaction.CommitAsync(cancellationToken);
+                    return new(text["Mutation.ModifiedTable"], request.Schema, request.Name);
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    throw;
+                }
+            }, cancellationToken, new { columns = request.Columns.Select(column => column.Name), keys = request.Keys.Count,
+                foreignKeys = request.ForeignKeys.Count, indexes = request.Indexes.Count, checks = request.Checks.Count });
+    }
+
     public Task<DatabaseMutationResponse> CreateViewAsync(
         Guid clusterId, CreateViewRequest request, Guid actorId, CancellationToken cancellationToken)
     {
@@ -576,6 +755,343 @@ public sealed class DatabaseObjectService(
         await distributedCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private async Task<TableDesignerDefinitionResponse> ReadTableDesignerDefinitionAsync(
+        NpgsqlConnection connection, string schema, string name, CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
+    {
+        uint oid;
+        DatabaseTablePersistence persistence;
+        string? accessMethod;
+        string owner;
+        string? tablespace;
+        string? comment;
+        int? fillFactor = null;
+        DatabasePartitionStrategy partitionStrategy;
+        string? partitionKey;
+        await using (var command = new NpgsqlCommand("""
+            SELECT c.oid, c.relpersistence::text, am.amname, owner.rolname, ts.spcname,
+                   obj_description(c.oid, 'pg_class'), c.reloptions,
+                   pt.partstrat::text, partition_attribute.attname
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            JOIN pg_roles owner ON owner.oid=c.relowner
+            LEFT JOIN pg_am am ON am.oid=c.relam
+            LEFT JOIN pg_tablespace ts ON ts.oid=c.reltablespace
+            LEFT JOIN pg_partitioned_table pt ON pt.partrelid=c.oid
+            LEFT JOIN pg_attribute partition_attribute
+              ON partition_attribute.attrelid=c.oid AND partition_attribute.attnum=pt.partattrs[0]
+            WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p')
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(schema);
+            command.Parameters.AddWithValue(name);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) throw new KeyNotFoundException("Table not found.");
+            oid = reader.GetFieldValue<uint>(0);
+            persistence = reader.GetString(1) == "u" ? DatabaseTablePersistence.Unlogged : DatabaseTablePersistence.Persistent;
+            accessMethod = reader.IsDBNull(2) ? null : reader.GetString(2);
+            owner = reader.GetString(3);
+            tablespace = reader.IsDBNull(4) ? null : reader.GetString(4);
+            comment = reader.IsDBNull(5) ? null : reader.GetString(5);
+            if (!reader.IsDBNull(6))
+            {
+                foreach (var option in reader.GetFieldValue<string[]>(6))
+                    if (option.StartsWith("fillfactor=", StringComparison.Ordinal) && int.TryParse(option.AsSpan(11), out var value))
+                        fillFactor = value;
+            }
+            partitionStrategy = reader.IsDBNull(7) ? DatabasePartitionStrategy.None : reader.GetString(7) switch
+            {
+                "r" => DatabasePartitionStrategy.Range,
+                "l" => DatabasePartitionStrategy.List,
+                "h" => DatabasePartitionStrategy.Hash,
+                _ => DatabasePartitionStrategy.None
+            };
+            partitionKey = reader.IsDBNull(8) ? null : reader.GetString(8);
+        }
+
+        var mode = DatabaseTableMode.Local;
+        string? distributionColumn = null;
+        string? colocateWith = null;
+        int? shardCount = null;
+        if (await HasCitusAsync(connection, cancellationToken))
+        {
+            await using var command = new NpgsqlCommand("""
+                SELECT p.partmethod::text,
+                       CASE WHEN p.partmethod='n' THEN NULL ELSE column_to_column_name(p.logicalrelid,p.partkey) END,
+                       (SELECT count(*)::int FROM pg_dist_shard s WHERE s.logicalrelid=p.logicalrelid),
+                       (SELECT other.logicalrelid::regclass::text FROM pg_dist_partition other
+                        WHERE other.colocationid=p.colocationid AND other.logicalrelid<>p.logicalrelid
+                        ORDER BY other.logicalrelid LIMIT 1)
+                FROM pg_dist_partition p WHERE p.logicalrelid=$1
+                """, connection, transaction);
+            command.Parameters.AddWithValue(NpgsqlDbType.Oid, oid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                mode = reader.GetString(0) == "n" ? DatabaseTableMode.Reference : DatabaseTableMode.Distributed;
+                distributionColumn = reader.IsDBNull(1) ? null : reader.GetString(1);
+                shardCount = reader.IsDBNull(2) ? null : reader.GetInt32(2);
+                colocateWith = reader.IsDBNull(3) ? null : reader.GetString(3);
+            }
+        }
+
+        var columns = new List<CreateTableColumnRequest>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT a.attname, format_type(a.atttypid,a.atttypmod), NOT a.attnotnull,
+                   pg_get_expr(ad.adbin,ad.adrelid), col_description(a.attrelid,a.attnum), a.attidentity::text,
+                   false
+            FROM pg_attribute a
+            LEFT JOIN pg_attrdef ad ON ad.adrelid=a.attrelid AND ad.adnum=a.attnum
+            WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(NpgsqlDbType.Oid, oid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var columnName = reader.GetString(0);
+                var identity = !reader.IsDBNull(5) && reader.GetString(5).Length > 0;
+                columns.Add(new CreateTableColumnRequest
+                {
+                    OriginalName = columnName,
+                    Name = columnName,
+                    DataType = reader.GetString(1),
+                    Nullable = reader.GetBoolean(2),
+                    DefaultExpression = identity || reader.IsDBNull(3) ? null : reader.GetString(3),
+                    Comment = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    Identity = identity,
+                    IdentityKind = identity && reader.GetString(5) == "a" ? DatabaseIdentityKind.Always : DatabaseIdentityKind.ByDefault,
+                    PrimaryKey = reader.GetBoolean(6)
+                });
+            }
+        }
+
+        var keys = new List<CreateTableKeyRequest>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT con.conname, con.contype::text,
+                   ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY item(attnum,ord)
+                         JOIN pg_attribute a ON a.attrelid=con.conrelid AND a.attnum=item.attnum ORDER BY item.ord)
+            FROM pg_constraint con
+            WHERE con.conrelid=$1 AND con.contype IN ('p','u')
+            ORDER BY con.conname
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(NpgsqlDbType.Oid, oid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                keys.Add(new CreateTableKeyRequest
+                {
+                    Name = reader.GetString(0), Kind = reader.GetString(1) == "p" ? DatabaseKeyKind.Primary : DatabaseKeyKind.Unique,
+                    Columns = reader.GetFieldValue<string[]>(2)
+                });
+        }
+
+        var foreignKeys = new List<CreateTableForeignKeyRequest>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT con.conname, referenced_ns.nspname, referenced.relname,
+                   ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY item(attnum,ord)
+                         JOIN pg_attribute a ON a.attrelid=con.conrelid AND a.attnum=item.attnum ORDER BY item.ord),
+                   ARRAY(SELECT a.attname FROM unnest(con.confkey) WITH ORDINALITY item(attnum,ord)
+                         JOIN pg_attribute a ON a.attrelid=con.confrelid AND a.attnum=item.attnum ORDER BY item.ord),
+                   con.confupdtype::text, con.confdeltype::text, con.condeferrable, con.condeferred,
+                   obj_description(con.oid,'pg_constraint')
+            FROM pg_constraint con
+            JOIN pg_class referenced ON referenced.oid=con.confrelid
+            JOIN pg_namespace referenced_ns ON referenced_ns.oid=referenced.relnamespace
+            WHERE con.conrelid=$1 AND con.contype='f' ORDER BY con.conname
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(NpgsqlDbType.Oid, oid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                foreignKeys.Add(new CreateTableForeignKeyRequest
+                {
+                    Name = reader.GetString(0), ReferencedSchema = reader.GetString(1), ReferencedTable = reader.GetString(2),
+                    Columns = reader.GetFieldValue<string[]>(3), ReferencedColumns = reader.GetFieldValue<string[]>(4),
+                    OnUpdate = ReferentialActionFromCatalog(reader.GetString(5)), OnDelete = ReferentialActionFromCatalog(reader.GetString(6)),
+                    Deferrable = reader.GetBoolean(7), InitiallyDeferred = reader.GetBoolean(8),
+                    Comment = reader.IsDBNull(9) ? null : reader.GetString(9)
+                });
+        }
+
+        var indexes = new List<CreateTableIndexRequest>();
+        var nullsSql = connection.PostgreSqlVersion.Major >= 15 ? "idx.indnullsnotdistinct" : "false";
+        await using (var command = new NpgsqlCommand($$"""
+            SELECT index_class.relname, idx.indisunique, {{nullsSql}}, am.amname,
+                   ARRAY(SELECT a.attname FROM unnest(idx.indkey) WITH ORDINALITY item(attnum,ord)
+                         JOIN pg_attribute a ON a.attrelid=idx.indrelid AND a.attnum=item.attnum
+                         WHERE item.ord<=idx.indnkeyatts ORDER BY item.ord),
+                   ARRAY(SELECT CASE WHEN (idx.indoption[item.ord - 1] & 1)=1 THEN 'Descending' ELSE 'None' END
+                         FROM generate_series(1,idx.indnkeyatts) item(ord) ORDER BY item.ord),
+                   ARRAY(SELECT COALESCE((SELECT quote_ident(n.nspname)||'.'||quote_ident(c.collname)
+                         FROM pg_collation c JOIN pg_namespace n ON n.oid=c.collnamespace
+                         WHERE c.oid=idx.indcollation[item.ord - 1]), '')
+                         FROM generate_series(1,idx.indnkeyatts) item(ord) ORDER BY item.ord),
+                   ARRAY(SELECT COALESCE((SELECT quote_ident(n.nspname)||'.'||quote_ident(opc.opcname)
+                         FROM pg_opclass opc JOIN pg_namespace n ON n.oid=opc.opcnamespace
+                         WHERE opc.oid=idx.indclass[item.ord - 1]), '')
+                         FROM generate_series(1,idx.indnkeyatts) item(ord) ORDER BY item.ord),
+                   ARRAY(SELECT a.attname FROM unnest(idx.indkey) WITH ORDINALITY item(attnum,ord)
+                         JOIN pg_attribute a ON a.attrelid=idx.indrelid AND a.attnum=item.attnum
+                         WHERE item.ord>idx.indnkeyatts ORDER BY item.ord),
+                   pg_get_expr(idx.indpred,idx.indrelid), tablespace.spcname,
+                   obj_description(index_class.oid,'pg_class')
+            FROM pg_index idx
+            JOIN pg_class index_class ON index_class.oid=idx.indexrelid
+            JOIN pg_am am ON am.oid=index_class.relam
+            LEFT JOIN pg_tablespace tablespace ON tablespace.oid=index_class.reltablespace
+            WHERE idx.indrelid=$1 AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid=idx.indexrelid)
+              AND 0<>ALL(idx.indkey)
+            ORDER BY index_class.relname
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(NpgsqlDbType.Oid, oid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var method = Enum.TryParse<DatabaseIndexMethod>(reader.GetString(3), true, out var parsedMethod)
+                    ? parsedMethod : DatabaseIndexMethod.Btree;
+                var names = reader.GetFieldValue<string[]>(4);
+                var orders = reader.GetFieldValue<string[]>(5);
+                var collations = reader.GetFieldValue<string[]>(6);
+                var operatorClasses = reader.GetFieldValue<string[]>(7);
+                indexes.Add(new CreateTableIndexRequest
+                {
+                    Name = reader.GetString(0), Unique = reader.GetBoolean(1), NullsNotDistinct = reader.GetBoolean(2), Method = method,
+                    Columns = names.Select((column, index) => new CreateTableIndexColumnRequest
+                    {
+                        Name = column,
+                        Order = Enum.TryParse<DatabaseIndexSortOrder>(orders[index], out var order) ? order : DatabaseIndexSortOrder.None,
+                        Collation = string.IsNullOrEmpty(collations[index]) ? null : collations[index],
+                        OperatorClass = string.IsNullOrEmpty(operatorClasses[index]) ? null : operatorClasses[index]
+                    }).ToList(),
+                    IncludeColumns = reader.GetFieldValue<string[]>(8), Condition = reader.IsDBNull(9) ? null : reader.GetString(9),
+                    Tablespace = reader.IsDBNull(10) ? null : reader.GetString(10), Comment = reader.IsDBNull(11) ? null : reader.GetString(11)
+                });
+            }
+        }
+
+        var checks = new List<CreateTableCheckRequest>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT con.conname, pg_get_expr(con.conbin,con.conrelid)
+            FROM pg_constraint con WHERE con.conrelid=$1 AND con.contype='c' ORDER BY con.conname
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(NpgsqlDbType.Oid, oid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                checks.Add(new CreateTableCheckRequest { Name = reader.GetString(0), Expression = reader.GetString(1) });
+        }
+
+        var definition = new CreateTableRequest
+        {
+            Schema = schema, Name = name, Columns = columns, Keys = keys, ForeignKeys = foreignKeys, Indexes = indexes, Checks = checks,
+            Comment = comment, Persistence = persistence, PartitionStrategy = partitionStrategy, PartitionKey = partitionKey,
+            FillFactor = fillFactor, AccessMethod = accessMethod, Tablespace = tablespace, Owner = owner, Mode = mode,
+            DistributionColumn = distributionColumn, ColocateWith = colocateWith, ShardCount = shardCount
+        };
+        var warnings = new List<string>();
+        await using (var command = new NpgsqlCommand("SELECT count(*)::int FROM pg_constraint WHERE conrelid=$1 AND contype='x'", connection, transaction))
+        {
+            command.Parameters.AddWithValue(NpgsqlDbType.Oid, oid);
+            if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) > 0)
+                warnings.Add("Exclusion constraints are preserved but cannot be edited in this designer.");
+        }
+        var fingerprint = DatabaseExplorerSafety.QueryHash(JsonSerializer.Serialize(definition));
+        return new(definition with { DefinitionFingerprint = fingerprint }, fingerprint, warnings);
+    }
+
+    private static DatabaseReferentialAction ReferentialActionFromCatalog(string value) => value switch
+    {
+        "r" => DatabaseReferentialAction.Restrict,
+        "c" => DatabaseReferentialAction.Cascade,
+        "n" => DatabaseReferentialAction.SetNull,
+        "d" => DatabaseReferentialAction.SetDefault,
+        _ => DatabaseReferentialAction.NoAction
+    };
+
+    private static string BuildColumnSql(CreateTableColumnRequest column, string canonicalType)
+    {
+        var sql = $"{Quote(column.Name)} {canonicalType}";
+        if (!column.Nullable || column.PrimaryKey) sql += " NOT NULL";
+        if (column.Identity)
+        {
+            sql += column.IdentityKind == DatabaseIdentityKind.Always
+                ? " GENERATED ALWAYS AS IDENTITY" : " GENERATED BY DEFAULT AS IDENTITY";
+            var options = new List<string>();
+            if (column.IdentityMinimum.HasValue) options.Add($"MINVALUE {column.IdentityMinimum.Value}");
+            if (column.IdentityMaximum.HasValue) options.Add($"MAXVALUE {column.IdentityMaximum.Value}");
+            if (column.IdentityIncrement.HasValue) options.Add($"INCREMENT BY {column.IdentityIncrement.Value}");
+            if (column.IdentityCache.HasValue) options.Add($"CACHE {column.IdentityCache.Value}");
+            if (column.IdentityCycle) options.Add("CYCLE");
+            if (options.Count > 0) sql += $" ({string.Join(" ", options)})";
+        }
+        else
+        {
+            var defaultSql = ColumnDefaultSql(column, canonicalType);
+            if (defaultSql is not null) sql += $" {defaultSql}";
+        }
+        return sql;
+    }
+
+    private static string? ColumnDefaultSql(CreateTableColumnRequest column, string canonicalType)
+    {
+        if (column.DefaultExpression is not null) return $"DEFAULT {column.DefaultExpression.Trim()}";
+        if (column.DefaultCurrentTimestamp) return "DEFAULT CURRENT_TIMESTAMP";
+        if (column.DefaultLiteral is not null)
+            return $"DEFAULT {DatabaseObjectDdlSafety.QuoteLiteral(column.DefaultLiteral)}::{canonicalType}";
+        return null;
+    }
+
+    private static IReadOnlyList<string> BuildConstraintSql(CreateTableRequest request)
+    {
+        var definitions = new List<string>();
+        var primary = request.Columns.Where(column => column.PrimaryKey).Select(column => Quote(column.Name)).ToList();
+        if (primary.Count > 0) definitions.Add($"PRIMARY KEY ({string.Join(", ", primary)})");
+        definitions.AddRange(request.Keys.Select(key =>
+        {
+            var name = string.IsNullOrWhiteSpace(key.Name) ? string.Empty : $"CONSTRAINT {Quote(key.Name)} ";
+            return $"{name}{(key.Kind == DatabaseKeyKind.Primary ? "PRIMARY KEY" : "UNIQUE")} ({string.Join(", ", key.Columns.Select(Quote))})";
+        }));
+        definitions.AddRange(request.ForeignKeys.Select(foreignKey =>
+        {
+            var name = string.IsNullOrWhiteSpace(foreignKey.Name) ? string.Empty : $"CONSTRAINT {Quote(foreignKey.Name)} ";
+            var deferrable = foreignKey.Deferrable
+                ? $" DEFERRABLE{(foreignKey.InitiallyDeferred ? " INITIALLY DEFERRED" : " INITIALLY IMMEDIATE")}" : " NOT DEFERRABLE";
+            return $"{name}FOREIGN KEY ({string.Join(", ", foreignKey.Columns.Select(Quote))}) " +
+                   $"REFERENCES {Qualified(foreignKey.ReferencedSchema, foreignKey.ReferencedTable)} " +
+                   $"({string.Join(", ", foreignKey.ReferencedColumns.Select(Quote))}) " +
+                   $"ON UPDATE {DatabaseObjectDdlSafety.ReferentialActionSql(foreignKey.OnUpdate)} " +
+                   $"ON DELETE {DatabaseObjectDdlSafety.ReferentialActionSql(foreignKey.OnDelete)}{deferrable}";
+        }));
+        definitions.AddRange(request.Checks.Select(check =>
+            $"{(string.IsNullOrWhiteSpace(check.Name) ? string.Empty : $"CONSTRAINT {Quote(check.Name)} ")}CHECK ({check.Expression.Trim()})"));
+        return definitions;
+    }
+
+    private static string BuildIndexSql(string schema, string table, CreateTableIndexRequest index)
+    {
+        var method = DatabaseObjectDdlSafety.IndexMethodSql(index.Method);
+        var columns = string.Join(", ", index.Columns.Select(column =>
+        {
+            var value = Quote(column.Name);
+            if (column.Collation is not null) value += $" COLLATE {column.Collation}";
+            if (column.OperatorClass is not null) value += $" {column.OperatorClass}";
+            value += column.Order switch
+            {
+                DatabaseIndexSortOrder.Ascending => " ASC",
+                DatabaseIndexSortOrder.Descending => " DESC",
+                _ => string.Empty
+            };
+            return value;
+        }));
+        var include = index.IncludeColumns.Count > 0 ? $" INCLUDE ({string.Join(", ", index.IncludeColumns.Select(Quote))})" : string.Empty;
+        var nulls = index.NullsNotDistinct ? " NULLS NOT DISTINCT" : string.Empty;
+        var tablespace = index.Tablespace is not null ? $" TABLESPACE {Quote(index.Tablespace)}" : string.Empty;
+        var condition = index.Condition is not null ? $" WHERE {index.Condition.Trim()}" : string.Empty;
+        return $"CREATE {(index.Unique ? "UNIQUE " : string.Empty)}INDEX {Quote(index.Name)} ON {Qualified(schema, table)} USING {method} ({columns}){include}{nulls}{tablespace}{condition}";
+    }
+
     private async Task<string> ResolveTypeAsync(NpgsqlConnection connection, string requested, CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand("""
@@ -701,6 +1217,7 @@ internal static class DatabaseObjectDdlSafety
         if (request.Columns.Count is < 1 or > 200) throw new ArgumentException("Table requires 1-200 columns.");
         foreach (var column in request.Columns)
         {
+            if (column.OriginalName is not null) ValidateIdentifier(column.OriginalName, nameof(column.OriginalName));
             ValidateIdentifier(column.Name, nameof(column.Name));
             if (string.IsNullOrWhiteSpace(column.DataType)) throw new ArgumentException("Column type is required.");
             if (column.Comment?.IndexOf('\0') >= 0) throw new ArgumentException("Column comment contains an invalid character.");

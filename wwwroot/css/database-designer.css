@@ -1,0 +1,257 @@
+/* Table Designer palette follows the Database workspace instead of the generic modal surface. */
+.database-modal:has(.database-action-card.is-table-designer) {
+  background: rgb(3 7 12 / 76%);
+  backdrop-filter: blur(6px) saturate(90%);
+}
+
+.database-action-card.is-table-designer {
+  --dg-popup: #171d24;
+  --dg-popup-elevated: #1b232c;
+  --dg-popup-recessed: #141a21;
+  --dg-popup-sidebar: #182029;
+  --dg-popup-border: #34414c;
+  --dg-scroll-track: #151c23;
+  --dg-scroll-thumb: #506474;
+  --dg-scroll-thumb-hover: #687f90;
+  color: #dce3e8;
+  background: linear-gradient(180deg, var(--dg-popup-elevated), var(--dg-popup));
+  border-color: var(--dg-popup-border);
+  box-shadow:
+    0 28px 90px rgb(0 0 0 / 64%),
+    0 0 0 1px rgb(255 255 255 / 3%) inset;
+}
+
+.database-action-card.is-table-designer .database-action-heading,
+.database-action-card.is-table-designer .database-action-footer {
+  background: var(--dg-popup-recessed);
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer .pma-modal-copy {
+  color: #93a3ae;
+}
+
+.database-action-card.is-table-designer .dg-table-designer {
+  border-color: var(--dg-popup-border);
+  background: var(--dg-popup);
+}
+
+.database-action-card.is-table-designer .dg-designer-sidebar {
+  color: #cbd5dc;
+  background: var(--dg-popup-sidebar);
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer .dg-designer-toolbar,
+.database-action-card.is-table-designer .dg-table-root-heading,
+.database-action-card.is-table-designer .dg-key-editor-heading,
+.database-action-card.is-table-designer .database-column-toolbar,
+.database-action-card.is-table-designer .dg-sql-preview,
+.database-action-card.is-table-designer .dg-sql-preview header {
+  background: var(--dg-popup-recessed);
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer .dg-designer-main,
+.database-action-card.is-table-designer .dg-table-root-editor,
+.database-action-card.is-table-designer .dg-designer-panel,
+.database-action-card.is-table-designer .dg-object-editor {
+  background: var(--dg-popup);
+}
+
+.database-action-card.is-table-designer .dg-table-grants {
+  background: var(--dg-popup-sidebar);
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer .dg-preview-splitter {
+  background: #202a33;
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer .dg-designer-object {
+  background: #222d37;
+  border-color: transparent;
+}
+
+.database-action-card.is-table-designer .dg-designer-object.is-active,
+.database-action-card.is-table-designer .dg-designer-tree button.is-active {
+  background: #294b63;
+  box-shadow: 0 0 0 1px rgb(94 181 235 / 16%) inset;
+}
+
+/* One compact IDE-style scrollbar treatment across every designer scroll surface. */
+.database-action-card.is-table-designer :is(
+  .dg-designer-sidebar,
+  .dg-designer-panel,
+  .dg-table-root-editor,
+  .dg-object-editor,
+  .dg-sql-preview pre
+) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--dg-scroll-thumb) var(--dg-scroll-track);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-designer-sidebar,
+  .dg-designer-panel,
+  .dg-table-root-editor,
+  .dg-object-editor,
+  .dg-sql-preview pre
+)::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-designer-sidebar,
+  .dg-designer-panel,
+  .dg-table-root-editor,
+  .dg-object-editor,
+  .dg-sql-preview pre
+)::-webkit-scrollbar-track {
+  background: var(--dg-scroll-track);
+  border-left: 1px solid rgb(255 255 255 / 3%);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-designer-sidebar,
+  .dg-designer-panel,
+  .dg-table-root-editor,
+  .dg-object-editor,
+  .dg-sql-preview pre
+)::-webkit-scrollbar-thumb {
+  min-height: 38px;
+  background: var(--dg-scroll-thumb);
+  background-clip: padding-box;
+  border: 2px solid var(--dg-scroll-track);
+  border-radius: 999px;
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-designer-sidebar,
+  .dg-designer-panel,
+  .dg-table-root-editor,
+  .dg-object-editor,
+  .dg-sql-preview pre
+)::-webkit-scrollbar-thumb:hover {
+  background: var(--dg-scroll-thumb-hover);
+  background-clip: padding-box;
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-designer-sidebar,
+  .dg-designer-panel,
+  .dg-table-root-editor,
+  .dg-object-editor,
+  .dg-sql-preview pre
+)::-webkit-scrollbar-corner {
+  background: var(--dg-scroll-track);
+}
+
+/* Table Designer desktop sidebar: one scroll surface for the complete object tree. */
+@media (min-width: 761px) {
+  .dg-designer-sidebar {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+  }
+
+  .dg-designer-toolbar {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    flex: 0 0 auto;
+    background: var(--dg-popup-recessed);
+  }
+
+  .dg-designer-object,
+  .dg-designer-tree,
+  .dg-designer-tree-group {
+    flex: 0 0 auto;
+  }
+
+  .dg-designer-tree-children,
+  .dg-designer-tree-children.dg-key-list,
+  .dg-object-tree-list {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+/* Navigation tree table children: left-aligned labels and semantic Font Awesome 4 icons. */
+.database-tree-group-row,
+.database-tree-leaf {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.database-tree-leaf > span:last-child,
+.database-tree-leaf strong,
+.database-tree-leaf small {
+  text-align: left;
+}
+
+.database-tree-folder-icon,
+.database-tree-leaf-icon,
+.database-tree-partition-icon {
+  display: inline-grid;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  place-items: center;
+  text-align: center;
+  line-height: 1;
+}
+
+.database-tree-folder-icon .fa,
+.database-tree-leaf-icon .fa,
+.database-tree-partition-icon .fa {
+  width: 1em;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.database-tree-folder-icon.is-columns,
+.database-tree-leaf-icon.is-columns {
+  color: #63a9d3;
+}
+
+.database-tree-folder-icon.is-keys,
+.database-tree-leaf-icon.is-primary {
+  color: #e6bd55;
+}
+
+.database-tree-leaf-icon.is-unique {
+  color: #aebbc5;
+}
+
+.database-tree-folder-icon.is-foreign-keys,
+.database-tree-leaf-icon.is-foreign-keys {
+  color: #64b9c7;
+}
+
+.database-tree-folder-icon.is-indexes,
+.database-tree-leaf-icon.is-index {
+  color: #c18bd2;
+}
+
+.database-tree-leaf-icon.is-unique.is-index {
+  color: #d4aa57;
+}
+
+.database-tree-folder-icon.is-checks,
+.database-tree-leaf-icon.is-checks {
+  color: #75b98b;
+}
+
+.database-tree-folder-icon.is-partitions,
+.database-tree-partition-icon {
+  color: #dc8d68;
+}

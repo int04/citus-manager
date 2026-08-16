@@ -38,7 +38,9 @@
     tableMode: contextNode?.dataset.tableMode || "notApplicable",
     canOperate: bool(contextNode?.dataset.canOperate),
     canAdmin: bool(contextNode?.dataset.canAdmin),
-    coordinator: bool(contextNode?.dataset.isCoordinator)
+    coordinator: bool(contextNode?.dataset.isCoordinator),
+    treeGroup: contextNode?.dataset.treeGroup || "",
+    childName: contextNode?.dataset.childName || ""
   });
   const getMetadata = () => metadataPromise ||= $.getJSON($explorer.data("metadata-url"));
   const problemText = xhr => {
@@ -60,6 +62,7 @@
       "refresh": ["cyan", '<path d="M20 11a8 8 0 1 0-2.3 5.7L20 14"/><path d="M20 4v7h-7"/>'],
       "browse": ["blue", '<path d="M4 5h16v14H4zM4 9h16M9 9v10"/>'],
       "structure": ["purple", '<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/>'],
+      "modify-table": ["purple", '<path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z"/><path d="M12 4H4v8M14 20h6v-6"/>'],
       "inspect-sequence": ["amber", '<path d="M4 6h4M4 12h7M4 18h10"/><path d="m16 8 4 4-4 4"/>'],
       "rename": ["blue", '<path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z"/><path d="m13.5 7 3.5 3.5"/>'],
       "edit-view": ["purple", '<path d="M3 5h18v14H3z"/><path d="m7 10 2 2-2 2M11 15h5"/>'],
@@ -104,7 +107,10 @@
       case "sequence-category": return [...(create ? [item(`${t("menu.new")} ${t("menu.sequence")}`, "create-sequence")] : []), item(t("common.refresh"), "refresh")];
       case "table":
       case "partitionedtable": return [
-        item(t("menu.browse"), "browse"), item(t("menu.structure"), "structure", { shortcut: "Ctrl+F6" }), item(t("common.refresh"), "refresh", { shortcut: "Ctrl+F5" }),
+        item(t("menu.browse"), "browse"), create
+          ? item(t("menu.modify"), "modify-table", { shortcut: "Ctrl+F6" })
+          : item(t("menu.structure"), "structure", { shortcut: "Ctrl+F6" }),
+        item(t("common.refresh"), "refresh", { shortcut: "Ctrl+F5" }),
         ...(create ? [separator(), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" }),
           ...(target.tableMode === "local" ? [item(t("menu.convert"), "convert")] : [])] : []),
         ...(admin ? [separator(), item(t("menu.truncate"), "truncate", { dangerous: true }), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])
@@ -121,6 +127,11 @@
       case "sequence": return [item(t("menu.inspect"), "inspect-sequence"), item(t("common.refresh"), "refresh"),
         ...(create ? [separator(), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" })] : []),
         ...(admin ? [item(t("menu.restart"), "restart-sequence", { dangerous: true }), separator(), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])];
+      case "table-section":
+      case "table-child": return [
+        ...(create ? [item(t("menu.modify"), "modify-table", { shortcut: "Enter" })] : [item(t("menu.structure"), "structure")]),
+        item(t("common.refresh"), "refresh")
+      ];
       default: return [item(t("common.refresh"), "refresh")];
     }
   }
@@ -392,7 +403,7 @@
   }
 
   function columnRowData(row) {
-    return { name: row.dataset.columnName || "", dataType: row.dataset.columnType || "text", nullable: row.dataset.columnNullable !== "false",
+    return { originalName: row.dataset.columnOriginalName || "", name: row.dataset.columnName || "", dataType: row.dataset.columnType || "text", nullable: row.dataset.columnNullable !== "false",
       primaryKey: row.dataset.columnPrimary === "true", comment: row.dataset.columnComment || "", defaultExpression: row.dataset.columnDefaultExpression || "",
       identity: row.dataset.columnIdentity === "true", identityKind: row.dataset.columnIdentityKind || "ByDefault",
       identityMinimum: row.dataset.columnIdentityMinimum || "", identityMaximum: row.dataset.columnIdentityMaximum || "",
@@ -491,7 +502,7 @@
   function refreshColumnControls() {
     const rows = tableColumnRows(), active = activeColumnRow(), index = rows.indexOf(active);
     const disable = (id, value) => { const button = document.getElementById(id); if (button) button.disabled = value; };
-    disable("database-remove-column", !active || rows.length <= 1);
+    disable("database-remove-column", !active || rows.length <= 1 || !!active?.dataset.columnOriginalName);
     disable("database-move-column-up", index <= 0);
     disable("database-move-column-down", index < 0 || index >= rows.length - 1);
   }
@@ -504,6 +515,7 @@
   }
   function removeActiveColumn() {
     const row = activeColumnRow(); if (!row || tableColumnRows().length <= 1) return;
+    if (row.dataset.columnOriginalName) return;
     const next = row.nextElementSibling || row.previousElementSibling;
     row.remove();
     if (next?.classList.contains("database-column-row")) selectColumnRow(next);
@@ -515,6 +527,7 @@
     row.className = "database-column-row dg-tree-object-row";
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", "false");
+    row.dataset.columnOriginalName = initial.originalName || "";
     row.dataset.columnName = initial.name || "";
     row.dataset.columnType = initial.dataType || metadata.columnTypes[0]?.name || "text";
     row.dataset.columnNullable = initial.nullable === false ? "false" : "true";
@@ -523,10 +536,11 @@
     row.dataset.columnDefaultExpression = initial.defaultExpression || "";
     row.dataset.columnIdentity = initial.identity ? "true" : "false";
     row.dataset.columnIdentityKind = initial.identityKind || "ByDefault";
-    row.dataset.columnIdentityMinimum = initial.identityMinimum ?? "1";
+    const existing = !!initial.originalName;
+    row.dataset.columnIdentityMinimum = initial.identityMinimum ?? (existing ? "" : "1");
     row.dataset.columnIdentityMaximum = initial.identityMaximum ?? "";
-    row.dataset.columnIdentityIncrement = initial.identityIncrement ?? "1";
-    row.dataset.columnIdentityCache = initial.identityCache ?? "1";
+    row.dataset.columnIdentityIncrement = initial.identityIncrement ?? (existing ? "" : "1");
+    row.dataset.columnIdentityCache = initial.identityCache ?? (existing ? "" : "1");
     row.dataset.columnIdentityCycle = initial.identityCycle ? "true" : "false";
     renderColumnSummary(row);
     row.addEventListener("click", () => selectColumnRow(row));
@@ -1251,8 +1265,9 @@
       if (index.comment) sql += `\nCOMMENT ON INDEX ${quoteId(schema)}.${quoteId(index.name || "index_name")} IS ${quoteLiteral(index.comment)};`;
     });
     const mode = form.elements.Mode?.value;
-    if (mode === "Reference") sql += `\n\nSELECT create_reference_table('${schema.replaceAll("'", "''")}.${table.replaceAll("'", "''")}');`;
-    if (mode === "Distributed") {
+    const modifying = fields.dataset.designerMode === "modify";
+    if (!modifying && mode === "Reference") sql += `\n\nSELECT create_reference_table('${schema.replaceAll("'", "''")}.${table.replaceAll("'", "''")}');`;
+    if (!modifying && mode === "Distributed") {
       const distribution = form.elements.DistributionColumn?.value || "distribution_column";
       const colocate = form.elements.ColocateWith?.value;
       const shards = form.elements.ShardCount?.value;
@@ -1268,15 +1283,18 @@
       if (privileges.length) sql += `\n\nGRANT ${privileges.join(", ")} ON TABLE ${quoteId(schema)}.${quoteId(table)} TO ${quoteId(role)};`;
     });
     if (form.elements.Owner?.value) sql += `\n\nALTER TABLE ${quoteId(schema)}.${quoteId(table)} OWNER TO ${quoteId(form.elements.Owner.value)};`;
-    preview.textContent = sql;
+    preview.textContent = modifying
+      ? `-- Desired table definition. Save applies a transactional ALTER diff.\n${sql}`
+      : sql;
     document.querySelector("[data-designer-table-name]")?.replaceChildren(document.createTextNode(table));
     document.querySelector("[data-table-root-title]")?.replaceChildren(document.createTextNode(table));
     document.querySelector("[data-designer-table-context]")?.replaceChildren(document.createTextNode(`${schema} · ${form.elements.Persistence?.value || "Persistent"} · ${mode || "Local"}`));
   }
 
-  async function openCreate(type, target) {
+  async function openCreate(type, target, editState = null) {
     const metadata = await getMetadata();
-    const schema = target.schema || metadata.schemas[0] || "public";
+    const definition = editState?.definition || null;
+    const schema = definition?.schema || target.schema || metadata.schemas[0] || "public";
     if (type === "schema") {
       openModal({ title: t("designer.createSchema"), description: t("designer.createSchemaHelp"),
         body: field(t("designer.schemaName"), input("Name", "", "text", "required maxlength=63 autocomplete=off")), button: t("designer.createSchema"),
@@ -1305,16 +1323,17 @@
         } });
       return;
     }
-    const modeOptions = [`<option value="Local">Local</option>`,
-      `<option value="Reference" ${metadata.canCreateReferenceTable ? "" : "disabled"}>Reference${metadata.canCreateReferenceTable ? "" : " (unsupported)"}</option>`,
-      `<option value="Distributed" ${metadata.canCreateDistributedTable ? "" : "disabled"}>Distributed${metadata.canCreateDistributedTable ? "" : " (unsupported)"}</option>`].join("");
+    const selectedMode = definition?.mode || "Local";
+    const modeOptions = [`<option value="Local" ${selectedMode === "Local" ? "selected" : ""}>Local</option>`,
+      `<option value="Reference" ${selectedMode === "Reference" ? "selected" : ""} ${metadata.canCreateReferenceTable || selectedMode === "Reference" ? "" : "disabled"}>Reference${metadata.canCreateReferenceTable || selectedMode === "Reference" ? "" : " (unsupported)"}</option>`,
+      `<option value="Distributed" ${selectedMode === "Distributed" ? "selected" : ""} ${metadata.canCreateDistributedTable || selectedMode === "Distributed" ? "" : "disabled"}>Distributed${metadata.canCreateDistributedTable || selectedMode === "Distributed" ? "" : " (unsupported)"}</option>`].join("");
     const installedAccessMethods = [...new Set(metadata.tableAccessMethods || [])];
     const accessMethodOptions = installedAccessMethods.map(method => `<option value="${html(method)}">${html(method)}</option>`).join("");
     const unavailableKnownMethods = ["heap", "columnar"].filter(method => !installedAccessMethods.includes(method));
     const indexMethodEnums = { btree: "Btree", hash: "Hash", gin: "Gin", gist: "Gist", spgist: "Spgist", brin: "Brin" };
     const indexMethodOptions = (metadata.indexAccessMethods || Object.keys(indexMethodEnums)).filter(method => indexMethodEnums[method.toLowerCase()])
       .map(method => `<option value="${indexMethodEnums[method.toLowerCase()]}">${html(method.toLowerCase())}</option>`).join("");
-    openModal({ title: "Create Table", eyebrow: `POSTGRESQL · CITUS ${metadata.citusVersion || "N/A"}`,
+    openModal({ title: definition ? t("designer.modifyTable") : "Create Table", eyebrow: `POSTGRESQL · CITUS ${metadata.citusVersion || "N/A"}`,
       description: t("designer.tableHelp"), variant: "table",
       body: `<div class="dg-table-designer">
         <aside class="dg-designer-sidebar" aria-label="Table object sections">
@@ -1340,7 +1359,7 @@
               <div class="dg-table-root-editor">
                 <header class="dg-table-root-heading"><span class="dg-table-glyph" aria-hidden="true"></span><strong data-table-root-title>table_name</strong><span>table</span></header>
                 <div class="dg-table-root-properties">
-                  <label><span>Name</span>${input("Name", "table_name", "text", "required maxlength=63 autocomplete=off")}</label>
+                  <label><span>Name</span>${input("Name", definition?.name || "table_name", "text", `required maxlength=63 autocomplete=off ${definition ? "readonly" : ""}`)}</label>
                   <label><span>Schema</span>${schemaSelect(metadata.schemas, schema)}</label>
                   <label><span>Comment</span><textarea name="Comment" rows="2" maxlength="4000" placeholder="Optional table description"></textarea></label>
                   <label><span>Persistence</span><span class="dg-inline-property"><select name="Persistence"><option value="Persistent">PERSISTENT</option><option value="Unlogged">UNLOGGED</option></select><label class="dg-disabled-option" title="WITH OIDS was removed in PostgreSQL 12"><input name="WithOids" type="checkbox" disabled> With OIDs <small>unsupported</small></label></span></label>
@@ -1467,9 +1486,10 @@
           <header><span class="dg-preview-caret">⌄</span><strong>SQL Preview</strong><small>${t("designer.previewHelp")}</small></header>
           <pre><code id="database-sql-preview"></code></pre>
         </section>
-      </div>`, button: "Create",
+      </div>`, button: definition ? t("common.save") : "Create",
       onSubmit: async () => {
-        const data = { Schema: form.elements.Schema.value, Name: form.elements.Name.value, Mode: form.elements.Mode.value,
+        const data = { DefinitionFingerprint: definition ? editState.fingerprint : null,
+          Schema: form.elements.Schema.value, Name: form.elements.Name.value, Mode: form.elements.Mode.value,
           Comment: form.elements.Comment.value || null, Persistence: form.elements.Persistence.value, WithOids: false,
           PartitionStrategy: form.elements.PartitionStrategy.value, PartitionKey: form.elements.PartitionStrategy.value === "None" ? null : form.elements.PartitionKey.value || null,
           FillFactor: form.elements.FillFactor.value ? Number(form.elements.FillFactor.value) : null,
@@ -1478,6 +1498,7 @@
           ShardCount: form.elements.ShardCount?.value ? Number(form.elements.ShardCount.value) : null };
         [...document.querySelectorAll(".database-column-row")].forEach((row, index) => {
           const column = columnRowData(row);
+          data[`Columns[${index}].OriginalName`] = column.originalName || null;
           data[`Columns[${index}].Name`] = column.name; data[`Columns[${index}].DataType`] = column.dataType; data[`Columns[${index}].Nullable`] = column.nullable;
           data[`Columns[${index}].PrimaryKey`] = column.primaryKey; data[`Columns[${index}].Comment`] = column.comment || null;
           data[`Columns[${index}].DefaultExpression`] = column.identity ? null : column.defaultExpression || null;
@@ -1522,18 +1543,87 @@
           data[`Grants[${index}].Role`] = role;
           privileges.forEach((privilege, privilegeIndex) => { data[`Grants[${index}].Privileges[${privilegeIndex}]`] = privilege; });
         });
-        await finish(await post($explorer.data("create-table-url"), data));
+        await finish(await post(definition ? $explorer.data("modify-table-url") : $explorer.data("create-table-url"), data));
       } });
+    fields.dataset.designerMode = definition ? "modify" : "create";
     designerMetadata = metadata;
     bindDesignerSections(metadata);
-    addColumnRow(metadata, { name: "id", nullable: false }, false);
+    if (definition) {
+      const selectValue = (control, value) => {
+        if (!control || value == null) return;
+        if (![...control.options].some(option => option.value === String(value)))
+          control.add(new Option(String(value), String(value)));
+        control.value = String(value);
+      };
+      form.elements.Comment.value = definition.comment || "";
+      form.elements.Persistence.value = definition.persistence;
+      form.elements.Mode.value = definition.mode;
+      form.elements.PartitionStrategy.value = definition.partitionStrategy;
+      form.elements.FillFactor.value = definition.fillFactor ?? "";
+      selectValue(form.elements.AccessMethod, definition.accessMethod || "");
+      selectValue(form.elements.Tablespace, definition.tablespace || "");
+      selectValue(form.elements.Owner, definition.owner || "");
+      (definition.columns || []).forEach(column => addColumnRow(metadata, column, false));
+      (definition.keys || []).forEach(key => addKeyRow(key));
+      (definition.foreignKeys || []).forEach(foreignKey => addForeignKeyRow(metadata, {
+        ...foreignKey,
+        mappings: (foreignKey.columns || []).map((local, index) => ({ local, referenced: foreignKey.referencedColumns?.[index] || "" }))
+      }));
+      (definition.indexes || []).forEach(index => addIndexRow(index));
+      (definition.checks || []).forEach(check => addCheckRow(check));
+      if (editState.warnings?.length) {
+        const warning = document.createElement("aside"); warning.className = "database-designer-warning";
+        warning.setAttribute("role", "status"); warning.innerHTML = editState.warnings.map(message => `<p>${html(message)}</p>`).join("");
+        fields.prepend(warning);
+      }
+    } else addColumnRow(metadata, { name: "id", nullable: false }, false);
     form.elements.Name.addEventListener("input", () => { updateAutoObjectNames(); updateTableSqlPreview(); });
     bindTableMode();
+    syncDistributionColumns();
+    if (definition) {
+      form.elements.PartitionKey.value = definition.partitionKey || "";
+      form.elements.DistributionColumn.value = definition.distributionColumn || "";
+      const colocate = definition.colocateWith || "";
+      if (colocate && ![...form.elements.ColocateWith.options].some(option => option.value === colocate))
+        form.elements.ColocateWith.add(new Option(colocate, colocate));
+      form.elements.ColocateWith.value = colocate;
+      form.elements.ShardCount.value = definition.shardCount ?? "";
+      [form.elements.Schema, form.elements.Name, form.elements.Persistence, form.elements.Mode,
+        form.elements.PartitionStrategy, form.elements.PartitionKey, form.elements.AccessMethod,
+        form.elements.DistributionColumn, form.elements.ColocateWith, form.elements.ShardCount].forEach(control => {
+        if (!control) return; control.setAttribute("aria-disabled", "true"); control.classList.add("is-immutable");
+        control.addEventListener("keydown", event => { if (event.key !== "Tab") event.preventDefault(); });
+        control.addEventListener("mousedown", event => event.preventDefault());
+      });
+    }
     bindSqlPreviewSplitter();
-    document.querySelector("[data-designer-section='table']")?.click();
+    const group = editState?.selection?.group || "table", childName = editState?.selection?.childName || "";
+    let section = group === "foreign-keys" ? "foreign-keys" : group;
+    document.querySelector(`[data-designer-section='${section}']`)?.click();
+    let selector = section === "columns" ? ".database-column-row" : section === "keys" ? ".dg-key-row" :
+      section === "foreign-keys" ? ".dg-foreign-key-row" : section === "indexes" ? ".dg-index-row" : section === "checks" ? ".dg-check-row" : null;
+    if (selector && childName) {
+      let row = [...document.querySelectorAll(selector)].find(item =>
+        (section === "columns" ? item.dataset.columnName : section === "keys" ? item.dataset.keyName :
+          section === "foreign-keys" ? item.dataset.foreignKeyName : section === "indexes" ? item.dataset.indexName : item.dataset.checkName) === childName);
+      // PostgreSQL exposes the backing index of a primary/unique constraint in the Indexes group.
+      // The designer owns that object under Keys, so redirect to its editable source definition.
+      if (!row && section === "indexes") {
+        row = [...document.querySelectorAll(".dg-key-row")].find(item => item.dataset.keyName === childName);
+        if (row) { section = "keys"; selector = ".dg-key-row"; document.querySelector("[data-designer-section='keys']")?.click(); }
+      }
+      row?.click();
+      requestAnimationFrame(() => row?.focus());
+    }
     fields.oninput = updateTableSqlPreview;
     fields.onchange = updateTableSqlPreview;
     updateTableSqlPreview();
+  }
+
+  async function openModify(target, trigger = menuTrigger) {
+    modalTrigger = trigger;
+    const state = await $.getJSON($explorer.data("table-definition-url"), { schema: target.schema, name: target.name });
+    await openCreate("table", target, { ...state, selection: { group: target.treeGroup || "table", childName: target.childName || "" } });
   }
 
   async function handleAction(action) {
@@ -1541,8 +1631,11 @@
     try {
       if (action === "refresh") { await refreshTree(); showToast(t("action.treeRefreshed")); return; }
       if (action === "query") { window.databaseWorkspaces?.openQuery({ kind: target.kind, schema: target.schema, name: target.name }); return; }
+      if (action === "modify-table") { await openModify(target); return; }
       if (action === "browse" || action === "structure") {
         if (action === "browse") window.databaseWorkspaces?.openObject(target.schema, target.name, "data");
+        else if (target.coordinator && target.canOperate && ["table", "partitionedtable", "table-section", "table-child"].includes(target.kind))
+          await openModify(target);
         else window.databaseWorkspaces?.openStructure(target.schema, target.name);
         return;
       }
@@ -1636,4 +1729,14 @@
       showToast(problemText(xhr));
     }
   }
+
+  document.addEventListener("database:edit-table-child", event => {
+    const detail = event.detail || {};
+    const tableNode = [...explorer.querySelectorAll("[data-database-object]")]
+      .find(node => node.dataset.schema === detail.schema && node.dataset.table === detail.table);
+    if (!detail.schema || !detail.table || !bool(tableNode?.dataset.canOperate) || !bool(tableNode?.dataset.isCoordinator)) return;
+    openModify({ schema: detail.schema, name: detail.table, treeGroup: detail.group, childName: detail.childName,
+      coordinator: !$explorer.data("node-id"), canOperate: true }, detail.trigger).catch(xhr =>
+        window.CitusConnectionResult.showError(error, problemText(xhr)));
+  });
 })();

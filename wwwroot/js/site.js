@@ -319,7 +319,7 @@
           nodeId: databaseExplorer.data("node-id") || null,
           schema: parentObject.dataset.schema, name: parentObject.dataset.table, group: "summary"
         });
-        renderTreeGroups(container, response.items || []);
+        renderTreeGroups(container, response.items || [], parentObject);
         container.dataset.loaded = "true";
         container.dispatchEvent(new CustomEvent("database:tree-group-loaded", { bubbles: true, detail: { group: "summary" } }));
       } catch (xhr) {
@@ -330,10 +330,30 @@
         delete container.dataset.loading; this.removeAttribute("aria-busy");
       }
     });
-    const treeChildIcon = group => group === "columns" ? "▤" : group === "keys" ? "◆" :
-      group === "foreign-keys" ? "↗" : group === "indexes" ? "⚡" : group === "checks" ? "✓" : "▦";
+    const treeGroupIcon = group => ({
+      columns: "fa-columns", keys: "fa-key", "foreign-keys": "fa-link",
+      indexes: "fa-bolt", checks: "fa-check-square-o", partitions: "fa-code-fork"
+    })[group] || "fa-folder-o";
+    const treeChildIcon = (group, detail = "") => {
+      if (group === "keys") return /primary key/i.test(detail) ? ["fa-key", "is-primary"] : ["fa-key", "is-unique"];
+      if (group === "indexes") return ["fa-bolt", /unique/i.test(detail) ? "is-index is-unique" : "is-index"];
+      return [{ columns: "fa-columns", "foreign-keys": "fa-link", checks: "fa-check-square-o" }[group] || "fa-circle-o", `is-${group}`];
+    };
     const treeGroupLabel = group => group === "foreign-keys" ? "foreign keys" : group;
-    const renderTreeGroups = (container, items) => {
+    const applyTableDesignerContext = (element, parentObject, group, childName = "") => {
+      element.setAttribute("data-context-node", "");
+      element.dataset.nodeKind = childName ? "table-child" : "table-section";
+      element.dataset.schema = parentObject.dataset.schema;
+      element.dataset.table = parentObject.dataset.table;
+      element.dataset.name = childName || group;
+      element.dataset.treeGroup = group;
+      element.dataset.childName = childName;
+      element.dataset.canOperate = parentObject.dataset.canOperate;
+      element.dataset.canAdmin = parentObject.dataset.canAdmin;
+      element.dataset.isCoordinator = parentObject.dataset.isCoordinator;
+      element.dataset.tableMode = parentObject.dataset.tableMode;
+    };
+    const renderTreeGroups = (container, items, parentObject) => {
       container.replaceChildren();
       if (!items.length) {
         const empty = document.createElement("div"); empty.className = "database-tree-lazy-state";
@@ -344,8 +364,10 @@
         const button = document.createElement("button"); button.type = "button";
         button.className = `database-tree-group-row database-tree-group-toggle${group === "partitions" ? " is-partitions" : ""}`;
         button.setAttribute("aria-expanded", "false"); button.dataset.treeGroup = group;
+        if (group !== "partitions") applyTableDesignerContext(button, parentObject, group);
         const caret = document.createElement("span"); caret.textContent = "›";
-        const icon = document.createElement("span"); icon.className = "database-tree-folder-icon"; icon.textContent = "▰";
+        const icon = document.createElement("span"); icon.className = `database-tree-folder-icon is-${group}`;
+        icon.innerHTML = `<i class="fa ${treeGroupIcon(group)}" aria-hidden="true"></i>`;
         const label = document.createElement("strong"); label.textContent = treeGroupLabel(group);
         const count = document.createElement("small"); count.textContent = item.detail || "0";
         button.append(caret, icon, label, count);
@@ -364,13 +386,23 @@
       }
       items.forEach(item => {
         if (group !== "partitions") {
-          const leaf = document.createElement("div"); leaf.className = "database-tree-leaf";
-          const icon = document.createElement("span"); icon.className = "database-tree-leaf-icon"; icon.textContent = treeChildIcon(group);
+          const leaf = document.createElement("button"); leaf.type = "button"; leaf.className = "database-tree-leaf";
+          applyTableDesignerContext(leaf, parentObject, group, item.name);
+          const [iconName, iconTone] = treeChildIcon(group, item.detail || "");
+          const icon = document.createElement("span"); icon.className = `database-tree-leaf-icon ${iconTone}`;
+          icon.innerHTML = `<i class="fa ${iconName}" aria-hidden="true"></i>`;
           const content = document.createElement("span");
           const name = document.createElement("strong"); name.textContent = item.name;
           content.appendChild(name);
           if (item.detail) { const detail = document.createElement("small"); detail.textContent = item.detail; content.appendChild(detail); leaf.title = `${item.name} · ${item.detail}`; }
-          leaf.append(icon, content); container.appendChild(leaf); return;
+          leaf.append(icon, content);
+          leaf.addEventListener("click", event => {
+            event.stopPropagation();
+            document.dispatchEvent(new CustomEvent("database:edit-table-child", { detail: {
+              schema: parentObject.dataset.schema, table: parentObject.dataset.table, group, childName: item.name, trigger: leaf
+            } }));
+          });
+          container.appendChild(leaf); return;
         }
         const button = document.createElement("button"); button.type = "button";
         button.className = "database-object database-partition-object";
@@ -381,7 +413,7 @@
         button.dataset.canOperate = parentObject.dataset.canOperate; button.dataset.canAdmin = parentObject.dataset.canAdmin;
         button.dataset.isCoordinator = parentObject.dataset.isCoordinator;
         button.dataset.searchText = `${item.schema}.${item.name} partition ${item.detail || ""}`;
-        button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1"/><path d="M4 10h16M10 5v14"/></svg>';
+        button.innerHTML = '<span class="database-tree-partition-icon" aria-hidden="true"><i class="fa fa-code-fork"></i></span>';
         const content = document.createElement("span"), name = document.createElement("strong"), detail = document.createElement("small");
         name.textContent = item.name; detail.textContent = item.detail || "partition"; detail.title = item.detail || "";
         content.append(name, detail); button.appendChild(content); container.appendChild(button);

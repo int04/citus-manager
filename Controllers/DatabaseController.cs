@@ -298,6 +298,10 @@ public sealed class DatabaseController(
     public Task<IActionResult> CreateTable(Guid clusterId, CreateTableRequest request, CancellationToken cancellationToken) =>
         RunMutationAsync(clusterId, () => objects.CreateTableAsync(clusterId, request, ActorId(), cancellationToken), created: true);
 
+    [HttpPost("Tables/Modify"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    public Task<IActionResult> ModifyTable(Guid clusterId, CreateTableRequest request, CancellationToken cancellationToken) =>
+        RunMutationAsync(clusterId, () => objects.ModifyTableAsync(clusterId, request, ActorId(), cancellationToken));
+
     [HttpPost("Views"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
     public Task<IActionResult> CreateView(Guid clusterId, CreateViewRequest request, CancellationToken cancellationToken) =>
         RunMutationAsync(clusterId, () => objects.CreateViewAsync(clusterId, request, ActorId(), cancellationToken), created: !request.Replace);
@@ -345,6 +349,7 @@ public sealed class DatabaseController(
         {
             return NotFoundProblem();
         }
+        catch (DBConcurrencyException) { return ConflictProblem(); }
         catch (InvalidOperationException) { return ConflictProblem(); }
         catch (NpgsqlException)
         {
@@ -382,6 +387,18 @@ public sealed class DatabaseController(
         {
             return SafeDatabaseProblem(text["Problem.Metadata.Title"], exception);
         }
+    }
+
+    [HttpGet("Tables/Designer")]
+    public async Task<IActionResult> TableDesignerDefinition(
+        Guid clusterId, string schema, string name, CancellationToken cancellationToken)
+    {
+        NoStore();
+        try { return Ok(await objects.GetTableDesignerDefinitionAsync(clusterId, schema, name, cancellationToken)); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpGet("Console/Metadata")]
@@ -585,6 +602,7 @@ public sealed class DatabaseController(
         {
             return NotFoundProblem();
         }
+        catch (DBConcurrencyException) { return ConflictProblem(); }
         catch (InvalidOperationException) { return ConflictProblem(); }
         catch (NpgsqlException)
         {

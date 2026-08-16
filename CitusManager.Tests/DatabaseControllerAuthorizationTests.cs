@@ -29,6 +29,7 @@ public sealed class DatabaseControllerAuthorizationTests
     [Theory]
     [InlineData(nameof(DatabaseController.CreateSchema), "Operator")]
     [InlineData(nameof(DatabaseController.CreateTable), "Operator")]
+    [InlineData(nameof(DatabaseController.ModifyTable), "Operator")]
     [InlineData(nameof(DatabaseController.CreateView), "Operator")]
     [InlineData(nameof(DatabaseController.CreateSequence), "Operator")]
     [InlineData(nameof(DatabaseController.Rename), "Operator")]
@@ -44,6 +45,15 @@ public sealed class DatabaseControllerAuthorizationTests
         var authorization = Assert.Single(method.GetCustomAttributes(typeof(AuthorizeAttribute), true)
             .Cast<AuthorizeAttribute>());
         Assert.Equal(policy, authorization.Policy);
+    }
+
+    [Fact]
+    public void Table_designer_definition_is_authenticated_viewer_accessible()
+    {
+        var method = typeof(DatabaseController).GetMethod(nameof(DatabaseController.TableDesignerDefinition));
+
+        Assert.NotNull(method);
+        Assert.Empty(method!.GetCustomAttributes(typeof(AuthorizeAttribute), true));
     }
 
     [Theory]

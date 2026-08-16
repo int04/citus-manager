@@ -120,6 +120,7 @@ public sealed record DatabaseDependencyResponse(int Count, IReadOnlyList<string>
 /// <summary>One column in a structured CREATE TABLE request.</summary>
 public sealed record CreateTableColumnRequest
 {
+    [MaxLength(63)] public string? OriginalName { get; init; }
     [Required, MaxLength(63)] public required string Name { get; init; }
     [Required, MaxLength(128)] public required string DataType { get; init; }
     [MaxLength(4000)] public string? Comment { get; init; }
@@ -246,6 +247,7 @@ public sealed record CreateSchemaRequest
 /// <summary>Payload for creating a local, reference, or distributed table.</summary>
 public sealed record CreateTableRequest
 {
+    [MaxLength(128)] public string? DefinitionFingerprint { get; init; }
     [Required, MaxLength(63)] public required string Schema { get; init; }
     [Required, MaxLength(63)] public required string Name { get; init; }
     [MinLength(1), MaxLength(200)] public required IReadOnlyList<CreateTableColumnRequest> Columns { get; init; }
@@ -268,6 +270,12 @@ public sealed record CreateTableRequest
     [MaxLength(255)] public string? ColocateWith { get; init; }
     [Range(1, 4096)] public int? ShardCount { get; init; }
 }
+
+/// <summary>Current catalog snapshot used to hydrate the table designer safely.</summary>
+public sealed record TableDesignerDefinitionResponse(
+    CreateTableRequest Definition,
+    string Fingerprint,
+    IReadOnlyList<string> Warnings);
 
 /// <summary>Payload for creating or replacing a normal view.</summary>
 public sealed record CreateViewRequest
