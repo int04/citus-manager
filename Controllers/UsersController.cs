@@ -1,19 +1,22 @@
 using System.Security.Claims;
 using CitusManager.Data;
 using CitusManager.Domain;
+using CitusManager.Localization;
 using CitusManager.Models;
 using CitusManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace CitusManager.Controllers;
 
 [Authorize(Policy = "Admin")]
 public sealed class UsersController(
     UserManager<ApplicationUser> users,
-    ControlDbContext db) : Controller
+    ControlDbContext db,
+    IStringLocalizer<UsersResource> text) : Controller
 {
     public async Task<IActionResult> Index()
     {
@@ -30,7 +33,7 @@ public sealed class UsersController(
     public async Task<IActionResult> Create(CreateUserViewModel model, CancellationToken cancellationToken)
     {
         var allowedRoles = new HashSet<string>(["Viewer", "Operator", "Admin"], StringComparer.Ordinal);
-        if (!allowedRoles.Contains(model.Role)) ModelState.AddModelError(nameof(model.Role), "Role không hợp lệ.");
+        if (!allowedRoles.Contains(model.Role)) ModelState.AddModelError(nameof(model.Role), text["InvalidRole"]);
         if (!ModelState.IsValid) return View(model);
         var user = new ApplicationUser
         {
@@ -51,7 +54,7 @@ public sealed class UsersController(
             Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!), "user.create", "user", user.Id,
             new { user.Email, user.DisplayName, model.Role }));
         await db.SaveChangesAsync(cancellationToken);
-        TempData["Notice"] = "Đã tạo user. Admin thứ hai có thể duyệt operation của Admin/Operator khác.";
+        TempData["Notice"] = text["Created"].Value;
         return RedirectToAction(nameof(Index));
     }
 }

@@ -1,44 +1,47 @@
 @model TableDataResponse
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<DatabaseResource> T
 <div class="pma-browse-result">
 <div class="pma-query-message" role="status">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
-    <span>Đang hiển thị <strong>@Model.Rows.Count</strong> hàng ở trang <strong>@Model.Page</strong>. Truy vấn mất @Model.Duration.TotalMilliseconds.ToString("N0") ms.</span>
+    <span>@T["Grid.QueryStatus", Model.Rows.Count, Model.Page, Model.Duration.TotalMilliseconds.ToString("N0")]</span>
 </div>
 <div class="database-result-meta pma-result-toolbar">
-    <span>Kết quả truy vấn</span>
-    @if (!Model.HasStableOrder) { <span class="status-pill warning">Thứ tự không ổn định · thiếu primary key</span> }
+    <span>@T["Grid.QueryResult"]</span>
+    @if (!Model.HasStableOrder) { <span class="status-pill warning">@T["Grid.UnstableOrder"]</span> }
 </div>
 <div class="pma-browse-scroll">
 @if (Model.Columns.Count == 0)
 {
-    <div class="empty-state compact"><h3>Không có result columns</h3></div>
+    <div class="empty-state compact"><h3>@T["Grid.NoColumns"]</h3></div>
 }
 else
 {
     <div class="table-wrap database-data-table pma-browse-table"><table><thead><tr>
         @foreach (var column in Model.Columns) { <th><span>@column.Name</span><small>@column.DataType</small></th> }
     </tr></thead><tbody>
-        @if (Model.Rows.Count == 0) { <tr><td colspan="@Model.Columns.Count" class="!py-12 !text-center">Bảng chưa có dữ liệu trong phạm vi target này.</td></tr> }
+        @if (Model.Rows.Count == 0) { <tr><td colspan="@Model.Columns.Count" class="!py-12 !text-center">@T["Grid.NoRows"]</td></tr> }
         @foreach (var row in Model.Rows)
         {
             <tr>@foreach (var cell in row)
             {
-                <td title="@(cell.IsTruncated ? "Giá trị đã bị cắt theo giới hạn hiển thị" : null)">
+                <td title="@(cell.IsTruncated ? T["Grid.TruncatedTitle"] : null)">
                     @if (cell.IsNull) { <span class="database-null">NULL</span> }
-                    else { <span class="database-cell">@cell.Value</span>@if (cell.IsTruncated) { <small class="database-truncated">… truncated</small> } }
+                    else { <span class="database-cell">@cell.Value</span>@if (cell.IsTruncated) { <small class="database-truncated">@T["Grid.Truncated"]</small> } }
                 </td>
             }</tr>
         }
     </tbody></table></div>
 }
 </div>
-<div class="database-pager pma-pagination" aria-label="Phân trang dữ liệu">
+<div class="database-pager pma-pagination" aria-label="@T["Grid.Pagination"]">
     <button type="button" class="btn btn-secondary" data-database-page="@(Model.Page - 1)" disabled="@(!Model.HasPrevious)">
-        <span aria-hidden="true">‹</span> Trang trước
+        <span aria-hidden="true">‹</span> @T["Grid.Previous"]
     </button>
-    <span>Trang <strong>@Model.Page</strong></span>
+    <span>@T["Grid.Page", Model.Page]</span>
     <button type="button" class="btn btn-secondary" data-database-page="@(Model.Page + 1)" disabled="@(!Model.HasNext)">
-        Trang sau <span aria-hidden="true">›</span>
+        @T["Grid.Next"] <span aria-hidden="true">›</span>
     </button>
 </div>
 </div>

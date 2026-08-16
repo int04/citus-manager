@@ -1,4 +1,7 @@
 @using System.Globalization
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<SharedResource> T
 @{
     var currentController = ViewContext.RouteData.Values["controller"]?.ToString();
     var isDatabaseExplorer = currentController == "Database";
@@ -12,6 +15,7 @@
     <title>@ViewData["Title"] · Citus Manager</title>
     <link rel="stylesheet" href="~/lib/font-awesome/css/font-awesome.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/localization.css" asp-append-version="true" />
     @await RenderSectionAsync("Styles", required: false)
     @* Tailwind source is kept beside the markup for maintainability. Runtime compilation is disabled;
        regenerate wwwroot/css/site.css after changing this block. *@
@@ -1013,7 +1017,7 @@
             crossorigin="anonymous" defer></script>
 </head>
 <body>
-<a class="skip-link" href="#main-content">Bỏ qua điều hướng</a>
+<a class="skip-link" href="#main-content">@T["Layout.SkipContent"]</a>
 @if (User.Identity?.IsAuthenticated == true && isDatabaseExplorer)
 {
     <main id="main-content" class="database-tool-shell" tabindex="-1">
@@ -1025,8 +1029,8 @@
 else if (User.Identity?.IsAuthenticated == true)
 {
     <div class="app-shell">
-        <aside class="sidebar" aria-label="Điều hướng chính">
-            <a class="brand" asp-controller="Home" asp-action="Index" aria-label="Citus Manager trang chủ">
+        <aside class="sidebar" aria-label="@T["Layout.MainNavigation"]">
+            <a class="brand" asp-controller="Home" asp-action="Index" aria-label="@T["Layout.HomeLabel"]">
                 <span class="brand-mark" aria-hidden="true">
                     <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
                 </span>
@@ -1034,13 +1038,14 @@ else if (User.Identity?.IsAuthenticated == true)
             </a>
             <p class="mt-6 hidden px-3 text-[10px] font-bold uppercase tracking-[.16em] text-slate-400 lg:block dark:text-slate-600">Workspace</p>
             <nav class="side-nav">
-                <a class="@(currentController is "Home" or "Clusters" or "Database" ? "is-active" : null)" asp-controller="Home" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg><span>Fleet overview</span></a>
-                <a class="@(currentController == "Operations" ? "is-active" : null)" asp-controller="Operations" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>Operations</span></a>
-                <a class="@(currentController == "Alerts" ? "is-active" : null)" asp-controller="Alerts" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span>Alerts</span></a>
-                @if (User.IsInRole("Admin")) { <a class="@(currentController == "Audit" ? "is-active" : null)" asp-controller="Audit" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11h6M9 15h6M10 3h4l1 2h4v16H5V5h4l1-2Z"/></svg><span>Audit</span></a> }
-                @if (User.IsInRole("Admin")) { <a class="@(currentController == "Users" ? "is-active" : null)" asp-controller="Users" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Users & roles</span></a> }
+                <a class="@(currentController is "Home" or "Clusters" or "Database" ? "is-active" : null)" asp-controller="Home" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg><span>@T["Layout.FleetOverview"]</span></a>
+                <a class="@(currentController == "Operations" ? "is-active" : null)" asp-controller="Operations" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>@T["Layout.Operations"]</span></a>
+                <a class="@(currentController == "Alerts" ? "is-active" : null)" asp-controller="Alerts" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span>@T["Layout.Alerts"]</span></a>
+                @if (User.IsInRole("Admin")) { <a class="@(currentController == "Audit" ? "is-active" : null)" asp-controller="Audit" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11h6M9 15h6M10 3h4l1 2h4v16H5V5h4l1-2Z"/></svg><span>@T["Layout.Audit"]</span></a> }
+                @if (User.IsInRole("Admin")) { <a class="@(currentController == "Users" ? "is-active" : null)" asp-controller="Users" asp-action="Index"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>@T["Layout.UsersRoles"]</span></a> }
                 @if (User.IsInRole("Operator") || User.IsInRole("Admin"))
-                { <a asp-controller="Clusters" asp-action="Create"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg><span>Thêm coordinator</span></a> }
+                { <a asp-controller="Clusters" asp-action="Create"><svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg><span>@T["Layout.AddCoordinator"]</span></a> }
+                <a class="@(currentController == "Settings" ? "is-active" : null)" asp-controller="Settings" asp-action="Language"><i class="fa fa-cog" aria-hidden="true"></i><span>@T["Common.Settings"]</span></a>
             </nav>
             <div class="sidebar-footer">
                 <div class="identity-name">@User.Identity.Name</div>
@@ -1049,7 +1054,7 @@ else if (User.Identity?.IsAuthenticated == true)
                     { <span class="status-pill neutral">@role</span> }
                 </div>
                 <form asp-controller="Account" asp-action="Logout" method="post">
-                    <button class="btn btn-ghost w-100" type="submit"><svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 17l5-5-5-5M15 12H3M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>Đăng xuất</button>
+                    <button class="btn btn-ghost w-100" type="submit"><svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 17l5-5-5-5M15 12H3M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>@T["Layout.Logout"]</button>
                 </form>
             </div>
         </aside>
@@ -1057,8 +1062,8 @@ else if (User.Identity?.IsAuthenticated == true)
             <header class="topbar">
                 <div><p class="text-[10px] font-bold uppercase tracking-[.16em] text-slate-400 dark:text-slate-600">Citus control plane</p><p class="text-xs font-medium text-slate-700 dark:text-slate-300">@ViewData["Title"]</p></div>
                 <div class="flex items-center gap-2">
-                    <button class="btn btn-ghost !size-11 !p-0" id="theme-toggle" type="button" aria-label="Đổi giao diện sáng tối"><svg id="theme-icon" class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg></button>
-                    <div class="culture-switch" aria-label="Ngôn ngữ"><a href="?culture=vi-VN&ui-culture=vi-VN">VI</a><span class="text-slate-300 dark:text-slate-700">/</span><a href="?culture=en-US&ui-culture=en-US">EN</a></div>
+                    <button class="btn btn-ghost !size-11 !p-0" id="theme-toggle" type="button" aria-label="@T["Layout.ThemeToggle"]"><svg id="theme-icon" class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg></button>
+                    <partial name="_LanguageSelector" />
                 </div>
             </header>
             <main id="main-content" class="main-content" tabindex="-1">
@@ -1071,9 +1076,10 @@ else if (User.Identity?.IsAuthenticated == true)
 }
 else
 {
-    <main id="main-content" class="auth-shell" tabindex="-1">@RenderBody()</main>
+    <main id="main-content" class="auth-shell" tabindex="-1"><div class="auth-language-selector"><partial name="_LanguageSelector" /></div>@RenderBody()</main>
 }
 <script src="~/lib/jquery/dist/jquery.min.js"></script>
+<partial name="_ClientLocalization" />
 <script src="~/js/site.js" asp-append-version="true"></script>
 @await RenderSectionAsync("Scripts", required: false)
 </body>

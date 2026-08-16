@@ -1,16 +1,19 @@
 using System.Security.Claims;
 using CitusManager.Contracts;
+using CitusManager.Localization;
 using CitusManager.Models;
 using CitusManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Localization;
 
 namespace CitusManager.Controllers;
 
 public sealed class ClustersController(
     IClusterService clusters,
     IOperationService operations,
-    ILogger<ClustersController> logger) : Controller
+    ILogger<ClustersController> logger,
+    IStringLocalizer<ClusterResource> text) : Controller
 {
     [Authorize(Policy = "Operator")]
     public IActionResult Create() => View(new CreateClusterRequest { Name = string.Empty, Host = string.Empty });
@@ -27,7 +30,7 @@ public sealed class ClustersController(
             var cluster = await clusters.CreateAsync(request, ActorId(), cancellationToken);
             var redirectUrl = Url.Action(nameof(Details), new { id = cluster.Id })!;
             if (IsAjaxRequest()) return Ok(new { redirectUrl });
-            TempData["Notice"] = "Đã kiểm tra capability và đăng ký cluster.";
+            TempData["Notice"] = text["Controller.Registered"].Value;
             return RedirectToAction(nameof(Details), new { id = cluster.Id });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -40,10 +43,9 @@ public sealed class ClustersController(
             if (IsAjaxRequest())
                 return Problem(
                     statusCode: StatusCodes.Status422UnprocessableEntity,
-                    title: "Không thể đăng ký coordinator",
-                    detail: "Kiểm tra host, database, TLS, tài khoản, quyền đọc metadata và Citus extension.");
-            ModelState.AddModelError(string.Empty,
-                "Không thể kết nối/đăng ký. Kiểm tra host, database, TLS, tài khoản và Citus extension.");
+                    title: text["Controller.RegisterTitle"],
+                    detail: text["Controller.RegisterDetail"]);
+            ModelState.AddModelError(string.Empty, text["Controller.RegisterDetail"]);
             return View(request);
         }
     }
@@ -66,8 +68,8 @@ public sealed class ClustersController(
             logger.LogWarning(exception, "Read-only coordinator connection test failed.");
             return Problem(
                 statusCode: StatusCodes.Status422UnprocessableEntity,
-                title: "Không thể kết nối coordinator",
-                detail: "Kiểm tra host, port, database, TLS, tài khoản, quyền đọc metadata và Citus extension.");
+                title: text["Controller.ConnectTitle"],
+                detail: text["Controller.ConnectDetail"]);
         }
     }
 
@@ -83,7 +85,7 @@ public sealed class ClustersController(
         }
         catch
         {
-            safeError = "Không thu thập được inventory. Kiểm tra network, TLS, auth và trạng thái coordinator.";
+            safeError = text["Controller.InventoryError"];
         }
         return View(new ClusterDetailsViewModel(cluster, inventory,
             await operations.GetAllAsync(id, cancellationToken), safeError));
@@ -97,7 +99,7 @@ public sealed class ClustersController(
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         await clusters.DeleteAsync(id, ActorId(), cancellationToken);
-        TempData["Notice"] = "Đã xóa profile local. Cluster Citus không bị thay đổi.";
+        TempData["Notice"] = text["Controller.Deleted"].Value;
         return RedirectToAction("Index", "Home");
     }
 

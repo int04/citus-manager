@@ -1,32 +1,35 @@
+using CitusManager.Localization;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Microsoft.Extensions.Localization;
 
 namespace CitusManager.Middleware;
 
 public sealed class ApiExceptionHandler(
     IProblemDetailsService problemDetails,
-    ILogger<ApiExceptionHandler> logger) : IExceptionHandler
+    ILogger<ApiExceptionHandler> logger,
+    IStringLocalizer<ProblemDetailsResource> text) : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
         var (status, title, detail) = exception switch
         {
-            KeyNotFoundException => (StatusCodes.Status404NotFound, "Not found", "Requested resource was not found."),
-            ArgumentException => (StatusCodes.Status400BadRequest, "Invalid request", "Request validation failed. Review the submitted fields and safety acknowledgements."),
-            InvalidOperationException => (StatusCodes.Status409Conflict, "Operation rejected", "The operation cannot proceed in the current cluster or workflow state."),
-            DbUpdateException => (StatusCodes.Status409Conflict, "Persistence conflict", "A conflicting record already exists or changed."),
-            NpgsqlException => (StatusCodes.Status503ServiceUnavailable, "Database unavailable", "Could not complete the database operation. Verify endpoint, TLS, authentication, and server health."),
-            _ => (StatusCodes.Status500InternalServerError, "Unexpected error", "An unexpected error occurred.")
+            KeyNotFoundException => (StatusCodes.Status404NotFound, text["NotFound.Title"].Value, text["NotFound.Detail"].Value),
+            ArgumentException => (StatusCodes.Status400BadRequest, text["Invalid.Title"].Value, text["Invalid.Detail"].Value),
+            InvalidOperationException => (StatusCodes.Status409Conflict, text["Rejected.Title"].Value, text["Rejected.Detail"].Value),
+            DbUpdateException => (StatusCodes.Status409Conflict, text["Conflict.Title"].Value, text["Conflict.Detail"].Value),
+            NpgsqlException => (StatusCodes.Status503ServiceUnavailable, text["Database.Title"].Value, text["Database.Detail"].Value),
+            _ => (StatusCodes.Status500InternalServerError, text["Unexpected.Title"].Value, text["Unexpected.Detail"].Value)
         };
 
         if (status >= 500)
-            logger.LogError("Unhandled request failure: {ExceptionType}, trace {TraceId}.",
+            logger.LogError(exception, "Unhandled request failure: {ExceptionType}, trace {TraceId}.",
                 exception.GetType().Name, httpContext.TraceIdentifier);
         else
-            logger.LogWarning("Request rejected: {ExceptionType}, trace {TraceId}.",
+            logger.LogWarning(exception, "Request rejected: {ExceptionType}, trace {TraceId}.",
                 exception.GetType().Name, httpContext.TraceIdentifier);
 
         httpContext.Response.StatusCode = status;

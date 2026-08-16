@@ -4,7 +4,9 @@ using System.Globalization;
 using System.Text.Json;
 using CitusManager.Contracts;
 using CitusManager.Data;
+using CitusManager.Localization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -21,6 +23,7 @@ public interface IDatabaseRowInspectionService
 public sealed class DatabaseRowInspectionService(
     ControlDbContext db,
     ICitusConnectionFactory connections,
+    IStringLocalizer<DatabaseResource> text,
     IOptions<DatabaseExplorerOptions> configuredOptions) : IDatabaseRowInspectionService
 {
     private readonly DatabaseExplorerOptions options = configuredOptions.Value;
@@ -50,9 +53,9 @@ public sealed class DatabaseRowInspectionService(
 
         var keys = columns.Where(column => column.IsPrimaryKey).ToList();
         if (request.Identity is null)
-            resolutionReason = "Object không có stable row identity; đang hiển thị snapshot và metadata mức object.";
+            resolutionReason = text["Inspection.NoIdentity"];
         else if (keys.Count == 0)
-            resolutionReason = "Object không có primary key; không quét fingerprint để tránh full scan.";
+            resolutionReason = text["Inspection.NoPrimaryKey"];
         else
         {
             row = await ReadRowAsync(connection, transaction, catalog, columns, keys, request.Identity, warnings, cancellationToken);
@@ -98,9 +101,9 @@ public sealed class DatabaseRowInspectionService(
 
         var catalog = await ReadCatalogAsync(connection, transaction, request.Schema, request.ObjectName, cancellationToken);
         if (catalog.Kind == DatabaseObjectKind.ForeignTable)
-            return UniformLocations(request.Identities, "Foreign table dùng foreign server; không phải Citus worker.");
+            return UniformLocations(request.Identities, text["Inspection.ForeignTable"]);
         if (catalog.Mode == DatabaseTableMode.NotApplicable)
-            return UniformLocations(request.Identities, "Object này không có Citus row placement.");
+            return UniformLocations(request.Identities, text["Inspection.NoPlacement"]);
 
         var useShardResolver = catalog.Mode == DatabaseTableMode.Distributed &&
             catalog.DistributionColumn is not null && await HasShardResolverAsync(connection, transaction, cancellationToken);
@@ -149,20 +152,20 @@ public sealed class DatabaseRowInspectionService(
                 if (!useShardResolver)
                 {
                     locations.Add(new(index, false, false,
-                        "Citus không hỗ trợ get_shard_id_for_distribution_column.", null, []));
+                        text["Inspection.ShardFunctionUnavailable"], null, []));
                     continue;
                 }
                 if (!matches.TryGetValue(index, out var match))
                 {
                     locations.Add(new(index, false, false,
-                        request.Identities[index] is null ? "Không có stable row identity."
-                            : "Identity không chứa distribution column.", null, []));
+                        request.Identities[index] is null ? text["Inspection.NoIdentity"]
+                            : text["Inspection.DistributionMissing"], null, []));
                     continue;
                 }
                 if (!match.ShardId.HasValue)
                 {
                     locations.Add(new(index, true, false,
-                        "Không resolve được shard cho distribution value.", null, []));
+                        text["Inspection.ShardUnresolved"], null, []));
                     continue;
                 }
                 var placements = placementSet.ByShard.GetValueOrDefault(match.ShardId.Value) ?? [];
@@ -352,7 +355,7 @@ public sealed class DatabaseRowInspectionService(
         catch (PostgresException)
         {
             await transaction.RollbackAsync("cm_row_internals", cancellationToken);
-            warnings.Add("PostgreSQL/Citus không hỗ trợ đầy đủ tableoid, ctid hoặc MVCC metadata cho query này.");
+            warnings.Add(text["Inspection.MetadataUnavailable"]);
         }
 
         return new(values, distributionValue, fingerprint, internals);

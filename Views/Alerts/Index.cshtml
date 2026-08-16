@@ -1,8 +1,11 @@
 @model IReadOnlyList<AlertRecord>
-@{ ViewData["Title"] = "Alerts"; var open = Model.Count(x => x.State == AlertState.Open); }
-<div class="page-heading"><div><p class="eyebrow">MONITORING</p><h1>Alerts</h1><p>@open open · collector tự resolve khi condition phục hồi.</p></div><a class="btn btn-secondary" asp-action="Index">Refresh</a></div>
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<MonitoringResource> T
+@{ ViewData["Title"] = T["Alerts.Title"]; var open = Model.Count(x => x.State == AlertState.Open); }
+<div class="page-heading"><div><p class="eyebrow">MONITORING</p><h1>@T["Alerts.Title"]</h1><p>@T["Alerts.Description", open]</p></div><a class="btn btn-secondary" asp-action="Index">@T["Common.Refresh"]</a></div>
 @if (Model.Count == 0)
-{ <div class="empty-state"><h3>Không có alert</h3><p>SQL collector chưa phát hiện condition bất thường.</p></div> }
+{ <div class="empty-state"><h3>@T["Alerts.Empty"]</h3><p>@T["Alerts.EmptyHelp"]</p></div> }
 else
 {
     <div class="alert-list">
@@ -12,7 +15,7 @@ else
             <div><span class="status-pill @(alert.Severity == AlertSeverity.Critical ? "danger" : alert.Severity == AlertSeverity.Warning ? "warning" : "neutral")">@alert.Severity</span><span class="status-pill neutral">@alert.State</span></div>
             <div><h2>@alert.Title</h2><p>@alert.Detail</p><small>@alert.Cluster?.Name · @alert.LastSeenAt.ToLocalTime().ToString("G")</small></div>
             @if (alert.State == AlertState.Open && (User.IsInRole("Operator") || User.IsInRole("Admin")))
-            { <form asp-action="Acknowledge" method="post"><input type="hidden" name="id" value="@alert.Id" /><button class="btn btn-secondary" type="submit">Acknowledge</button></form> }
+            { <form asp-action="Acknowledge" method="post"><input type="hidden" name="id" value="@alert.Id" /><button class="btn btn-secondary" type="submit">@T["Alerts.Acknowledge"]</button></form> }
         </article>
     }
     </div>

@@ -1,19 +1,22 @@
 @model TableStructureResponse
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<DatabaseResource> T
 <div class="pma-structure-result">
 @if (Model.LocalShardIds.Count > 0)
 {
     <div class="callout pma-shard-message"><strong>Worker-local shards:</strong> @string.Join(", ", Model.LocalShardIds)</div>
 }
-<div class="section-title pma-section-title"><div><h2>Cấu trúc bảng</h2><p>Table: <strong>@Model.Schema.@Model.Table</strong></p></div></div>
-<div class="table-wrap pma-structure-table"><table><thead><tr><th>#</th><th>Tên cột</th><th>Kiểu dữ liệu</th><th>Cho phép NULL</th><th>Mặc định</th><th>Khóa</th></tr></thead><tbody>
+<div class="section-title pma-section-title"><div><h2>@T["Structure.Title"]</h2><p>@T["Structure.Table", Model.Schema, Model.Table]</p></div></div>
+<div class="table-wrap pma-structure-table"><table><thead><tr><th>#</th><th>@T["Structure.ColumnName"]</th><th>@T["Structure.DataType"]</th><th>@T["Structure.Nullable"]</th><th>@T["Structure.Default"]</th><th>@T["Structure.Key"]</th></tr></thead><tbody>
 @for (var columnIndex = 0; columnIndex < Model.Columns.Count; columnIndex++)
 {
     var column = Model.Columns[columnIndex];
-    <tr><td class="pma-row-number">@(columnIndex + 1)</td><td><code>@column.Name</code></td><td>@column.DataType</td><td>@(column.IsNullable ? "Có" : "Không")</td><td><code>@column.DefaultValue</code></td><td>@if (column.IsPrimaryKey) { <span class="status-pill success">PRIMARY</span> }</td></tr>
+    <tr><td class="pma-row-number">@(columnIndex + 1)</td><td><code>@column.Name</code></td><td>@column.DataType</td><td>@(column.IsNullable ? T["Structure.Yes"] : T["Structure.No"])</td><td><code>@column.DefaultValue</code></td><td>@if (column.IsPrimaryKey) { <span class="status-pill success">PRIMARY</span> }</td></tr>
 }
 </tbody></table></div>
-<div class="section-title pma-section-title pma-index-title"><div><h2>Chỉ mục</h2><p>@Model.Indexes.Count định nghĩa index</p></div></div>
-@if (Model.Indexes.Count == 0) { <div class="empty-state compact pma-empty-row">Không có index hiển thị.</div> }
+<div class="section-title pma-section-title pma-index-title"><div><h2>@T["Structure.Indexes"]</h2><p>@T["Structure.IndexCount", Model.Indexes.Count]</p></div></div>
+@if (Model.Indexes.Count == 0) { <div class="empty-state compact pma-empty-row">@T["Structure.NoIndexes"]</div> }
 else
 {
     <div class="pma-index-list">@foreach (var index in Model.Indexes) { <article class="panel pma-index-card"><strong>@index.Name</strong><pre class="json-block">@index.Definition</pre></article> }</div>

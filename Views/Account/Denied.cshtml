@@ -1,2 +1,5 @@
-@{ ViewData["Title"] = "Không đủ quyền"; }
-<section class="auth-card"><p class="eyebrow">403</p><h1>Không đủ quyền</h1><p>Role hiện tại không được phép thực hiện thao tác này.</p><a class="btn btn-primary" asp-controller="Home" asp-action="Index">Về dashboard</a></section>
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<AccountResource> T
+@{ ViewData["Title"] = T["Denied.Title"]; }
+<section class="auth-card"><p class="eyebrow">403</p><h1>@T["Denied.Title"]</h1><p>@T["Denied.Description"]</p><a class="btn btn-primary" asp-controller="Home" asp-action="Index">@T["Denied.Back"]</a></section>

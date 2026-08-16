@@ -1,0 +1,34 @@
+@model LanguageSettingsViewModel
+@using Microsoft.Extensions.Localization
+@using CitusManager.Localization
+@inject IStringLocalizer<SharedResource> T
+@{
+    ViewData["Title"] = T["Language.Title"];
+}
+
+<div class="page-heading">
+    <div><p class="eyebrow">@T["Settings.Eyebrow"]</p><h1>@T["Language.Title"]</h1><p>@T["Language.Description"]</p></div>
+</div>
+
+<section class="language-settings-card" aria-labelledby="language-settings-heading">
+    <h2 id="language-settings-heading">@T["Language.PreferenceHeading"]</h2>
+    <p>@T["Language.PreferenceHelp"]</p>
+    <form asp-action="Language" method="post">
+        <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
+        <div class="language-option-list">
+            <label class="language-option">
+                <input type="radio" name="Preference" value="auto" checked="@(Model.Preference == "auto")" />
+                <span><strong>@T["Language.Auto"]</strong><small>@T["Language.AutoHelp"]</small></span>
+            </label>
+            @foreach (var language in Model.SupportedLanguages)
+            {
+                <label class="language-option">
+                    <input type="radio" name="Preference" value="@language.Code" checked="@(Model.Preference == language.Code)" />
+                    <span><strong>@language.NativeName</strong><small>@language.Name · @language.Code</small></span>
+                </label>
+            }
+        </div>
+        <span class="field-validation-error" data-valmsg-for="Preference"></span>
+        <div class="form-actions"><button class="btn btn-primary" type="submit"><i class="fa fa-save" aria-hidden="true"></i>@T["Common.Save"]</button></div>
+    </form>
+</section>

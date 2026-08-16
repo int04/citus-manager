@@ -1,0 +1,10 @@
+@using System.Globalization
+@using System.Text.Json
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<ClientResource> ClientText
+@{
+    var messages = ClientText.GetAllStrings(true).ToDictionary(x => x.Name, x => x.Value);
+}
+<script type="application/json" id="citus-i18n-data">@Html.Raw(JsonSerializer.Serialize(new { locale = CultureInfo.CurrentUICulture.Name, messages }))</script>
+<script src="~/js/i18n.js" asp-append-version="true"></script>

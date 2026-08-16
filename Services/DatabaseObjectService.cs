@@ -5,8 +5,10 @@ using System.Text.RegularExpressions;
 using CitusManager.Contracts;
 using CitusManager.Data;
 using CitusManager.Domain;
+using CitusManager.Localization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Localization;
 using Npgsql;
 
 namespace CitusManager.Services;
@@ -31,7 +33,8 @@ public interface IDatabaseObjectService
 public sealed class DatabaseObjectService(
     ControlDbContext db,
     ICitusConnectionFactory connections,
-    IOptions<DatabaseExplorerOptions> configuredOptions) : IDatabaseObjectService
+    IOptions<DatabaseExplorerOptions> configuredOptions,
+    IStringLocalizer<DatabaseResource> text) : IDatabaseObjectService
 {
     private readonly DatabaseExplorerOptions options = configuredOptions.Value;
 
@@ -207,7 +210,7 @@ public sealed class DatabaseObjectService(
             async connection =>
             {
                 await ExecuteCommandAsync(connection, $"CREATE SCHEMA {Quote(request.Name)}", cancellationToken);
-                return new("Đã tạo schema.", request.Name, null);
+                return new(text["Mutation.CreatedSchema"], request.Name, null);
             }, cancellationToken);
     }
 
@@ -380,7 +383,7 @@ public sealed class DatabaseObjectService(
                             $"ALTER TABLE {Qualified(request.Schema, request.Name)} OWNER TO {Quote(request.Owner)}",
                             cancellationToken, transaction);
                     await transaction.CommitAsync(cancellationToken);
-                    return new($"Đã tạo {ModeLabel(request.Mode)} table.", request.Schema, request.Name);
+                    return new(text["Mutation.CreatedTable", ModeLabel(request.Mode)], request.Schema, request.Name);
                 }
                 catch
                 {
@@ -403,7 +406,7 @@ public sealed class DatabaseObjectService(
                 var verb = request.Replace ? "CREATE OR REPLACE VIEW" : "CREATE VIEW";
                 await ExecuteCommandAsync(connection,
                     $"{verb} {Qualified(request.Schema, request.Name)} AS\n{request.Definition.Trim()}", cancellationToken);
-                return new(request.Replace ? "Đã cập nhật view." : "Đã tạo view.", request.Schema, request.Name);
+                return new(request.Replace ? text["Mutation.UpdatedView"] : text["Mutation.CreatedView"], request.Schema, request.Name);
             }, cancellationToken, new { definitionHash = DatabaseExplorerSafety.QueryHash(request.Definition), definitionLength = request.Definition.Length });
     }
 
@@ -424,7 +427,7 @@ public sealed class DatabaseObjectService(
                 if (request.Cache.HasValue) sql.Append(" CACHE ").Append(request.Cache.Value);
                 sql.Append(request.Cycle ? " CYCLE" : " NO CYCLE");
                 await ExecuteCommandAsync(connection, sql.ToString(), cancellationToken);
-                return new("Đã tạo sequence.", request.Schema, request.Name);
+                return new(text["Mutation.CreatedSequence"], request.Schema, request.Name);
             }, cancellationToken);
     }
 
@@ -441,7 +444,7 @@ public sealed class DatabaseObjectService(
                     ? $"ALTER SCHEMA {Quote(request.Schema)} RENAME TO {Quote(request.NewName)}"
                     : $"ALTER {DatabaseObjectDdlSafety.SqlObjectType(request.Kind)} {Qualified(request.Schema, request.Name!)} RENAME TO {Quote(request.NewName)}";
                 await ExecuteCommandAsync(connection, sql, cancellationToken);
-                return new("Đã đổi tên object.", request.Kind == DatabaseObjectKind.Schema ? request.NewName : request.Schema,
+                return new(text["Mutation.Renamed"], request.Kind == DatabaseObjectKind.Schema ? request.NewName : request.Schema,
                     request.Kind == DatabaseObjectKind.Schema ? null : request.NewName);
             }, cancellationToken);
     }
@@ -459,7 +462,7 @@ public sealed class DatabaseObjectService(
                     ? Quote(request.Schema) : Qualified(request.Schema, request.Name!);
                 var sql = $"DROP {DatabaseObjectDdlSafety.SqlObjectType(request.Kind)} {target} {(request.Cascade ? "CASCADE" : "RESTRICT")}";
                 await ExecuteCommandAsync(connection, sql, cancellationToken);
-                return new("Đã xóa object.", null, null);
+                return new(text["Mutation.Dropped"], null, null);
             }, cancellationToken, new { request.Cascade });
     }
 
@@ -477,7 +480,7 @@ public sealed class DatabaseObjectService(
                           (request.RestartIdentity ? " RESTART IDENTITY" : " CONTINUE IDENTITY") +
                           (request.Cascade ? " CASCADE" : " RESTRICT");
                 await ExecuteCommandAsync(connection, sql, cancellationToken);
-                return new("Đã truncate table.", request.Schema, request.Name);
+                return new(text["Mutation.Truncated"], request.Schema, request.Name);
             }, cancellationToken, new { request.RestartIdentity, request.Cascade });
     }
 
@@ -492,7 +495,7 @@ public sealed class DatabaseObjectService(
                 await EnsureObjectKindAsync(connection, DatabaseObjectKind.Sequence, request.Schema, request.Name, cancellationToken);
                 await ExecuteCommandAsync(connection,
                     $"ALTER SEQUENCE {Qualified(request.Schema, request.Name)} RESTART WITH {request.RestartWith}", cancellationToken);
-                return new("Đã restart sequence.", request.Schema, request.Name);
+                return new(text["Mutation.Restarted"], request.Schema, request.Name);
             }, cancellationToken, new { request.RestartWith });
     }
 
@@ -508,7 +511,7 @@ public sealed class DatabaseObjectService(
                 await ExecuteCommandAsync(connection,
                     $"REFRESH MATERIALIZED VIEW {(request.Concurrently ? "CONCURRENTLY " : string.Empty)}{Qualified(request.Schema, request.Name)}",
                     cancellationToken);
-                return new("Đã refresh materialized view.", request.Schema, request.Name);
+                return new(text["Mutation.RefreshedView"], request.Schema, request.Name);
             }, cancellationToken, new { request.Concurrently });
     }
 

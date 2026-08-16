@@ -1,15 +1,17 @@
 using System.Security.Claims;
 using CitusManager.Data;
 using CitusManager.Domain;
+using CitusManager.Localization;
 using CitusManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace CitusManager.Controllers;
 
 [Authorize]
-public sealed class AlertsController(ControlDbContext db) : Controller
+public sealed class AlertsController(ControlDbContext db, IStringLocalizer<MonitoringResource> text) : Controller
 {
     public async Task<IActionResult> Index(CancellationToken cancellationToken) => View(
         await db.Alerts.AsNoTracking().Include(x => x.Cluster).OrderByDescending(x => x.LastSeenAt)
@@ -25,7 +27,7 @@ public sealed class AlertsController(ControlDbContext db) : Controller
         db.AuditEvents.Add(ClusterService.Audit(actorId, "alert.acknowledge", "alert", id,
             new { alert.ClusterId, alert.Fingerprint }));
         await db.SaveChangesAsync(cancellationToken);
-        TempData["Notice"] = "Đã acknowledge alert.";
+        TempData["Notice"] = text["Alerts.Acknowledged"].Value;
         return RedirectToAction(nameof(Index));
     }
 }

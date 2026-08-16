@@ -1,14 +1,17 @@
 @model LoginViewModel
-@{ ViewData["Title"] = "Đăng nhập"; }
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<AccountResource> T
+@{ ViewData["Title"] = T["Login.Title"]; }
 <section class="auth-card">
     <div class="brand auth-brand"><span class="brand-mark">CM</span><span><strong>Citus Manager</strong><small>Distributed DB control</small></span></div>
-    <p class="eyebrow">SECURE ACCESS</p><h1>Đăng nhập</h1><p>Control-plane dành cho operator được ủy quyền.</p>
+    <p class="eyebrow">@T["Login.Eyebrow"]</p><h1>@T["Login.Title"]</h1><p>@T["Login.Description"]</p>
     <form asp-action="Login" asp-route-returnUrl="@ViewData["ReturnUrl"]" method="post">
         <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
         <div class="field"><label asp-for="Email">Email</label><input asp-for="Email" autocomplete="email" /><span asp-validation-for="Email"></span></div>
-        <div class="field"><label asp-for="Password">Mật khẩu</label><input asp-for="Password" autocomplete="current-password" /><span asp-validation-for="Password"></span></div>
-        <label class="check-field"><input asp-for="RememberMe" /><span>Giữ đăng nhập trên thiết bị này</span></label>
-        <button class="btn btn-primary w-100" type="submit">Đăng nhập</button>
+        <div class="field"><label asp-for="Password">@T["Field.Password"]</label><input asp-for="Password" autocomplete="current-password" /><span asp-validation-for="Password"></span></div>
+        <label class="check-field"><input asp-for="RememberMe" /><span>@T["Login.RememberMe"]</span></label>
+        <button class="btn btn-primary w-100" type="submit">@T["Login.Submit"]</button>
     </form>
 </section>
 @section Scripts { <partial name="_ValidationScriptsPartial" /> }

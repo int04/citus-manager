@@ -17,6 +17,7 @@ function pieSlices(values) {
 }
 
 export function createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId, updateFooter, showError }) {
+  const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
   const queryConsole = createQueryConsoleRenderer({ stage, explorer, token, nodeId, updateFooter, showError });
   function renderChartWorkspace(workspace) {
     const values = workspace.rows.map(row => Number(row.cells[workspace.numeric].value)).filter(Number.isFinite).slice(0, 50);
@@ -29,7 +30,7 @@ export function createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId
         : workspace.chartType === "pie"
           ? pieSlices(values)
           : values.map((value, index) => `<rect x="${index * (740 / Math.max(values.length, 1)) + 30}" y="${330 - value / max * 290}" width="${Math.max(4, 700 / Math.max(values.length, 1))}" height="${Math.abs(value / max * 290)}" rx="2"><title>${value}</title></rect>`).join("");
-    stage.innerHTML = `<div class="database-chart-workspace"><div class="database-grid-toolbar"><strong>${html(workspace.columns[workspace.numeric].name)}</strong><select data-chart-kind><option value="bar">Bar</option><option value="line">Line</option><option value="pie">Pie</option><option value="scatter">Scatter</option></select><span>Current page/selection only · ${values.length} values</span></div><svg viewBox="0 0 800 360" role="img" aria-label="${html(workspace.chartType)} chart">${drawing}</svg></div>`;
+    stage.innerHTML = `<div class="database-chart-workspace"><div class="database-grid-toolbar"><strong>${html(workspace.columns[workspace.numeric].name)}</strong><select data-chart-kind><option value="bar">Bar</option><option value="line">Line</option><option value="pie">Pie</option><option value="scatter">Scatter</option></select><span>${t("chart.pageOnly", values.length)}</span></div><svg viewBox="0 0 800 360" role="img" aria-label="${html(t("chart.label", workspace.chartType))}">${drawing}</svg></div>`;
     stage.querySelector("[data-chart-kind]").value = workspace.chartType;
     stage.querySelector("[data-chart-kind]").onchange = event => { workspace.chartType = event.target.value; renderChartWorkspace(workspace); };
     updateFooter(workspace);
@@ -64,7 +65,7 @@ export function createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId
       workspace.sqlAbort = new AbortController();
       run.disabled = true;
       stop.disabled = false;
-      result.innerHTML = '<div class="database-loading"><div><div class="database-spinner"></div><p>Đang chạy SQL…</p></div></div>';
+      result.innerHTML = `<div class="database-loading"><div><div class="database-spinner"></div><p>${t("console.running")}</p></div></div>`;
       try {
         const body = new URLSearchParams({ __RequestVerificationToken: token, Sql: editor.value, Confirmed: String(confirmed) });
         if (nodeId) body.set("NodeId", nodeId);

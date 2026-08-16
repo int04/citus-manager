@@ -1,4 +1,5 @@
 (() => {
+  const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
   const explorer = document.querySelector("[data-database-explorer]");
   if (!explorer) return;
 
@@ -44,7 +45,7 @@
     const body = xhr.responseJSON;
     if (body?.errors) return Object.values(body.errors).flat().join(" ");
     const state = body?.sqlState ? ` [${body.sqlState}]` : "";
-    return `${body?.detail || "Yêu cầu database thất bại."}${state}`;
+    return `${body?.detail || t("action.databaseFailed")}${state}`;
   };
   const showToast = message => {
     toast.textContent = message;
@@ -86,41 +87,41 @@
     const create = target.canOperate && !readOnly;
     const admin = target.canAdmin && !readOnly;
     const newItems = [
-      item("Schema", "create-schema"), item("Table", "create-table"),
-      item("View", "create-view"), item("Sequence", "create-sequence")
+      item(t("menu.schema"), "create-schema"), item(t("menu.table"), "create-table"),
+      item(t("menu.view"), "create-view"), item(t("menu.sequence"), "create-sequence")
     ];
     switch (target.kind) {
       case "database": return [
-        ...(create ? [submenu("New", newItems), item("Query Console", "query", { shortcut: "Ctrl+Shift+Q" })] : []),
-        item("Refresh", "refresh", { shortcut: "Ctrl+F5" }), ...(readOnly ? [separator(), item("Worker read-only", "noop", { disabled: true })] : [])
+        ...(create ? [submenu(t("menu.new"), newItems), item(t("menu.queryConsole"), "query", { shortcut: "Ctrl+Shift+Q" })] : []),
+        item(t("common.refresh"), "refresh", { shortcut: "Ctrl+F5" }), ...(readOnly ? [separator(), item(t("menu.workerReadOnly"), "noop", { disabled: true })] : [])
       ];
       case "schema": return [
-        ...(create ? [submenu("New", newItems.slice(1)), item("Rename", "rename", { shortcut: "Shift+F6" })] : []),
-        item("Refresh", "refresh", { shortcut: "Ctrl+F5" }), ...(admin ? [separator(), item("Drop schema", "drop", { dangerous: true, shortcut: "Delete" })] : [])
+        ...(create ? [submenu(t("menu.new"), newItems.slice(1)), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" })] : []),
+        item(t("common.refresh"), "refresh", { shortcut: "Ctrl+F5" }), ...(admin ? [separator(), item(`${t("menu.drop")} Schema`, "drop", { dangerous: true, shortcut: "Delete" })] : [])
       ];
-      case "table-category": return [...(create ? [item("New table", "create-table")] : []), item("Refresh", "refresh")];
-      case "view-category": return [...(create ? [item("New view", "create-view")] : []), item("Refresh", "refresh")];
-      case "sequence-category": return [...(create ? [item("New sequence", "create-sequence")] : []), item("Refresh", "refresh")];
+      case "table-category": return [...(create ? [item(`${t("menu.new")} ${t("menu.table")}`, "create-table")] : []), item(t("common.refresh"), "refresh")];
+      case "view-category": return [...(create ? [item(`${t("menu.new")} ${t("menu.view")}`, "create-view")] : []), item(t("common.refresh"), "refresh")];
+      case "sequence-category": return [...(create ? [item(`${t("menu.new")} ${t("menu.sequence")}`, "create-sequence")] : []), item(t("common.refresh"), "refresh")];
       case "table":
       case "partitionedtable": return [
-        item("Browse Data", "browse"), item("Modify / Structure", "structure", { shortcut: "Ctrl+F6" }), item("Refresh", "refresh", { shortcut: "Ctrl+F5" }),
-        ...(create ? [separator(), item("Rename", "rename", { shortcut: "Shift+F6" }),
-          ...(target.tableMode === "local" ? [item("Citus Convert", "convert")] : [])] : []),
-        ...(admin ? [separator(), item("Truncate", "truncate", { dangerous: true }), item("Drop", "drop", { dangerous: true, shortcut: "Delete" })] : [])
+        item(t("menu.browse"), "browse"), item(t("menu.structure"), "structure", { shortcut: "Ctrl+F6" }), item(t("common.refresh"), "refresh", { shortcut: "Ctrl+F5" }),
+        ...(create ? [separator(), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" }),
+          ...(target.tableMode === "local" ? [item(t("menu.convert"), "convert")] : [])] : []),
+        ...(admin ? [separator(), item(t("menu.truncate"), "truncate", { dangerous: true }), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])
       ];
-      case "foreigntable": return [item("Browse Data", "browse"), item("Modify / Structure", "structure"), item("Refresh", "refresh"),
-        ...(create ? [separator(), item("Rename", "rename", { shortcut: "Shift+F6" })] : []),
-        ...(admin ? [separator(), item("Drop", "drop", { dangerous: true, shortcut: "Delete" })] : [])];
-      case "view": return [item("Browse Data", "browse"), item("Modify / Structure", "structure"), item("Refresh", "refresh"),
-        ...(create ? [separator(), item("Edit SQL", "edit-view"), item("Rename", "rename", { shortcut: "Shift+F6" })] : []),
-        ...(admin ? [separator(), item("Drop", "drop", { dangerous: true, shortcut: "Delete" })] : [])];
-      case "materializedview": return [item("Browse Data", "browse"), item("Modify / Structure", "structure"),
-        ...(create ? [item("Refresh Data", "refresh-materialized"), separator(), item("Rename", "rename", { shortcut: "Shift+F6" })] : []),
-        ...(admin ? [separator(), item("Drop", "drop", { dangerous: true, shortcut: "Delete" })] : [])];
-      case "sequence": return [item("Inspect", "inspect-sequence"), item("Refresh", "refresh"),
-        ...(create ? [separator(), item("Rename", "rename", { shortcut: "Shift+F6" })] : []),
-        ...(admin ? [item("Restart", "restart-sequence", { dangerous: true }), separator(), item("Drop", "drop", { dangerous: true, shortcut: "Delete" })] : [])];
-      default: return [item("Refresh", "refresh")];
+      case "foreigntable": return [item(t("menu.browse"), "browse"), item(t("menu.structure"), "structure"), item(t("common.refresh"), "refresh"),
+        ...(create ? [separator(), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" })] : []),
+        ...(admin ? [separator(), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])];
+      case "view": return [item(t("menu.browse"), "browse"), item(t("menu.structure"), "structure"), item(t("common.refresh"), "refresh"),
+        ...(create ? [separator(), item(t("menu.editSql"), "edit-view"), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" })] : []),
+        ...(admin ? [separator(), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])];
+      case "materializedview": return [item(t("menu.browse"), "browse"), item(t("menu.structure"), "structure"),
+        ...(create ? [item(t("menu.refreshData"), "refresh-materialized"), separator(), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" })] : []),
+        ...(admin ? [separator(), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])];
+      case "sequence": return [item(t("menu.inspect"), "inspect-sequence"), item(t("common.refresh"), "refresh"),
+        ...(create ? [separator(), item(t("menu.rename"), "rename", { shortcut: "Shift+F6" })] : []),
+        ...(admin ? [item(t("menu.restart"), "restart-sequence", { dangerous: true }), separator(), item(t("menu.drop"), "drop", { dangerous: true, shortcut: "Delete" })] : [])];
+      default: return [item(t("common.refresh"), "refresh")];
     }
   }
 
@@ -276,7 +277,7 @@
     const values = schemas.length ? schemas : [selected || "public"];
     return `<select name="Schema">${values.map(x => `<option value="${html(x)}" ${x === selected ? "selected" : ""}>${html(x)}</option>`).join("")}</select>`;
   }
-  function openModal({ title, eyebrow = "DATABASE ACTION", description = "", body, button = "Xác nhận", danger = false, variant = "compact", onSubmit }) {
+  function openModal({ title, eyebrow = "DATABASE ACTION", description = "", body, button = t("common.confirm"), danger = false, variant = "compact", onSubmit }) {
     modalTrigger = menuTrigger;
     document.getElementById("database-action-title").textContent = title;
     document.getElementById("database-action-eyebrow").textContent = eyebrow;
@@ -323,7 +324,7 @@
   const post = (url, data) => $.ajax({ url, method: "POST", data: { __RequestVerificationToken: token, ...data } });
   const finish = async response => {
     closeModal();
-    showToast(response.message || "Thao tác thành công.");
+    showToast(response.message || t("action.success"));
     await refreshTree(response.schema, response.name);
     if (response.redirectUrl) window.location.assign(response.redirectUrl);
   };
@@ -550,7 +551,7 @@
     if (!select) return;
     const current = select.value;
     const names = tableColumnNames();
-    select.innerHTML = `<option value="">Chọn column…</option>${names.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}`;
+    select.innerHTML = `<option value="">${t("designer.selectColumn")}</option>${names.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}`;
     if (names.includes(current)) select.value = current;
     const partition = document.querySelector("[name=PartitionKey]");
     if (partition) {
@@ -1277,25 +1278,25 @@
     const metadata = await getMetadata();
     const schema = target.schema || metadata.schemas[0] || "public";
     if (type === "schema") {
-      openModal({ title: "Tạo schema", description: "Tạo schema mới trên coordinator.",
-        body: field("Tên schema", input("Name", "", "text", "required maxlength=63 autocomplete=off")), button: "Tạo schema",
+      openModal({ title: t("designer.createSchema"), description: t("designer.createSchemaHelp"),
+        body: field(t("designer.schemaName"), input("Name", "", "text", "required maxlength=63 autocomplete=off")), button: t("designer.createSchema"),
         onSubmit: async () => finish(await post($explorer.data("create-schema-url"), { Name: form.elements.Name.value })) });
       return;
     }
     if (type === "view") {
-      openModal({ title: "Tạo view", description: "Definition phải là một SELECT/WITH, không có dấu chấm phẩy.",
-        body: field("Schema", schemaSelect(metadata.schemas, schema)) + field("Tên view", input("Name", "", "text", "required maxlength=63")) +
-          field("SQL definition", '<textarea name="Definition" required rows="10" spellcheck="false" placeholder="SELECT …"></textarea>'), button: "Tạo view",
+      openModal({ title: t("designer.createView"), description: t("designer.createViewHelp"),
+        body: field("Schema", schemaSelect(metadata.schemas, schema)) + field(t("designer.viewName"), input("Name", "", "text", "required maxlength=63")) +
+          field("SQL definition", '<textarea name="Definition" required rows="10" spellcheck="false" placeholder="SELECT …"></textarea>'), button: t("designer.createView"),
         onSubmit: async () => finish(await post($explorer.data("create-view-url"), {
           Schema: form.elements.Schema.value, Name: form.elements.Name.value, Definition: form.elements.Definition.value, Replace: false
         })) });
       return;
     }
     if (type === "sequence") {
-      openModal({ title: "Tạo sequence", description: "Thông số bỏ trống dùng PostgreSQL default.",
-        body: field("Schema", schemaSelect(metadata.schemas, schema)) + field("Tên sequence", input("Name", "", "text", "required maxlength=63")) +
+      openModal({ title: t("designer.createSequence"), description: t("designer.createSequenceHelp"),
+        body: field("Schema", schemaSelect(metadata.schemas, schema)) + field(t("designer.sequenceName"), input("Name", "", "text", "required maxlength=63")) +
           `<div class="database-action-grid">${field("Start", input("Start", "", "number"))}${field("Increment", input("Increment", "", "number"))}${field("Minimum", input("Minimum", "", "number"))}${field("Maximum", input("Maximum", "", "number"))}${field("Cache", input("Cache", "", "number", "min=1"))}</div>` +
-          '<label class="database-action-check"><input name="Cycle" type="checkbox"/> Cycle</label>', button: "Tạo sequence",
+          '<label class="database-action-check"><input name="Cycle" type="checkbox"/> Cycle</label>', button: t("designer.createSequence"),
         onSubmit: async () => {
           const nullable = name => form.elements[name].value === "" ? null : Number(form.elements[name].value);
           await finish(await post($explorer.data("create-sequence-url"), { Schema: form.elements.Schema.value, Name: form.elements.Name.value,
@@ -1314,10 +1315,10 @@
     const indexMethodOptions = (metadata.indexAccessMethods || Object.keys(indexMethodEnums)).filter(method => indexMethodEnums[method.toLowerCase()])
       .map(method => `<option value="${indexMethodEnums[method.toLowerCase()]}">${html(method.toLowerCase())}</option>`).join("");
     openModal({ title: "Create Table", eyebrow: `POSTGRESQL · CITUS ${metadata.citusVersion || "N/A"}`,
-      description: "Thiết kế table, columns và Citus placement. SQL preview cập nhật ngay khi chỉnh sửa.", variant: "table",
+      description: t("designer.tableHelp"), variant: "table",
       body: `<div class="dg-table-designer">
         <aside class="dg-designer-sidebar" aria-label="Table object sections">
-          <div class="dg-designer-toolbar"><button type="button" aria-label="Thêm object">+</button><button type="button" disabled aria-label="Xóa object">−</button><span></span><button type="button" aria-label="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z"/></svg></button></div>
+          <div class="dg-designer-toolbar"><button type="button" aria-label="${t("designer.addObject")}">+</button><button type="button" disabled aria-label="${t("designer.removeObject")}">−</button><span></span><button type="button" aria-label="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z"/></svg></button></div>
           <button type="button" class="dg-designer-object is-active" role="tab" aria-selected="true" data-designer-section="table"><span class="dg-table-glyph" aria-hidden="true"></span><span><strong data-designer-table-name>table_name</strong><small><span data-designer-table-context>${html(schema)} · Local</span> · coordinator</small></span></button>
           <nav class="dg-designer-tree" role="tablist" aria-label="Table definition">
             <div class="dg-designer-tree-group">
@@ -1351,7 +1352,7 @@
                   <label><span>Partition Expression</span><select name="PartitionStrategy"><option value="None">None</option><option value="Range">RANGE</option><option value="List">LIST</option><option value="Hash">HASH</option></select></label>
                   <label id="database-partition-key-row" class="is-disabled"><span>Partition Key</span><select name="PartitionKey" disabled></select></label>
                   <label><span>Options</span><span class="dg-option-input"><small>fillfactor</small><input name="FillFactor" type="number" min="10" max="100" placeholder="server default"></span></label>
-                  <label><span>Access Method</span><span class="dg-property-stack"><select name="AccessMethod"><option value="">server default</option><optgroup label="Installed table methods">${accessMethodOptions}</optgroup>${unavailableKnownMethods.length ? `<optgroup label="Unavailable on this server" disabled>${unavailableKnownMethods.map(method => `<option>${method} (not installed)</option>`).join("")}</optgroup>` : ""}</select><small>Table methods từ server. btree/hash/GIN/GiST/BRIN nằm trong Index Designer.</small></span></label>
+                  <label><span>Access Method</span><span class="dg-property-stack"><select name="AccessMethod"><option value="">server default</option><optgroup label="Installed table methods">${accessMethodOptions}</optgroup>${unavailableKnownMethods.length ? `<optgroup label="Unavailable on this server" disabled>${unavailableKnownMethods.map(method => `<option>${method} (not installed)</option>`).join("")}</optgroup>` : ""}</select><small>${t("designer.accessMethodHelp")}</small></span></label>
                   <label><span>Tablespace</span><select name="Tablespace"><option value="">server default</option>${(metadata.tablespaces || []).map(item => `<option value="${html(item)}">${html(item)}</option>`).join("")}</select></label>
                   <label><span>Owner</span><select name="Owner"><option value="">current user</option>${(metadata.roles || []).map(role => `<option value="${html(role)}">${html(role)}</option>`).join("")}</select></label>
                 </div>
@@ -1383,7 +1384,7 @@
               </div>
             </section>
             <section data-designer-panel="keys" class="dg-designer-panel hidden">
-              <div class="database-column-toolbar dg-key-panel-toolbar"><div><strong>Key Designer</strong><small>Primary và unique constraints</small></div><select id="database-key-mobile-select" class="dg-key-mobile-select" aria-label="Selected key" disabled><option>No keys</option></select><div><button type="button" id="database-add-key" class="dg-toolbar-button">+ Add key</button><button type="button" id="database-remove-key" class="dg-toolbar-button is-danger">− Remove</button></div></div>
+              <div class="database-column-toolbar dg-key-panel-toolbar"><div><strong>Key Designer</strong><small>${t("designer.keyHelp")}</small></div><select id="database-key-mobile-select" class="dg-key-mobile-select" aria-label="Selected key" disabled><option>No keys</option></select><div><button type="button" id="database-add-key" class="dg-toolbar-button">+ Add key</button><button type="button" id="database-remove-key" class="dg-toolbar-button is-danger">− Remove</button></div></div>
                 <section class="dg-key-detail dg-key-detail-standalone">
                   <div id="database-key-empty" class="dg-key-empty-state">
                     <span class="dg-key-empty-icon" aria-hidden="true"></span>
@@ -1463,7 +1464,7 @@
         </section>
         <div id="database-sql-preview-splitter" class="dg-preview-splitter" role="separator" aria-label="Resize SQL Preview" aria-orientation="horizontal" tabindex="0"><span aria-hidden="true"></span></div>
         <section class="dg-sql-preview" aria-label="SQL Preview">
-          <header><span class="dg-preview-caret">⌄</span><strong>SQL Preview</strong><small>generated · read-only · kéo thanh trên để resize</small></header>
+          <header><span class="dg-preview-caret">⌄</span><strong>SQL Preview</strong><small>${t("designer.previewHelp")}</small></header>
           <pre><code id="database-sql-preview"></code></pre>
         </section>
       </div>`, button: "Create",
@@ -1490,20 +1491,20 @@
         });
         [...document.querySelectorAll(".dg-key-row")].forEach((row, index) => {
           const key = keyRowData(row);
-          if (!key.columns.length) throw { responseJSON: { detail: `Key ${key.name || index + 1} phải có ít nhất một column.` } };
+          if (!key.columns.length) throw { responseJSON: { detail: t("designer.keyNeedsColumn", key.name || index + 1) } };
           data[`Keys[${index}].Name`] = key.name || null;
           data[`Keys[${index}].Kind`] = key.kind;
           key.columns.forEach((column, columnIndex) => { data[`Keys[${index}].Columns[${columnIndex}]`] = column; });
         });
         [...document.querySelectorAll(".dg-foreign-key-row")].forEach((row, index) => {
           const fk = foreignKeyRowData(row);
-          if (!fk.referencedTable || !fk.mappings.length || fk.mappings.some(mapping => !mapping.local || !mapping.referenced)) throw { responseJSON: { detail: `Foreign key ${fk.name || index + 1} chưa đủ table/column mapping.` } };
+          if (!fk.referencedTable || !fk.mappings.length || fk.mappings.some(mapping => !mapping.local || !mapping.referenced)) throw { responseJSON: { detail: t("designer.fkIncomplete", fk.name || index + 1) } };
           data[`ForeignKeys[${index}].Name`] = fk.name || null; data[`ForeignKeys[${index}].Comment`] = fk.comment || null; data[`ForeignKeys[${index}].ReferencedSchema`] = fk.referencedSchema; data[`ForeignKeys[${index}].ReferencedTable`] = fk.referencedTable;
           fk.mappings.forEach((mapping, mappingIndex) => { data[`ForeignKeys[${index}].Columns[${mappingIndex}]`] = mapping.local; data[`ForeignKeys[${index}].ReferencedColumns[${mappingIndex}]`] = mapping.referenced; });
           data[`ForeignKeys[${index}].OnUpdate`] = fk.onUpdate; data[`ForeignKeys[${index}].OnDelete`] = fk.onDelete; data[`ForeignKeys[${index}].Deferrable`] = fk.deferrable; data[`ForeignKeys[${index}].InitiallyDeferred`] = fk.initiallyDeferred;
         });
         [...document.querySelectorAll(".dg-index-row")].forEach((row, index) => {
-          const item = indexRowData(row); if (!item.columns.length) throw { responseJSON: { detail: `Index ${item.name || index + 1} phải có ít nhất một column.` } };
+          const item = indexRowData(row); if (!item.columns.length) throw { responseJSON: { detail: t("designer.indexNeedsColumn", item.name || index + 1) } };
           data[`Indexes[${index}].Name`] = item.name; data[`Indexes[${index}].Comment`] = item.comment || null;
           data[`Indexes[${index}].Unique`] = item.unique; data[`Indexes[${index}].NullsNotDistinct`] = item.nullsNotDistinct; data[`Indexes[${index}].Method`] = item.method;
           data[`Indexes[${index}].Condition`] = item.condition || null; data[`Indexes[${index}].Tablespace`] = item.tablespace || null;
@@ -1511,13 +1512,13 @@
           item.includeColumns.forEach((column, columnIndex) => { data[`Indexes[${index}].IncludeColumns[${columnIndex}]`] = column; });
         });
         [...document.querySelectorAll(".dg-check-row")].forEach((row, index) => {
-          const check = checkRowData(row); if (!check.expression.trim()) throw { responseJSON: { detail: `Check ${check.name || index + 1} cần expression.` } };
+          const check = checkRowData(row); if (!check.expression.trim()) throw { responseJSON: { detail: t("designer.checkNeedsExpression", check.name || index + 1) } };
           data[`Checks[${index}].Name`] = check.name || null; data[`Checks[${index}].Expression`] = check.expression;
         });
         [...document.querySelectorAll(".dg-table-grant-row")].forEach((row, index) => {
           const role = row.querySelector("[data-grant-role]").value;
           const privileges = [...row.querySelectorAll("[data-grant-privilege]:checked")].map(input => input.value);
-          if (!role || !privileges.length) throw { responseJSON: { detail: `Grant ${index + 1} cần role và ít nhất một privilege.` } };
+          if (!role || !privileges.length) throw { responseJSON: { detail: t("designer.grantIncomplete", index + 1) } };
           data[`Grants[${index}].Role`] = role;
           privileges.forEach((privilege, privilegeIndex) => { data[`Grants[${index}].Privileges[${privilegeIndex}]`] = privilege; });
         });
@@ -1538,7 +1539,7 @@
   async function handleAction(action) {
     const target = currentTarget();
     try {
-      if (action === "refresh") { await refreshTree(); showToast("Đã refresh cây database."); return; }
+      if (action === "refresh") { await refreshTree(); showToast(t("action.treeRefreshed")); return; }
       if (action === "query") { window.databaseWorkspaces?.openQuery({ kind: target.kind, schema: target.schema, name: target.name }); return; }
       if (action === "browse" || action === "structure") {
         if (action === "browse") window.databaseWorkspaces?.openObject(target.schema, target.name, "data");
@@ -1553,14 +1554,14 @@
       }
       if (action === "rename") {
         openModal({ title: `Rename ${target.kind}`, description: `${target.schema}${target.kind === "schema" ? "" : "." + target.name}`,
-          body: field("Tên mới", input("NewName", target.name, "text", "required maxlength=63 autocomplete=off")), button: "Rename",
+          body: field(t("designer.newName"), input("NewName", target.name, "text", "required maxlength=63 autocomplete=off")), button: t("menu.rename"),
           onSubmit: async () => finish(await post($explorer.data("rename-url"), { Kind: kindName(target.kind), Schema: target.schema,
             Name: target.kind === "schema" ? null : target.name, NewName: form.elements.NewName.value })) }); return;
       }
       if (action === "edit-view") {
         const definition = await $.getJSON($explorer.data("view-definition-url"), { schema: target.schema, name: target.name });
         openModal({ title: "Edit view SQL", description: `${target.schema}.${target.name}`,
-          body: field("SQL definition", `<textarea name="Definition" required rows="12" spellcheck="false">${html(definition.definition)}</textarea>`), button: "Cập nhật view",
+          body: field("SQL definition", `<textarea name="Definition" required rows="12" spellcheck="false">${html(definition.definition)}</textarea>`), button: t("designer.updateView"),
           onSubmit: async () => finish(await post($explorer.data("create-view-url"), { Schema: target.schema, Name: target.name,
             Definition: form.elements.Definition.value, Replace: true })) }); return;
       }
@@ -1568,12 +1569,12 @@
         const dependencies = await $.getJSON($explorer.data("dependencies-url"), { kind: kindName(target.kind), schema: target.schema,
           name: target.kind === "schema" ? null : target.name });
         const qualified = target.kind === "schema" ? target.schema : `${target.schema}.${target.name}`;
-        openModal({ title: `Drop ${target.kind}`, eyebrow: "DESTRUCTIVE", description: `Xóa vĩnh viễn ${qualified}. Dependencies phát hiện: ${dependencies.count}.`,
+        openModal({ title: `Drop ${target.kind}`, eyebrow: "DESTRUCTIVE", description: t("designer.dropHelp", qualified, dependencies.count),
           body: (dependencies.items.length ? `<div class="database-dependency-list">${dependencies.items.map(x => `<code>${html(x)}</code>`).join("")}</div>` : "") +
-            field(`Gõ ${qualified} để xác nhận`, input("TypedConfirmation", "", "text", `required autocomplete=off data-confirm='${html(qualified)}'`)) +
-            '<label class="database-action-check"><input name="Cascade" type="checkbox"/> CASCADE dependencies</label>', button: "Drop vĩnh viễn", danger: true,
+            field(t("designer.typeToConfirm", qualified), input("TypedConfirmation", "", "text", `required autocomplete=off data-confirm='${html(qualified)}'`)) +
+            '<label class="database-action-check"><input name="Cascade" type="checkbox"/> CASCADE dependencies</label>', button: t("designer.dropPermanent"), danger: true,
           onSubmit: async () => {
-            if (form.elements.TypedConfirmation.value !== qualified) throw { responseJSON: { detail: `Phải gõ chính xác ${qualified}.` } };
+            if (form.elements.TypedConfirmation.value !== qualified) throw { responseJSON: { detail: t("action.exactConfirmation", qualified) } };
             await finish(await post($explorer.data("drop-url"), { Kind: kindName(target.kind), Schema: target.schema,
               Name: target.kind === "schema" ? null : target.name, Cascade: form.elements.Cascade.checked,
               TypedConfirmation: form.elements.TypedConfirmation.value }));
@@ -1581,11 +1582,11 @@
       }
       if (action === "truncate") {
         const qualified = `${target.schema}.${target.name}`;
-        openModal({ title: "Truncate table", eyebrow: "DESTRUCTIVE", description: `Xóa toàn bộ rows trong ${qualified}.`,
-          body: field(`Gõ ${qualified} để xác nhận`, input("TypedConfirmation", "", "text", "required autocomplete=off")) +
+        openModal({ title: "Truncate table", eyebrow: "DESTRUCTIVE", description: t("designer.truncateHelp", qualified),
+          body: field(t("designer.typeToConfirm", qualified), input("TypedConfirmation", "", "text", "required autocomplete=off")) +
             '<label class="database-action-check"><input name="RestartIdentity" type="checkbox"/> Restart identity</label><label class="database-action-check"><input name="Cascade" type="checkbox"/> CASCADE</label>',
           button: "Truncate", danger: true, onSubmit: async () => {
-            if (form.elements.TypedConfirmation.value !== qualified) throw { responseJSON: { detail: `Phải gõ chính xác ${qualified}.` } };
+            if (form.elements.TypedConfirmation.value !== qualified) throw { responseJSON: { detail: t("action.exactConfirmation", qualified) } };
             await finish(await post($explorer.data("truncate-url"), { Schema: target.schema, Name: target.name,
               RestartIdentity: form.elements.RestartIdentity.checked, Cascade: form.elements.Cascade.checked,
               TypedConfirmation: form.elements.TypedConfirmation.value }));
@@ -1599,7 +1600,7 @@
       }
       if (action === "refresh-materialized") {
         openModal({ title: "Refresh materialized view", description: `${target.schema}.${target.name}`,
-          body: '<label class="database-action-check"><input name="Concurrently" type="checkbox"/> CONCURRENTLY (cần unique index phù hợp)</label>', button: "Refresh data",
+          body: `<label class="database-action-check"><input name="Concurrently" type="checkbox"/> ${t("designer.concurrentlyHelp")}</label>`, button: t("menu.refreshData"),
           onSubmit: async () => finish(await post($explorer.data("refresh-materialized-view-url"), { Schema: target.schema, Name: target.name,
             Concurrently: form.elements.Concurrently.checked })) }); return;
       }
@@ -1607,15 +1608,15 @@
         const metadata = await getMetadata();
         const qualified = `${target.schema}.${target.name}`;
         openModal({ title: "Citus table conversion", eyebrow: "IMPACT OPERATION",
-          description: "Tạo immutable plan. Admin khác phải approve trước khi background runner chuyển dữ liệu.",
+          description: t("designer.convertHelp"),
           body: field("Target mode", `<select name="TargetMode"><option value="Distributed">Distributed</option><option value="Reference">Reference</option></select>`) +
             field("Distribution column", input("DistributionColumn", "", "text", "required maxlength=63")) +
             field("Colocate with", `<select name="ColocateWith"><option value="">none</option>${metadata.distributedTables.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}</select>`) +
             field("Shard count", input("ShardCount", "", "number", "min=1 max=4096 placeholder='server default'")) +
-            '<label class="database-action-check database-impact-check"><input name="Acknowledged" type="checkbox" required/> Đã kiểm tra backup/PITR, disk, WAL, network, connection budget và rollback owner.</label>' +
-            field(`Gõ ${qualified} để xác nhận`, input("TypedConfirmation", "", "text", "required autocomplete=off")), button: "Tạo conversion plan",
+            `<label class="database-action-check database-impact-check"><input name="Acknowledged" type="checkbox" required/> ${t("designer.convertAcknowledgement")}</label>` +
+            field(t("designer.typeToConfirm", qualified), input("TypedConfirmation", "", "text", "required autocomplete=off")), button: t("designer.createConversionPlan"),
           onSubmit: async () => {
-            if (form.elements.TypedConfirmation.value !== qualified) throw { responseJSON: { detail: `Phải gõ chính xác ${qualified}.` } };
+            if (form.elements.TypedConfirmation.value !== qualified) throw { responseJSON: { detail: t("action.exactConfirmation", qualified) } };
             const reference = form.elements.TargetMode.value === "Reference";
             await finish(await post($explorer.data("convert-table-url"), { Schema: target.schema, Table: target.name,
               TargetMode: form.elements.TargetMode.value, DistributionColumn: reference ? null : form.elements.DistributionColumn.value,

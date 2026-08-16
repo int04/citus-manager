@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="Common.Save" xml:space="preserve"><value>Save</value></data>
+  <data name="Common.Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Common.Close" xml:space="preserve"><value>Close</value></data>
+  <data name="Common.Refresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="Common.Delete" xml:space="preserve"><value>Delete</value></data>
+  <data name="Common.Search" xml:space="preserve"><value>Search</value></data>
+  <data name="Common.Loading" xml:space="preserve"><value>Loading…</value></data>
+  <data name="Common.Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="Layout.SkipContent" xml:space="preserve"><value>Skip to main content</value></data>
+  <data name="Layout.MainNavigation" xml:space="preserve"><value>Main navigation</value></data>
+  <data name="Layout.HomeLabel" xml:space="preserve"><value>Citus Manager home</value></data>
+  <data name="Layout.FleetOverview" xml:space="preserve"><value>Fleet overview</value></data>
+  <data name="Layout.Operations" xml:space="preserve"><value>Operations</value></data>
+  <data name="Layout.Alerts" xml:space="preserve"><value>Alerts</value></data>
+  <data name="Layout.Audit" xml:space="preserve"><value>Audit</value></data>
+  <data name="Layout.UsersRoles" xml:space="preserve"><value>Users &amp; roles</value></data>
+  <data name="Layout.AddCoordinator" xml:space="preserve"><value>Add coordinator</value></data>
+  <data name="Layout.Logout" xml:space="preserve"><value>Sign out</value></data>
+  <data name="Layout.ThemeToggle" xml:space="preserve"><value>Toggle light or dark theme</value></data>
+  <data name="Settings.Eyebrow" xml:space="preserve"><value>SETTINGS</value></data>
+  <data name="Language.Title" xml:space="preserve"><value>Language</value></data>
+  <data name="Language.Description" xml:space="preserve"><value>Choose the language used across Citus Manager.</value></data>
+  <data name="Language.PreferenceHeading" xml:space="preserve"><value>Language preference</value></data>
+  <data name="Language.PreferenceHelp" xml:space="preserve"><value>Your account preference overrides this browser. Auto follows the browser language and falls back to English.</value></data>
+  <data name="Language.Auto" xml:space="preserve"><value>Automatic (browser)</value></data>
+  <data name="Language.AutoShort" xml:space="preserve"><value>Auto</value></data>
+  <data name="Language.AutoHelp" xml:space="preserve"><value>Use a supported browser language; otherwise use English.</value></data>
+  <data name="Language.SelectLabel" xml:space="preserve"><value>Select language</value></data>
+  <data name="Language.Saved" xml:space="preserve"><value>Language preference saved.</value></data>
+  <data name="Language.Unsupported" xml:space="preserve"><value>The selected language is not supported.</value></data>
+  <data name="Language.UserUnavailable" xml:space="preserve"><value>The current user account is unavailable.</value></data>
+  <data name="Language.SaveFailed" xml:space="preserve"><value>Could not save the language preference.</value></data>
+  <data name="Error.Title" xml:space="preserve"><value>System error</value></data><data name="Error.Heading" xml:space="preserve"><value>Could not process the request</value></data><data name="Error.Description" xml:space="preserve"><value>Check the control database and try again. Internal details are hidden to protect sensitive data.</value></data><data name="Error.Back" xml:space="preserve"><value>Back to dashboard</value></data>
+  <data name="Privacy.Title" xml:space="preserve"><value>Security &amp; privacy</value></data><data name="Privacy.Description" xml:space="preserve"><value>How Citus Manager handles credentials, audit records, and monitoring data.</value></data><data name="Privacy.Credentials" xml:space="preserve"><value>Passwords and bearer tokens are encrypted with ASP.NET Data Protection. APIs never return stored secrets.</value></data><data name="Privacy.Activity" xml:space="preserve"><value>SQL text and parameters are removed from Activity to reduce application data exposure.</value></data><data name="Privacy.Audit" xml:space="preserve"><value>Topology mutations store actor, plan hash, checkpoint, and sanitized results; connection strings are never stored.</value></data>
+</root>

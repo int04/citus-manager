@@ -4,10 +4,12 @@ using System.Globalization;
 using System.Text;
 using CitusManager.Contracts;
 using CitusManager.Data;
+using CitusManager.Localization;
 using CsvHelper;
 using CsvHelper.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Localization;
 using Npgsql;
 using PgSqlParser;
 
@@ -30,6 +32,7 @@ public sealed class DatabaseWorkspaceService(
     ControlDbContext db,
     ICitusConnectionFactory connections,
     IDatabaseExplorerService explorer,
+    IStringLocalizer<DatabaseResource> text,
     IOptions<DatabaseExplorerOptions> configuredOptions) : IDatabaseWorkspaceService
 {
     private readonly DatabaseExplorerOptions options = configuredOptions.Value;
@@ -49,7 +52,7 @@ public sealed class DatabaseWorkspaceService(
                 false, false, false, IsNumericType(column.DataType), column.IsPrimaryKey, column.IsPrimaryKey,
                 column.Comment)).ToList();
             return new(schema, name, DatabaseObjectKind.Table, DatabaseTableMode.Distributed, false, false,
-                "Worker là read-only.", null, null, workerColumns,
+                text["Workspace.WorkerReadOnly"], null, null, workerColumns,
                 workerColumns.Where(column => column.IsPrimaryKey).Select(column => column.Name).ToList());
         }
 
@@ -60,8 +63,9 @@ public sealed class DatabaseWorkspaceService(
         var primaryKey = columns.Where(x => x.IsPrimaryKey).Select(x => x.Name).ToList();
         var editableKind = catalog.Kind is DatabaseObjectKind.Table or DatabaseObjectKind.PartitionedTable;
         var canEdit = canOperate && editableKind && primaryKey.Count > 0 && catalog.CanUpdate;
-        var reason = canEdit ? null : !canOperate ? "Cần quyền Operator." : !editableKind
-            ? "Object này chỉ đọc." : primaryKey.Count == 0 ? "Table không có primary key ổn định." : "Database role không có quyền UPDATE.";
+        var reason = canEdit ? null : !canOperate ? text["Workspace.OperatorRequired"].Value : !editableKind
+            ? text["Workspace.ObjectReadOnly"].Value : primaryKey.Count == 0
+                ? text["Workspace.NoPrimaryKey"].Value : text["Workspace.NoUpdatePrivilege"].Value;
         return new(schema, name, catalog.Kind, catalog.Mode, true, canEdit, reason,
             catalog.DistributionColumn, catalog.EstimatedRows, columns, primaryKey);
     }
@@ -234,7 +238,7 @@ public sealed class DatabaseWorkspaceService(
                 await ExecuteOneAsync(connection, transaction, sql, parameters, ct);
             }
             await transaction.CommitAsync(ct); success = true;
-            return new(request.Inserts.Count, request.Updates.Count, request.Deletes.Count, "Đã lưu thay đổi grid.");
+            return new(request.Inserts.Count, request.Updates.Count, request.Deletes.Count, text["Workspace.Saved"]);
         }
         catch (Exception exception)
         {
@@ -429,7 +433,7 @@ public sealed class DatabaseWorkspaceService(
             }
             if (imported == 0) throw new ArgumentException("CSV không có data row.");
             await transaction.CommitAsync(ct); success = true;
-            return new(imported, $"Đã import {imported:N0} rows.");
+            return new(imported, text["Workspace.Imported", imported]);
         }
         catch (PostgresException exception) { sqlState = exception.SqlState; await transaction.RollbackAsync(CancellationToken.None); throw; }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }

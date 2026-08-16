@@ -24,10 +24,10 @@ public sealed class QueryConsoleExecutionRegistry : IQueryConsoleExecutionRegist
 
     public void Register(Guid executionId, Guid actorId, Guid clusterId, IEnumerable<int> statementIndexes)
     {
-        if (executionId == Guid.Empty) throw new ArgumentException("Execution ID không hợp lệ.");
+        if (executionId == Guid.Empty) throw new ArgumentException("Invalid execution ID.");
         var state = new ExecutionState(actorId, clusterId, statementIndexes);
         if (!executions.TryAdd(executionId, state))
-            throw new ArgumentException("Execution ID đang được sử dụng.");
+            throw new ArgumentException("Execution ID is already in use.");
     }
 
     public bool TryStart(Guid executionId, int statementIndex) =>

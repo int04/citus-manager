@@ -1,13 +1,15 @@
 using System.Security.Claims;
 using CitusManager.Contracts;
+using CitusManager.Localization;
 using CitusManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Localization;
 
 namespace CitusManager.Controllers;
 
 [Authorize]
-public sealed class OperationsController(IOperationService operations) : Controller
+public sealed class OperationsController(IOperationService operations, IStringLocalizer<OperationsResource> text) : Controller
 {
     public async Task<IActionResult> Index(CancellationToken cancellationToken) =>
         View(await operations.GetAllAsync(null, cancellationToken));
@@ -25,7 +27,7 @@ public sealed class OperationsController(IOperationService operations) : Control
         try
         {
             var operation = await operations.CreateAsync(clusterId, request, ActorId(), cancellationToken);
-            TempData["Notice"] = "Plan đã tạo. Cần Admin khác phê duyệt.";
+            TempData["Notice"] = text["Controller.Created"].Value;
             return RedirectToAction(nameof(Details), new { id = operation.Id });
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
@@ -41,7 +43,7 @@ public sealed class OperationsController(IOperationService operations) : Control
         try
         {
             await operations.ApproveAsync(id, ActorId(), cancellationToken);
-            TempData["Notice"] = "Đã duyệt. Runner sẽ re-run preflight trước khi thao tác.";
+            TempData["Notice"] = text["Controller.Approved"].Value;
         }
         catch (InvalidOperationException exception)
         {
@@ -56,7 +58,7 @@ public sealed class OperationsController(IOperationService operations) : Control
         try
         {
             await operations.CancelAsync(id, ActorId(), cancellationToken);
-            TempData["Notice"] = "Đã gửi yêu cầu hủy an toàn.";
+            TempData["Notice"] = text["Controller.Cancelled"].Value;
         }
         catch (InvalidOperationException exception)
         {

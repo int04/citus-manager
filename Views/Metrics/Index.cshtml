@@ -1,16 +1,19 @@
 @model MetricsViewModel
-@{ ViewData["Title"] = $"Metrics · {Model.Cluster.Name}"; var latest = Model.Samples.GroupBy(x => x.Name).Select(x => x.OrderByDescending(y => y.CollectedAt).First()).OrderBy(x => x.Name).ToList(); }
-<div class="page-heading"><div><p class="eyebrow">LAST 24 HOURS</p><h1>Metrics · @Model.Cluster.Name</h1><p>SQL metrics luôn có; host metrics xuất hiện khi cấu hình Prometheus.</p></div><a class="btn btn-secondary" asp-controller="Clusters" asp-action="Details" asp-route-id="@Model.Cluster.Id">Về cluster</a></div>
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<MonitoringResource> T
+@{ ViewData["Title"] = T["Metrics.Title", Model.Cluster.Name]; var latest = Model.Samples.GroupBy(x => x.Name).Select(x => x.OrderByDescending(y => y.CollectedAt).First()).OrderBy(x => x.Name).ToList(); }
+<div class="page-heading"><div><p class="eyebrow">LAST 24 HOURS</p><h1>@T["Metrics.Title", Model.Cluster.Name]</h1><p>@T["Metrics.Description"]</p></div><a class="btn btn-secondary" asp-controller="Clusters" asp-action="Details" asp-route-id="@Model.Cluster.Id">@T["Common.BackCluster"]</a></div>
 @if (latest.Count == 0)
-{ <div class="empty-state"><h3>Chưa có samples</h3><p>Collector chạy theo <code>Monitoring:PollingSeconds</code>. Chờ chu kỳ đầu hoặc kiểm tra Alerts.</p></div> }
+{ <div class="empty-state"><h3>@T["Metrics.Empty"]</h3><p>@T["Metrics.EmptyHelp"]</p></div> }
 else
 {
     <section class="metric-grid" aria-label="Latest metrics">
     @foreach (var metric in latest.Take(8))
     { <article class="metric-card"><span>@metric.Name</span><strong>@Format(metric.Name, metric.Value)</strong><small>@metric.CollectedAt.ToLocalTime().ToString("T")</small></article> }
     </section>
-    <section class="section-block"><div class="section-title"><div><h2>Metric samples</h2><p>Data table accessible; tối đa 5.000 samples gần nhất.</p></div></div>
-    <div class="table-wrap"><table><thead><tr><th>Time</th><th>Name</th><th>Value</th></tr></thead><tbody>
+    <section class="section-block"><div class="section-title"><div><h2>@T["Metrics.Samples"]</h2><p>@T["Metrics.SamplesHelp"]</p></div></div>
+    <div class="table-wrap"><table><thead><tr><th>@T["Metrics.Time"]</th><th>@T["Metrics.Name"]</th><th>@T["Metrics.Value"]</th></tr></thead><tbody>
     @foreach (var sample in Model.Samples.Take(1000))
     { <tr><td>@sample.CollectedAt.ToLocalTime().ToString("G")</td><td><code>@sample.Name</code></td><td><code>@Format(sample.Name, sample.Value)</code></td></tr> }
     </tbody></table></div></section>

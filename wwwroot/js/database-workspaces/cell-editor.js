@@ -1,13 +1,15 @@
 import { html } from "./shared.js";
 
 function showExpandedCellEditor({ workspace, column, value, allowModes, onApply, onCancel }) {
+  const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
+  const number = value => window.CitusI18n?.number(value) ?? value.toLocaleString();
   const isJson = /\bjsonb?\b/i.test(column.dataType || "");
   const modal = document.createElement("div");
   modal.className = "database-modal database-expanded-cell-modal";
   modal.setAttribute("role", "dialog");
   modal.setAttribute("aria-modal", "true");
   modal.setAttribute("aria-labelledby", "expanded-cell-title");
-  modal.innerHTML = `<div class="database-modal-card"><header><div><p>${html(workspace.schema)}.${html(workspace.name)}</p><h2 id="expanded-cell-title">Chỉnh sửa ${html(column.name)}</h2></div><button type="button" data-cell-modal-close aria-label="Đóng"><i class="fa fa-times" aria-hidden="true"></i></button></header><div class="database-expanded-cell-meta"><span>${html(column.dataType)}</span>${column.isNullable ? "<span>NULLABLE</span>" : "<span>NOT NULL</span>"}<b data-cell-length>0 ký tự</b></div>${isJson ? `<div class="database-json-editor-toolbar"><div role="tablist" aria-label="Kiểu hiển thị JSON"><button type="button" role="tab" aria-selected="true" data-json-view="raw" class="is-active">Raw text</button><button type="button" role="tab" aria-selected="false" data-json-view="json">JSON</button></div><span data-json-status>Raw text</span><button type="button" data-json-format class="hidden"><i class="fa fa-indent" aria-hidden="true"></i> Format</button><button type="button" data-json-compact class="hidden"><i class="fa fa-compress" aria-hidden="true"></i> Compact</button></div>` : ""}<textarea data-cell-modal-value spellcheck="false" aria-label="Giá trị cột ${html(column.name)}"></textarea>${isJson ? `<div class="database-json-editor-error hidden" data-json-error role="alert"></div>` : ""}${allowModes ? `<div class="database-expanded-cell-modes"><button type="button" data-cell-mode="value" class="is-active">VALUE</button><button type="button" data-cell-mode="null" ${column.isNullable ? "" : "disabled"}>NULL</button><button type="button" data-cell-mode="default">DEFAULT</button></div>` : ""}<footer><span>Ctrl+Enter để áp dụng · Escape để hủy</span><div><button type="button" class="btn btn-ghost" data-cell-modal-close>Hủy</button><button type="button" class="btn btn-primary" data-cell-modal-apply>Áp dụng</button></div></footer></div>`;
+  modal.innerHTML = `<div class="database-modal-card"><header><div><p>${html(workspace.schema)}.${html(workspace.name)}</p><h2 id="expanded-cell-title">${t("cell.edit", column.name)}</h2></div><button type="button" data-cell-modal-close aria-label="${t("common.close")}"><i class="fa fa-times" aria-hidden="true"></i></button></header><div class="database-expanded-cell-meta"><span>${html(column.dataType)}</span>${column.isNullable ? "<span>NULLABLE</span>" : "<span>NOT NULL</span>"}<b data-cell-length>${t("cell.characters", 0)}</b></div>${isJson ? `<div class="database-json-editor-toolbar"><div role="tablist" aria-label="${t("cell.jsonView")}"><button type="button" role="tab" aria-selected="true" data-json-view="raw" class="is-active">Raw text</button><button type="button" role="tab" aria-selected="false" data-json-view="json">JSON</button></div><span data-json-status>Raw text</span><button type="button" data-json-format class="hidden"><i class="fa fa-indent" aria-hidden="true"></i> Format</button><button type="button" data-json-compact class="hidden"><i class="fa fa-compress" aria-hidden="true"></i> Compact</button></div>` : ""}<textarea data-cell-modal-value spellcheck="false" aria-label="${t("cell.valueLabel", column.name)}"></textarea>${isJson ? `<div class="database-json-editor-error hidden" data-json-error role="alert"></div>` : ""}${allowModes ? `<div class="database-expanded-cell-modes"><button type="button" data-cell-mode="value" class="is-active">VALUE</button><button type="button" data-cell-mode="null" ${column.isNullable ? "" : "disabled"}>NULL</button><button type="button" data-cell-mode="default">DEFAULT</button></div>` : ""}<footer><span>${t("cell.shortcuts")}</span><div><button type="button" class="btn btn-ghost" data-cell-modal-close>${t("common.cancel")}</button><button type="button" class="btn btn-primary" data-cell-modal-apply>${t("common.apply")}</button></div></footer></div>`;
 
   document.body.appendChild(modal);
   document.body.classList.add("database-modal-open");
@@ -17,20 +19,20 @@ function showExpandedCellEditor({ workspace, column, value, allowModes, onApply,
   let mode = "value";
   let editorView = "raw";
 
-  const updateCounter = () => { counter.textContent = `${textarea.value.length.toLocaleString()} ký tự`; };
+  const updateCounter = () => { counter.textContent = t("cell.characters", number(textarea.value.length)); };
   const jsonError = modal.querySelector("[data-json-error]");
   const jsonStatus = modal.querySelector("[data-json-status]");
   const validateJson = (showError = true) => {
     if (!isJson) return true;
     try {
       JSON.parse(textarea.value);
-      jsonStatus.textContent = editorView === "json" ? "JSON hợp lệ" : "Raw text";
+      jsonStatus.textContent = editorView === "json" ? t("cell.jsonValid") : "Raw text";
       jsonStatus.classList.toggle("is-valid", editorView === "json");
       jsonStatus.classList.remove("is-invalid");
       jsonError.classList.add("hidden");
       return true;
     } catch (error) {
-      jsonStatus.textContent = "JSON không hợp lệ";
+      jsonStatus.textContent = t("cell.jsonInvalid");
       jsonStatus.classList.remove("is-valid");
       jsonStatus.classList.add("is-invalid");
       if (showError) { jsonError.textContent = error.message; jsonError.classList.remove("hidden"); }
@@ -96,11 +98,12 @@ function showExpandedCellEditor({ workspace, column, value, allowModes, onApply,
 }
 
 export function attachExpandedEditorButton({ workspace, column, input, container, allowModes, onApply }) {
+  const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
   const button = document.createElement("button");
   button.type = "button";
   button.className = "database-cell-editor-expand";
-  button.title = "Mở trình chỉnh sửa đầy đủ";
-  button.setAttribute("aria-label", "Mở trình chỉnh sửa đầy đủ");
+  button.title = t("cell.expand");
+  button.setAttribute("aria-label", t("cell.expand"));
   button.innerHTML = '<i class="fa fa-expand" aria-hidden="true"></i>';
   container.appendChild(button);
 

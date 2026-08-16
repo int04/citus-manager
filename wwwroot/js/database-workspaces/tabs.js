@@ -8,6 +8,7 @@ export function bindWorkspaceTabInteractions({
   duplicateWorkspace,
   reorderWorkspace
 }) {
+  const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
   let draggedWorkspaceKey = null;
 
   tabs.addEventListener("click", event => {
@@ -23,15 +24,15 @@ export function bindWorkspaceTabInteractions({
   const contextMenu = document.createElement("div");
   contextMenu.className = "database-workspace-context-menu hidden";
   contextMenu.setAttribute("role", "menu");
-  contextMenu.setAttribute("aria-label", "Tác vụ không gian làm việc");
-  contextMenu.innerHTML = `<button type="button" role="menuitem" data-tab-action="close"><i class="fa fa-times" aria-hidden="true"></i><span>Đóng tab</span><kbd>Ctrl+W</kbd></button>
-    <button type="button" role="menuitem" data-tab-action="close-others"><i class="fa fa-times-circle-o" aria-hidden="true"></i><span>Đóng mọi tab trừ tab này</span></button>
-    <button type="button" role="menuitem" data-tab-action="close-right"><i class="fa fa-step-forward" aria-hidden="true"></i><span>Đóng tab bên phải</span></button>
-    <button type="button" role="menuitem" data-tab-action="close-left"><i class="fa fa-step-backward" aria-hidden="true"></i><span>Đóng tab bên trái</span></button>
+  contextMenu.setAttribute("aria-label", t("tabs.actions"));
+  contextMenu.innerHTML = `<button type="button" role="menuitem" data-tab-action="close"><i class="fa fa-times" aria-hidden="true"></i><span>${t("tabs.close")}</span><kbd>Ctrl+W</kbd></button>
+    <button type="button" role="menuitem" data-tab-action="close-others"><i class="fa fa-times-circle-o" aria-hidden="true"></i><span>${t("tabs.closeOthers")}</span></button>
+    <button type="button" role="menuitem" data-tab-action="close-right"><i class="fa fa-step-forward" aria-hidden="true"></i><span>${t("tabs.closeRight")}</span></button>
+    <button type="button" role="menuitem" data-tab-action="close-left"><i class="fa fa-step-backward" aria-hidden="true"></i><span>${t("tabs.closeLeft")}</span></button>
     <div role="separator"></div>
-    <button type="button" role="menuitem" data-tab-action="duplicate"><i class="fa fa-clone" aria-hidden="true"></i><span>Nhân bản</span></button>
+    <button type="button" role="menuitem" data-tab-action="duplicate"><i class="fa fa-clone" aria-hidden="true"></i><span>${t("tabs.duplicate")}</span></button>
     <div role="separator"></div>
-    <button type="button" role="menuitem" data-tab-action="close-all"><i class="fa fa-window-close-o" aria-hidden="true"></i><span>Đóng toàn bộ tab</span></button>`;
+    <button type="button" role="menuitem" data-tab-action="close-all"><i class="fa fa-window-close-o" aria-hidden="true"></i><span>${t("tabs.closeAll")}</span></button>`;
   document.body.appendChild(contextMenu);
 
   const hideContextMenu = () => {

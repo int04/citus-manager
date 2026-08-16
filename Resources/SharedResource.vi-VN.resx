@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="Common.Save" xml:space="preserve"><value>Lưu</value></data>
+  <data name="Common.Cancel" xml:space="preserve"><value>Hủy</value></data>
+  <data name="Common.Close" xml:space="preserve"><value>Đóng</value></data>
+  <data name="Common.Refresh" xml:space="preserve"><value>Làm mới</value></data>
+  <data name="Common.Delete" xml:space="preserve"><value>Xóa</value></data>
+  <data name="Common.Search" xml:space="preserve"><value>Tìm kiếm</value></data>
+  <data name="Common.Loading" xml:space="preserve"><value>Đang tải…</value></data>
+  <data name="Common.Settings" xml:space="preserve"><value>Cài đặt</value></data>
+  <data name="Layout.SkipContent" xml:space="preserve"><value>Bỏ qua để tới nội dung chính</value></data>
+  <data name="Layout.MainNavigation" xml:space="preserve"><value>Điều hướng chính</value></data>
+  <data name="Layout.HomeLabel" xml:space="preserve"><value>Trang chủ Citus Manager</value></data>
+  <data name="Layout.FleetOverview" xml:space="preserve"><value>Tổng quan hệ thống</value></data>
+  <data name="Layout.Operations" xml:space="preserve"><value>Thao tác</value></data>
+  <data name="Layout.Alerts" xml:space="preserve"><value>Cảnh báo</value></data>
+  <data name="Layout.Audit" xml:space="preserve"><value>Nhật ký kiểm toán</value></data>
+  <data name="Layout.UsersRoles" xml:space="preserve"><value>User &amp; role</value></data>
+  <data name="Layout.AddCoordinator" xml:space="preserve"><value>Thêm coordinator</value></data>
+  <data name="Layout.Logout" xml:space="preserve"><value>Đăng xuất</value></data>
+  <data name="Layout.ThemeToggle" xml:space="preserve"><value>Đổi giao diện sáng hoặc tối</value></data>
+  <data name="Settings.Eyebrow" xml:space="preserve"><value>CÀI ĐẶT</value></data>
+  <data name="Language.Title" xml:space="preserve"><value>Ngôn ngữ</value></data>
+  <data name="Language.Description" xml:space="preserve"><value>Chọn ngôn ngữ sử dụng trên toàn bộ Citus Manager.</value></data>
+  <data name="Language.PreferenceHeading" xml:space="preserve"><value>Tùy chọn ngôn ngữ</value></data>
+  <data name="Language.PreferenceHelp" xml:space="preserve"><value>Tùy chọn tài khoản được ưu tiên hơn trình duyệt này. Auto dùng ngôn ngữ trình duyệt và fallback về tiếng Anh.</value></data>
+  <data name="Language.Auto" xml:space="preserve"><value>Tự động (trình duyệt)</value></data>
+  <data name="Language.AutoShort" xml:space="preserve"><value>Auto</value></data>
+  <data name="Language.AutoHelp" xml:space="preserve"><value>Dùng ngôn ngữ trình duyệt nếu được hỗ trợ; nếu không sẽ dùng tiếng Anh.</value></data>
+  <data name="Language.SelectLabel" xml:space="preserve"><value>Chọn ngôn ngữ</value></data>
+  <data name="Language.Saved" xml:space="preserve"><value>Đã lưu tùy chọn ngôn ngữ.</value></data>
+  <data name="Language.Unsupported" xml:space="preserve"><value>Ngôn ngữ đã chọn chưa được hỗ trợ.</value></data>
+  <data name="Language.UserUnavailable" xml:space="preserve"><value>Không tìm thấy tài khoản user hiện tại.</value></data>
+  <data name="Language.SaveFailed" xml:space="preserve"><value>Không thể lưu tùy chọn ngôn ngữ.</value></data>
+  <data name="Error.Title" xml:space="preserve"><value>Lỗi hệ thống</value></data><data name="Error.Heading" xml:space="preserve"><value>Không thể xử lý yêu cầu</value></data><data name="Error.Description" xml:space="preserve"><value>Kiểm tra control database và thử lại. Chi tiết nội bộ được ẩn để bảo vệ dữ liệu nhạy cảm.</value></data><data name="Error.Back" xml:space="preserve"><value>Về dashboard</value></data>
+  <data name="Privacy.Title" xml:space="preserve"><value>Bảo mật &amp; quyền riêng tư</value></data><data name="Privacy.Description" xml:space="preserve"><value>Nguyên tắc xử lý credential, audit và dữ liệu giám sát trong Citus Manager.</value></data><data name="Privacy.Credentials" xml:space="preserve"><value>Password và bearer token được mã hóa bằng ASP.NET Data Protection. API không trả secret sau khi lưu.</value></data><data name="Privacy.Activity" xml:space="preserve"><value>SQL text và parameter bị loại khỏi Activity để giảm rủi ro lộ dữ liệu ứng dụng.</value></data><data name="Privacy.Audit" xml:space="preserve"><value>Topology mutation ghi actor, plan hash, checkpoint và kết quả sanitized; không ghi connection string.</value></data>
+</root>

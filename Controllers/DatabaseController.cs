@@ -3,11 +3,13 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CitusManager.Contracts;
+using CitusManager.Localization;
 using CitusManager.Models;
 using CitusManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
+using Microsoft.Extensions.Localization;
 
 namespace CitusManager.Controllers;
 
@@ -19,7 +21,8 @@ public sealed class DatabaseController(
     IDatabaseWorkspaceService workspaces,
     IDatabaseRowInspectionService rowInspector,
     IDatabaseObjectService objects,
-    IOperationService operations) : Controller
+    IOperationService operations,
+    IStringLocalizer<DatabaseResource> text) : Controller
 {
     private static readonly JsonSerializerOptions StreamJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -31,9 +34,9 @@ public sealed class DatabaseController(
         NoStore();
         try { return Ok(await workspaces.GetMetadataAsync(clusterId, nodeId, schema, name,
             User.IsInRole("Operator") || User.IsInRole("Admin"), cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không đọc được workspace metadata", "Database từ chối yêu cầu."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpPost("Rows/Query"), ValidateAntiForgeryToken]
@@ -42,10 +45,10 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await workspaces.QueryAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "WHERE/ORDER BY không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
         catch (PostgresException exception) { return WorkspaceQueryProblem(exception); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không thể tải dữ liệu", "PostgreSQL từ chối query workspace."); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.LoadData.Title"], text["Problem.QueryRejected"]); }
     }
 
     [HttpPost("Rows/Inspect"), ValidateAntiForgeryToken]
@@ -56,15 +59,15 @@ public sealed class DatabaseController(
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await rowInspector.InspectAsync(clusterId, request, cancellationToken)); }
         catch (DBConcurrencyException)
-        { return DatabaseMutationProblem(409, "Row đã thay đổi", "Refresh workspace rồi mở lại chi tiết row."); }
-        catch (ArgumentException exception)
-        { return DatabaseMutationProblem(400, "Row identity không hợp lệ", exception.Message); }
+        { return ConflictProblem(); }
+        catch (ArgumentException)
+        { return InvalidRequest(); }
         catch (KeyNotFoundException)
-        { return DatabaseMutationProblem(404, "Không tìm thấy row hoặc object", "Refresh workspace rồi thử lại."); }
+        { return NotFoundProblem(); }
         catch (PostgresException exception)
-        { return DatabaseMutationProblem(422, "Không thể đọc chi tiết row", "PostgreSQL từ chối catalog query.", exception.SqlState); }
+        { return DatabaseMutationProblem(422, text["Problem.LoadData.Title"], text["Problem.QueryRejected"], exception.SqlState); }
         catch (NpgsqlException)
-        { return DatabaseMutationProblem(422, "Không thể đọc chi tiết row", "Database từ chối yêu cầu."); }
+        { return DatabaseMutationProblem(422, text["Problem.LoadData.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpPost("Rows/Locations"), ValidateAntiForgeryToken]
@@ -74,14 +77,14 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await rowInspector.LocateAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException exception)
-        { return DatabaseMutationProblem(400, "Row identities không hợp lệ", exception.Message); }
+        catch (ArgumentException)
+        { return InvalidRequest(); }
         catch (KeyNotFoundException)
-        { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh workspace rồi thử lại."); }
+        { return NotFoundProblem(); }
         catch (PostgresException exception)
-        { return DatabaseMutationProblem(422, "Không thể xác định worker", "PostgreSQL từ chối topology query.", exception.SqlState); }
+        { return DatabaseMutationProblem(422, text["Problem.LoadData.Title"], text["Problem.QueryRejected"], exception.SqlState); }
         catch (NpgsqlException)
-        { return DatabaseMutationProblem(422, "Không thể xác định worker", "Database từ chối yêu cầu."); }
+        { return DatabaseMutationProblem(422, text["Problem.LoadData.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpPost("Rows/Count"), ValidateAntiForgeryToken]
@@ -90,9 +93,9 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await workspaces.CountAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "WHERE không hợp lệ", exception.Message); }
+        catch (ArgumentException) { return InvalidRequest(); }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
-        { return SafeDatabaseProblem("Không thể đếm dữ liệu", exception); }
+        { return SafeDatabaseProblem(text["Problem.LoadData.Title"], exception); }
     }
 
     [HttpPost("Rows/Apply"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
@@ -101,12 +104,12 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await workspaces.ApplyAsync(clusterId, request, ActorId(), cancellationToken)); }
-        catch (DBConcurrencyException) { return DatabaseMutationProblem(409, "Dữ liệu đã thay đổi", "Refresh workspace và áp dụng lại thay đổi."); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
-        catch (InvalidOperationException exception) { return DatabaseMutationProblem(409, "Không thể lưu", exception.Message); }
+        catch (DBConcurrencyException) { return ConflictProblem(); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (InvalidOperationException) { return DatabaseMutationProblem(409, text["Problem.Save.Title"], text["Problem.Conflict.Detail"]); }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.SerializationFailure)
-        { return DatabaseMutationProblem(409, "Dữ liệu vừa được thay đổi", "Refresh workspace rồi áp dụng lại thay đổi.", exception.SqlState); }
-        catch (PostgresException exception) { return DatabaseMutationProblem(422, "PostgreSQL từ chối thay đổi", exception.MessageText, exception.SqlState); }
+        { return DatabaseMutationProblem(409, text["Problem.Conflict.Title"], text["Problem.Conflict.Detail"], exception.SqlState); }
+        catch (PostgresException exception) { return DatabaseMutationProblem(422, text["Problem.Save.Title"], exception.MessageText, exception.SqlState); }
     }
 
     [HttpPost("Rows/Cell"), ValidateAntiForgeryToken]
@@ -115,10 +118,10 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await workspaces.ReadCellAsync(clusterId, request, cancellationToken)); }
-        catch (DBConcurrencyException) { return DatabaseMutationProblem(409, "Dữ liệu đã thay đổi", "Refresh workspace trước khi edit."); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Cell không hợp lệ", exception.Message); }
+        catch (DBConcurrencyException) { return ConflictProblem(); }
+        catch (ArgumentException) { return InvalidRequest(); }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
-        { return SafeDatabaseProblem("Không thể tải full cell", exception); }
+        { return SafeDatabaseProblem(text["Problem.Cell.Title"], exception); }
     }
 
     [HttpGet("Objects/Ddl")]
@@ -126,9 +129,9 @@ public sealed class DatabaseController(
     {
         NoStore();
         try { return Ok(await workspaces.GetDdlAsync(clusterId, schema, name, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không dựng được DDL", "Database từ chối catalog query."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Ddl.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpPost("Csv/Export"), ValidateAntiForgeryToken]
@@ -144,9 +147,9 @@ public sealed class DatabaseController(
             await workspaces.ExportCsvAsync(clusterId, request, Response.Body, cancellationToken);
             return new EmptyResult();
         }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Không thể export CSV", exception.Message); }
+        catch (ArgumentException) { return InvalidRequest(); }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
-        { return SafeDatabaseProblem("Không thể export CSV", exception); }
+        { return SafeDatabaseProblem(text["Problem.Csv.Title"], exception); }
     }
 
     [HttpPost("Csv/Preview"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
@@ -155,9 +158,9 @@ public sealed class DatabaseController(
     {
         NoStore();
         if (file.Length is <= 0 or > 26_214_400)
-            return DatabaseMutationProblem(400, "CSV không hợp lệ", "File phải lớn hơn 0 và không vượt 25 MiB.");
+            return DatabaseMutationProblem(400, text["Problem.Csv.Title"], text["Problem.Invalid.Detail"]);
         try { await using var stream = file.OpenReadStream(); return Ok(await workspaces.PreviewCsvAsync(stream, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "CSV không hợp lệ", exception.Message); }
+        catch (ArgumentException) { return InvalidRequest(); }
     }
 
     [HttpPost("Csv/Import"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
@@ -167,15 +170,15 @@ public sealed class DatabaseController(
     {
         NoStore();
         if (file.Length is <= 0 or > 26_214_400)
-            return DatabaseMutationProblem(400, "CSV không hợp lệ", "File phải lớn hơn 0 và không vượt 25 MiB.");
+            return DatabaseMutationProblem(400, text["Problem.Csv.Title"], text["Problem.Invalid.Detail"]);
         try
         {
             await using var stream = file.OpenReadStream();
             return Ok(await workspaces.ImportCsvAsync(clusterId, schema, objectName, stream, ActorId(), cancellationToken));
         }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "CSV không hợp lệ", exception.Message); }
-        catch (InvalidOperationException exception) { return DatabaseMutationProblem(409, "Không thể import CSV", exception.Message); }
-        catch (PostgresException exception) { return DatabaseMutationProblem(422, "PostgreSQL từ chối CSV", exception.MessageText, exception.SqlState); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (InvalidOperationException) { return ConflictProblem(); }
+        catch (PostgresException exception) { return DatabaseMutationProblem(422, text["Problem.Csv.Title"], exception.MessageText, exception.SqlState); }
     }
     [HttpGet("")]
     public async Task<IActionResult> Index(
@@ -192,7 +195,7 @@ public sealed class DatabaseController(
         }
         catch (Exception exception) when (exception is InvalidOperationException or NpgsqlException)
         {
-            TempData["Error"] = "Không mở được database explorer. Kiểm tra trạng thái node, network và credential trên target.";
+            TempData["Error"] = text["Problem.Connection.Detail"].Value;
             return RedirectToAction("Details", "Clusters", new { id = clusterId });
         }
     }
@@ -212,7 +215,7 @@ public sealed class DatabaseController(
         }
         catch (Exception exception) when (exception is InvalidOperationException or NpgsqlException)
         {
-            return SafeDatabaseProblem("Không thể refresh cây database", exception);
+            return SafeDatabaseProblem(text["Problem.LoadData.Title"], exception);
         }
     }
 
@@ -229,17 +232,14 @@ public sealed class DatabaseController(
         {
             return Ok(await explorer.GetTreeChildrenAsync(clusterId, nodeId, schema, name, group, cancellationToken));
         }
-        catch (ArgumentException exception)
-        {
-            return DatabaseMutationProblem(StatusCodes.Status400BadRequest, "Nhóm cây không hợp lệ", exception.Message);
-        }
+        catch (ArgumentException) { return InvalidRequest(); }
         catch (KeyNotFoundException)
         {
-            return DatabaseMutationProblem(StatusCodes.Status404NotFound, "Không tìm thấy database object", "Refresh cây và thử lại.");
+            return NotFoundProblem();
         }
         catch (Exception exception) when (exception is InvalidOperationException or NpgsqlException)
         {
-            return SafeDatabaseProblem("Không thể tải nhánh database", exception);
+            return SafeDatabaseProblem(text["Problem.LoadData.Title"], exception);
         }
     }
 
@@ -253,7 +253,7 @@ public sealed class DatabaseController(
         }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
         {
-            return SafeDatabaseProblem("Không thể đọc capability database", exception);
+            return SafeDatabaseProblem(text["Problem.Metadata.Title"], exception);
         }
     }
 
@@ -263,9 +263,9 @@ public sealed class DatabaseController(
     {
         NoStore();
         try { return Ok(await objects.GetViewDefinitionAsync(clusterId, schema, name, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy view", "Refresh cây và thử lại."); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không đọc được view", "Database từ chối yêu cầu."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpGet("Sequences/Inspect")]
@@ -274,9 +274,9 @@ public sealed class DatabaseController(
     {
         NoStore();
         try { return Ok(await objects.InspectSequenceAsync(clusterId, schema, name, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy sequence", "Refresh cây và thử lại."); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không đọc được sequence", "Database từ chối yêu cầu."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpGet("Objects/Dependencies")]
@@ -285,9 +285,9 @@ public sealed class DatabaseController(
     {
         NoStore();
         try { return Ok(await objects.GetDependenciesAsync(clusterId, kind, schema, name, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy object", "Refresh cây và thử lại."); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không đọc được dependencies", "Database từ chối yêu cầu."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Metadata.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpPost("Schemas"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
@@ -338,24 +338,17 @@ public sealed class DatabaseController(
             var operation = await operations.CreateTableConversionAsync(clusterId, request, ActorId(), cancellationToken);
             var redirectUrl = Url.Action("Details", "Operations", new { id = operation.Id });
             return Accepted(redirectUrl, new DatabaseMutationResponse(
-                "Đã tạo conversion plan. Cần Admin khác phê duyệt.", request.Schema, request.Table, redirectUrl));
+                text["Conversion.Created"], request.Schema, request.Table, redirectUrl));
         }
-        catch (ArgumentException exception)
-        {
-            return DatabaseMutationProblem(StatusCodes.Status400BadRequest, "Dữ liệu không hợp lệ", exception.Message);
-        }
+        catch (ArgumentException) { return InvalidRequest(); }
         catch (KeyNotFoundException)
         {
-            return DatabaseMutationProblem(StatusCodes.Status404NotFound, "Không tìm thấy table", "Refresh cây và thử lại.");
+            return NotFoundProblem();
         }
-        catch (InvalidOperationException exception)
-        {
-            return DatabaseMutationProblem(StatusCodes.Status409Conflict, "Không thể lập conversion plan", exception.Message);
-        }
+        catch (InvalidOperationException) { return ConflictProblem(); }
         catch (NpgsqlException)
         {
-            return DatabaseMutationProblem(StatusCodes.Status422UnprocessableEntity, "Không đọc được Citus preflight",
-                "Kết nối database bị gián đoạn hoặc Citus từ chối preflight.");
+            return DatabaseMutationProblem(StatusCodes.Status422UnprocessableEntity, text["Problem.Metadata.Title"], text["Problem.DdlExecute.Detail"]);
         }
     }
 
@@ -371,7 +364,7 @@ public sealed class DatabaseController(
         }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
         {
-            return SafeDatabaseProblem("Không thể đọc dữ liệu bảng", exception);
+            return SafeDatabaseProblem(text["Problem.LoadData.Title"], exception);
         }
     }
 
@@ -387,7 +380,7 @@ public sealed class DatabaseController(
         }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
         {
-            return SafeDatabaseProblem("Không thể đọc cấu trúc bảng", exception);
+            return SafeDatabaseProblem(text["Problem.Metadata.Title"], exception);
         }
     }
 
@@ -398,9 +391,9 @@ public sealed class DatabaseController(
     {
         NoStore();
         try { return Ok(await queryConsole.GetMetadataAsync(clusterId, new(kind, schema, name, nodeId), cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Console context không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy target", "Refresh cây database rồi thử lại."); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không tải được gợi ý SQL", "PostgreSQL từ chối catalog query."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Console.Title"], text["Problem.QueryRejected"]); }
     }
 
     [HttpPost("Console/Analyze"), ValidateAntiForgeryToken]
@@ -410,9 +403,9 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await queryConsole.AnalyzeAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "SQL không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy target", "Refresh cây database rồi thử lại."); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không phân tích được SQL", "Database từ chối yêu cầu."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Console.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpPost("Console/Execute"), ValidateAntiForgeryToken]
@@ -426,9 +419,9 @@ public sealed class DatabaseController(
             await queryConsole.AnalyzeAsync(clusterId,
                 new AnalyzeConsoleSqlRequest { Sql = request.Sql, NodeId = request.NodeId }, cancellationToken);
         }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "SQL không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy target", "Refresh cây database rồi thử lại."); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không thể chuẩn bị Query Console", "Database từ chối yêu cầu."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Console.Title"], text["Problem.DatabaseRejected"]); }
         Response.ContentType = "application/x-ndjson; charset=utf-8";
         Response.Headers.CacheControl = "no-store";
         try
@@ -444,10 +437,10 @@ public sealed class DatabaseController(
         catch (Exception exception)
         {
             if (!Response.HasStarted && exception is ArgumentException argument)
-                return DatabaseMutationProblem(400, "Không thể chạy SQL", argument.Message);
+                return DatabaseMutationProblem(400, text["Problem.Console.Title"], text["Problem.Invalid.Detail"]);
             if (!Response.HasStarted) throw;
             var item = new ConsoleExecutionEvent("statementFailed", DateTimeOffset.UtcNow,
-                Message: exception is ArgumentException ? exception.Message : "Không thể tiếp tục thực thi SQL.");
+                Message: exception is ArgumentException ? text["Problem.Invalid.Detail"] : text["Problem.DdlExecute.Detail"]);
             await JsonSerializer.SerializeAsync(Response.Body, item, StreamJsonOptions, CancellationToken.None);
             await Response.Body.WriteAsync("\n"u8.ToArray(), CancellationToken.None);
         }
@@ -461,14 +454,14 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         if (request.ExecutionId == Guid.Empty)
-            return DatabaseMutationProblem(400, "Execution không hợp lệ", "Execution ID bị thiếu.");
+            return InvalidRequest();
         return consoleExecutions.Skip(request.ExecutionId, ActorId(), clusterId, request.StatementIndex) switch
         {
             SkipConsoleStatementResult.Skipped or SkipConsoleStatementResult.AlreadySkipped =>
                 Ok(new { status = "skipped", statementIndex = request.StatementIndex }),
             SkipConsoleStatementResult.AlreadyStarted =>
-                DatabaseMutationProblem(409, "Statement đã bắt đầu", "Chỉ statement đang chờ mới có thể bỏ qua."),
-            _ => DatabaseMutationProblem(404, "Không tìm thấy execution", "Execution đã kết thúc hoặc không còn hoạt động.")
+                ConflictProblem(),
+            _ => NotFoundProblem()
         };
     }
 
@@ -479,9 +472,9 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await queryConsole.QueryResultAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Result query không hợp lệ", exception.Message); }
-        catch (PostgresException exception) { return DatabaseMutationProblem(422, "Không tải được result", "PostgreSQL từ chối query.", exception.SqlState); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không tải được result", "Database từ chối yêu cầu."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (PostgresException exception) { return DatabaseMutationProblem(422, text["Problem.LoadData.Title"], text["Problem.QueryRejected"], exception.SqlState); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.LoadData.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpPost("Console/Results/Count"), ValidateAntiForgeryToken]
@@ -491,9 +484,9 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await queryConsole.CountResultAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Không thể count result", exception.Message); }
+        catch (ArgumentException) { return InvalidRequest(); }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
-        { return SafeDatabaseProblem("Không thể count result", exception); }
+        { return SafeDatabaseProblem(text["Problem.LoadData.Title"], exception); }
     }
 
     [HttpPost("Console/Results/Cell"), ValidateAntiForgeryToken]
@@ -503,10 +496,10 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         try { return Ok(await queryConsole.ReadResultCellAsync(clusterId, request, cancellationToken)); }
-        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Cell request không hợp lệ", exception.Message); }
-        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy cell", "Result đã thay đổi khi chạy lại SELECT."); }
-        catch (PostgresException exception) { return DatabaseMutationProblem(422, "Không đọc được cell", "PostgreSQL từ chối query.", exception.SqlState); }
-        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không đọc được cell", "Database từ chối yêu cầu."); }
+        catch (ArgumentException) { return InvalidRequest(); }
+        catch (KeyNotFoundException) { return NotFoundProblem(); }
+        catch (PostgresException exception) { return DatabaseMutationProblem(422, text["Problem.Cell.Title"], text["Problem.QueryRejected"], exception.SqlState); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, text["Problem.Cell.Title"], text["Problem.DatabaseRejected"]); }
     }
 
     [HttpPost("Console/Results/Csv/Export"), ValidateAntiForgeryToken]
@@ -527,8 +520,8 @@ public sealed class DatabaseController(
         NoStore();
         if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
         if (request.NodeId is null && !request.Confirmed)
-            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "Chưa xác nhận thực thi SQL",
-                detail: "Xác nhận đúng coordinator/database trước khi chạy.");
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: text["Sql.ConfirmTitle"],
+                detail: text["Problem.Invalid.Detail"]);
         try
         {
             var actorId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -540,7 +533,7 @@ public sealed class DatabaseController(
             var problem = new ProblemDetails
             {
                 Status = StatusCodes.Status422UnprocessableEntity,
-                Title = "PostgreSQL từ chối câu lệnh",
+                Title = text["Problem.Console.Title"],
                 Detail = exception.MessageText,
                 Instance = HttpContext.Request.Path
             };
@@ -551,8 +544,8 @@ public sealed class DatabaseController(
         catch (NpgsqlException)
         {
             return Problem(statusCode: StatusCodes.Status422UnprocessableEntity,
-                title: "Không thể thực thi SQL",
-                detail: "Kiểm tra kết nối, quyền database và trạng thái coordinator.");
+                title: text["Problem.Console.Title"],
+                detail: text["Problem.Connection.Detail"]);
         }
     }
 
@@ -585,25 +578,18 @@ public sealed class DatabaseController(
         catch (PostgresException exception)
         {
             return DatabaseMutationProblem(StatusCodes.Status422UnprocessableEntity,
-                "PostgreSQL từ chối thao tác", exception.MessageText, exception.SqlState);
+                text["Problem.DdlExecute.Title"], exception.MessageText, exception.SqlState);
         }
-        catch (ArgumentException exception)
-        {
-            return DatabaseMutationProblem(StatusCodes.Status400BadRequest, "Dữ liệu không hợp lệ", exception.Message);
-        }
+        catch (ArgumentException) { return InvalidRequest(); }
         catch (KeyNotFoundException)
         {
-            return DatabaseMutationProblem(StatusCodes.Status404NotFound, "Không tìm thấy database object",
-                "Object đã bị xóa hoặc thay đổi. Refresh cây và thử lại.");
+            return NotFoundProblem();
         }
-        catch (InvalidOperationException exception)
-        {
-            return DatabaseMutationProblem(StatusCodes.Status409Conflict, "Thao tác không thể thực hiện", exception.Message);
-        }
+        catch (InvalidOperationException) { return ConflictProblem(); }
         catch (NpgsqlException)
         {
-            return DatabaseMutationProblem(StatusCodes.Status422UnprocessableEntity, "Không thể thực thi DDL",
-                "Kết nối database bị gián đoạn hoặc target từ chối thao tác.");
+            return DatabaseMutationProblem(StatusCodes.Status422UnprocessableEntity, text["Problem.DdlExecute.Title"],
+                text["Problem.DdlExecute.Detail"]);
         }
     }
 
@@ -614,18 +600,27 @@ public sealed class DatabaseController(
         return new ObjectResult(problem) { StatusCode = status };
     }
 
+    private ObjectResult InvalidRequest() => DatabaseMutationProblem(
+        StatusCodes.Status400BadRequest, text["Problem.Invalid.Title"], text["Problem.Invalid.Detail"]);
+
+    private ObjectResult NotFoundProblem() => DatabaseMutationProblem(
+        StatusCodes.Status404NotFound, text["Problem.NotFound.Title"], text["Problem.NotFound.Detail"]);
+
+    private ObjectResult ConflictProblem() => DatabaseMutationProblem(
+        StatusCodes.Status409Conflict, text["Problem.Conflict.Title"], text["Problem.Conflict.Detail"]);
+
     private ObjectResult WorkspaceQueryProblem(PostgresException exception)
     {
         var detail = exception.SqlState switch
         {
-            "42703" => "Cột trong WHERE/ORDER BY không tồn tại. Kiểm tra tên cột và thử lại.",
-            "42804" => "Biểu thức WHERE/ORDER BY không phù hợp với kiểu dữ liệu của cột.",
-            "42883" => "Operator hoặc function không hỗ trợ kiểu dữ liệu đã chọn.",
-            "22P02" => "Giá trị filter không đúng định dạng của kiểu dữ liệu PostgreSQL.",
-            "57014" => "Query bị hủy hoặc vượt quá thời gian cho phép.",
-            _ => "PostgreSQL từ chối query workspace."
+            "42703" => text["Query.ColumnMissing"].Value,
+            "42804" => text["Query.TypeMismatch"].Value,
+            "42883" => text["Query.UnsupportedOperator"].Value,
+            "22P02" => text["Query.InvalidValue"].Value,
+            "57014" => text["Query.Cancelled"].Value,
+            _ => text["Problem.QueryRejected"].Value
         };
-        return DatabaseMutationProblem(422, "Không thể tải dữ liệu", detail, exception.SqlState);
+        return DatabaseMutationProblem(422, text["Problem.LoadData.Title"], detail, exception.SqlState);
     }
 
     private Guid ActorId() => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -636,8 +631,7 @@ public sealed class DatabaseController(
             ? StatusCodes.Status404NotFound
             : StatusCodes.Status422UnprocessableEntity;
         return Problem(statusCode: status, title: title,
-            detail: exception is KeyNotFoundException ? exception.Message :
-                "Kiểm tra topology, quyền đọc database và trạng thái kết nối.");
+            detail: exception is KeyNotFoundException ? text["Problem.NotFound.Detail"] : text["Problem.Connection.Detail"]);
     }
 
     private void NoStore() => Response.Headers["Cache-Control"] = "no-store, max-age=0";

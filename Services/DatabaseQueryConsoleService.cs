@@ -7,7 +7,9 @@ using System.Text.RegularExpressions;
 using CitusManager.Contracts;
 using CitusManager.Data;
 using CitusManager.Domain;
+using CitusManager.Localization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using PgSqlParser;
@@ -29,6 +31,7 @@ public sealed class DatabaseQueryConsoleService(
     ControlDbContext db,
     ICitusConnectionFactory connections,
     IQueryConsoleExecutionRegistry executionRegistry,
+    IStringLocalizer<DatabaseResource> text,
     IOptions<DatabaseExplorerOptions> configuredOptions) : IDatabaseQueryConsoleService
 {
     private readonly DatabaseExplorerOptions options = configuredOptions.Value;
@@ -92,7 +95,7 @@ public sealed class DatabaseQueryConsoleService(
         var target = await ResolveTargetAsync(clusterId, request.NodeId, ct);
         var descriptors = ConsoleSqlAnalyzer.Analyze(request.Sql);
         if (!target.IsCoordinator && descriptors.Any(x => x.Risk != ConsoleRiskLevel.ReadOnly))
-            throw new ArgumentException("Worker Query Console chỉ cho phép SELECT read-only.");
+            throw new ArgumentException(text["Console.WorkerReadOnly"]);
         return new(DatabaseExplorerSafety.QueryHash(request.Sql), !target.IsCoordinator, descriptors);
     }
 
@@ -104,22 +107,22 @@ public sealed class DatabaseQueryConsoleService(
         var descriptors = ConsoleSqlAnalyzer.Analyze(request.Sql);
         var queryHash = DatabaseExplorerSafety.QueryHash(request.Sql);
         if (!string.IsNullOrWhiteSpace(request.AnalysisHash) && !string.Equals(queryHash, request.AnalysisHash, StringComparison.Ordinal))
-            throw new ArgumentException("SQL đã thay đổi sau bước phân tích. Hãy chạy lại.");
+            throw new ArgumentException(text["Console.SqlChanged"]);
         var selected = request.StatementIndexes is { Count: > 0 }
             ? request.StatementIndexes.Distinct().ToHashSet()
             : descriptors.Select(x => x.Index).ToHashSet();
         if (request.ExecutionId == Guid.Empty)
-            throw new ArgumentException("Execution ID không hợp lệ.");
+            throw new ArgumentException(text["Console.InvalidExecution"]);
         var confirmed = (request.ConfirmedStatementIndexes ?? []).ToHashSet();
         var destructive = (request.DestructiveConfirmedStatementIndexes ?? []).ToHashSet();
         foreach (var item in descriptors.Where(x => selected.Contains(x.Index)))
         {
             if (!target.IsCoordinator && item.Risk != ConsoleRiskLevel.ReadOnly)
-                throw new ArgumentException("Worker Query Console chỉ cho phép SELECT read-only.");
+                throw new ArgumentException(text["Console.WorkerReadOnly"]);
             if (item.Risk == ConsoleRiskLevel.Write && !confirmed.Contains(item.Index))
-                throw new ArgumentException($"Statement {item.Index + 1} cần xác nhận mutation.");
+                throw new ArgumentException(text["Console.MutationConfirmation", item.Index + 1]);
             if (item.Risk == ConsoleRiskLevel.Destructive && !destructive.Contains(item.Index))
-                throw new ArgumentException($"Statement {item.Index + 1} cần xác nhận destructive action.");
+                throw new ArgumentException(text["Console.DestructiveConfirmation", item.Index + 1]);
         }
 
         executionRegistry.Register(request.ExecutionId, actorId, clusterId, selected);
@@ -133,7 +136,7 @@ public sealed class DatabaseQueryConsoleService(
                 if (!executionRegistry.TryStart(request.ExecutionId, descriptor.Index))
                 {
                     yield return new("statementSkipped", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
-                        "Đã bỏ qua", QueryHash: descriptor.SqlHash);
+                        text["Console.Skipped"], QueryHash: descriptor.SqlHash);
                     continue;
                 }
                 var sql = request.Sql.Substring(descriptor.Start, descriptor.Length);
@@ -170,7 +173,7 @@ public sealed class DatabaseQueryConsoleService(
                             columns, rows, truncated, QueryHash: descriptor.SqlHash,
                             ExecutionMilliseconds: executionMilliseconds, FetchingMilliseconds: fetchingMilliseconds);
                     terminalEvent = new("statementSucceeded", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
-                        affected >= 0 ? $"{affected} rows affected" : "Thành công", (long)watch.Elapsed.TotalMilliseconds,
+                        affected >= 0 ? $"{affected} rows affected" : text["Console.Success"], (long)watch.Elapsed.TotalMilliseconds,
                         affected, QueryHash: descriptor.SqlHash);
                 }
                 catch (PostgresException exception)
@@ -194,7 +197,7 @@ public sealed class DatabaseQueryConsoleService(
                     watch.Stop();
                     await AuditAsync(actorId, clusterId, target, descriptor, false, watch.Elapsed, null, null);
                     terminalEvent = new("statementFailed", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
-                        "Mất kết nối hoặc database từ chối statement.", (long)watch.Elapsed.TotalMilliseconds,
+                        text["Console.ConnectionRejected"], (long)watch.Elapsed.TotalMilliseconds,
                         QueryHash: descriptor.SqlHash);
                     failed = true;
                 }
@@ -202,7 +205,7 @@ public sealed class DatabaseQueryConsoleService(
                 yield return terminalEvent;
                 if (failed) yield break;
             }
-            yield return new("completed", DateTimeOffset.UtcNow, Message: "Hoàn tất", QueryHash: queryHash);
+            yield return new("completed", DateTimeOffset.UtcNow, Message: text["Console.Completed"], QueryHash: queryHash);
         }
         finally
         {

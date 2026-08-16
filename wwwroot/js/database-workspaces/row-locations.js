@@ -1,11 +1,12 @@
 export function rowLocationPresentation(workspace, rowIndex) {
+  const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
   if (!workspace.showRowLocations) return null;
-  if (workspace.rowLocationsLoading) return { label: "Đang tải…", title: "Đang xác định worker", available: false };
+  if (workspace.rowLocationsLoading) return { label: t("common.loading"), title: t("locations.resolving"), available: false };
   const location = workspace.rowLocations?.[rowIndex];
-  if (!location) return { label: "Chưa xác định", title: "Bấm icon server ở head # để tải lại", available: false };
+  if (!location) return { label: t("locations.unknown"), title: t("locations.reloadHint"), available: false };
   const servers = [...new Set((location.placements || []).map(item => `${item.host}:${item.port}`))];
   if (!location.resolved || !servers.length)
-    return { label: "Không xác định", title: location.status || "Không có worker metadata", available: false };
+    return { label: t("locations.unresolved"), title: location.status || t("locations.noMetadata"), available: false };
   return {
     label: `${servers[0]}${servers.length > 1 ? ` +${servers.length - 1}` : ""}`,
     title: `${location.status}${location.shardId == null ? "" : ` · shard ${location.shardId}`} · ${servers.join(", ")}`,

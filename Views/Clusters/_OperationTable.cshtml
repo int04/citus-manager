@@ -1,14 +1,17 @@
 @model IReadOnlyList<OperationResponse>
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<OperationsResource> T
 @if (Model.Count == 0)
 {
-    <div class="empty-state compact"><p>Chưa có operation.</p></div>
+    <div class="empty-state compact"><p>@T["Empty"]</p></div>
 }
 else
 {
-    <div class="table-wrap"><table><thead><tr><th>Requested</th><th>Kind</th><th>Risk</th><th>Status</th><th>Requester</th><th></th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>@T["Requested"]</th><th>@T["Kind"]</th><th>@T["Risk"]</th><th>@T["Status"]</th><th>@T["Requester"]</th><th></th></tr></thead><tbody>
     @foreach (var operation in Model)
     {
-        <tr><td>@operation.RequestedAt.ToLocalTime().ToString("g")</td><td>@operation.Kind</td><td><span class="status-pill @(operation.Risk == OperationRisk.Destructive ? "danger" : operation.Risk == OperationRisk.Impact ? "warning" : "neutral")">@operation.Risk</span></td><td><span class="status-pill @StatusClass(operation.Status)">@operation.Status</span></td><td><code>@operation.RequestedBy.ToString()[..8]</code></td><td><a class="table-link" asp-controller="Operations" asp-action="Details" asp-route-id="@operation.Id">Chi tiết</a></td></tr>
+        <tr><td>@operation.RequestedAt.ToLocalTime().ToString("g")</td><td>@operation.Kind</td><td><span class="status-pill @(operation.Risk == OperationRisk.Destructive ? "danger" : operation.Risk == OperationRisk.Impact ? "warning" : "neutral")">@operation.Risk</span></td><td><span class="status-pill @StatusClass(operation.Status)">@operation.Status</span></td><td><code>@operation.RequestedBy.ToString()[..8]</code></td><td><a class="table-link" asp-controller="Operations" asp-action="Details" asp-route-id="@operation.Id">@T["Details"]</a></td></tr>
     }
     </tbody></table></div>
 }

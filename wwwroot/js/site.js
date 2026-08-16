@@ -1,11 +1,12 @@
 (() => {
+  const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
   const root = document.documentElement;
   const saved = localStorage.getItem("citus-manager-theme");
   const preferred = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   root.dataset.theme = saved === "light" || saved === "dark" ? saved : preferred;
   const updateThemeLabel = () => {
     const toggle = document.getElementById("theme-toggle");
-    if (toggle) toggle.setAttribute("aria-label", root.dataset.theme === "dark" ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối");
+    if (toggle) toggle.setAttribute("aria-label", root.dataset.theme === "dark" ? t("theme.toLight") : t("theme.toDark"));
   };
   updateThemeLabel();
   document.getElementById("theme-toggle")?.addEventListener("click", () => {
@@ -20,8 +21,8 @@
       if (!input) return;
       const show = input.type === "password";
       input.type = show ? "text" : "password";
-      button.textContent = show ? "Ẩn" : "Hiện";
-      button.setAttribute("aria-label", show ? "Ẩn mật khẩu" : "Hiện mật khẩu");
+      button.textContent = show ? t("password.hide") : t("password.show");
+      button.setAttribute("aria-label", show ? t("password.hideLabel") : t("password.showLabel"));
       button.setAttribute("aria-pressed", show ? "true" : "false");
     });
   });
@@ -45,8 +46,8 @@
     close.type = "button";
     close.className = "connection-result-close";
     close.dataset.connectionResultClose = "";
-    close.setAttribute("aria-label", "Đóng thông báo lỗi");
-    close.title = "Đóng";
+    close.setAttribute("aria-label", t("error.close"));
+    close.title = t("common.close");
     close.innerHTML = '<i class="fa fa-times" aria-hidden="true"></i>';
     close.addEventListener("click", () => clearConnectionResult(element, true));
     element.appendChild(close);
@@ -81,7 +82,7 @@
       if (!activeButton) return;
       const label = activeButton.find("span");
       if (!label.data("idle-label")) label.data("idle-label", label.text());
-      label.text(busy ? "Đang xử lý…" : label.data("idle-label"));
+      label.text(busy ? t("connection.processing") : label.data("idle-label"));
     };
     const showResult = (kind, title, detail) => {
       const success = kind === "success";
@@ -104,7 +105,7 @@
       if (body?.errors) {
         return Object.values(body.errors).flat().join(" ");
       }
-      return body?.detail || "Yêu cầu thất bại. Kiểm tra dữ liệu và thử lại.";
+      return body?.detail || t("error.requestFailed");
     };
 
     testButton.on("click", () => {
@@ -117,9 +118,9 @@
         data: clusterForm.serialize(),
         headers: { "X-Requested-With": "XMLHttpRequest" }
       }).done(data => {
-        showResult("success", "Kết nối thành công",
-          `PostgreSQL: ${data.postgreSqlVersion} · Citus: ${data.citusVersion} · Database/User: ${data.database}/${data.user} · ${data.nodeCount} node · ${data.distributedTableCount} bảng Citus`);
-      }).fail(xhr => showResult("error", "Không thể kết nối", problemText(xhr)))
+        showResult("success", t("connection.success"),
+          t("connection.summary", data.postgreSqlVersion, data.citusVersion, data.database, data.user, data.nodeCount, data.distributedTableCount));
+      }).fail(xhr => showResult("error", t("connection.failed"), problemText(xhr)))
         .always(() => setBusy(false, testButton));
     });
 
@@ -134,10 +135,10 @@
         data: clusterForm.serialize(),
         headers: { "X-Requested-With": "XMLHttpRequest" }
       }).done(data => {
-        showResult("success", "Đăng ký thành công", "Đang chuyển tới trang chi tiết coordinator…");
+        showResult("success", t("connection.registered"), t("connection.redirecting"));
         window.location.assign(data.redirectUrl);
       }).fail(xhr => {
-        showResult("error", "Không thể đăng ký coordinator", problemText(xhr));
+        showResult("error", t("connection.registerFailed"), problemText(xhr));
         setBusy(false, registerButton);
       });
     });
@@ -233,12 +234,12 @@
     const problemText = xhr => {
       const body = xhr.responseJSON;
       if (body?.errors) return Object.values(body.errors).flat().join(" ");
-      const position = body?.position ? ` (vị trí ${body.position})` : "";
+      const position = body?.position ? ` (${body.position})` : "";
       const state = body?.sqlState ? ` [${body.sqlState}]` : "";
-      return `${body?.detail || "Yêu cầu database thất bại."}${state}${position}`;
+      return `${body?.detail || t("error.databaseFailed")}${state}${position}`;
     };
     const showLoading = target => target.html(
-      '<div class="database-loading"><div><div class="database-spinner"></div><p>Đang truy vấn database…</p></div></div>');
+      `<div class="database-loading"><div><div class="database-spinner"></div><p>${t("database.querying")}</p></div></div>`);
     const showError = xhr => showConnectionError(feedback, problemText(xhr));
     const requestData = extra => ({
       __RequestVerificationToken: token,
@@ -277,7 +278,7 @@
         sqlConsole.addClass("hidden");
         result.removeClass("hidden");
         if (!selectedTable) {
-          result.html('<div class="empty-state"><h3>Chưa chọn object</h3><p>Chọn table, view hoặc sequence ở sidebar.</p></div>');
+          result.html(`<div class="empty-state"><h3>${t("database.noObject")}</h3><p>${t("database.selectObject")}</p></div>`);
         } else if (tab === "structure") loadStructure();
         else loadBrowse(1);
       }
@@ -312,7 +313,7 @@
       if (expanded || !container || container.dataset.loaded === "true" || container.dataset.loading === "true") return;
       const parentObject = node.querySelector(":scope > .database-object-row [data-database-object]");
       container.dataset.loading = "true"; this.setAttribute("aria-busy", "true");
-      container.innerHTML = '<div class="database-tree-lazy-state"><span class="database-tree-lazy-spinner" aria-hidden="true"></span>Đang tải cấu trúc…</div>';
+      container.innerHTML = `<div class="database-tree-lazy-state"><span class="database-tree-lazy-spinner" aria-hidden="true"></span>${t("tree.loadingStructure")}</div>`;
       try {
         const response = await $.get(databaseExplorer.data("tree-children-url"), {
           nodeId: databaseExplorer.data("node-id") || null,
@@ -324,7 +325,7 @@
       } catch (xhr) {
         container.innerHTML = "";
         const failure = document.createElement("div"); failure.className = "database-tree-lazy-state is-error";
-        failure.textContent = `${problemText(xhr)} Click đóng/mở để thử lại.`; container.appendChild(failure);
+        failure.textContent = t("error.retryTree", problemText(xhr)); container.appendChild(failure);
       } finally {
         delete container.dataset.loading; this.removeAttribute("aria-busy");
       }
@@ -336,7 +337,7 @@
       container.replaceChildren();
       if (!items.length) {
         const empty = document.createElement("div"); empty.className = "database-tree-lazy-state";
-        empty.textContent = "Không có cấu trúc con."; container.appendChild(empty); return;
+        empty.textContent = t("tree.noChildren"); container.appendChild(empty); return;
       }
       items.forEach(item => {
         const group = item.name;
@@ -358,7 +359,7 @@
       container.replaceChildren();
       if (!items.length) {
         const empty = document.createElement("div");
-        empty.className = "database-tree-lazy-state"; empty.textContent = "Không có object con.";
+        empty.className = "database-tree-lazy-state"; empty.textContent = t("tree.noObjects");
         container.appendChild(empty); return;
       }
       items.forEach(item => {
@@ -396,7 +397,7 @@
       const parentObject = this.closest("[data-database-object-node]")?.querySelector(":scope > .database-object-row [data-database-object]");
       if (!parentObject) return;
       container.dataset.loading = "true"; this.setAttribute("aria-busy", "true");
-      container.innerHTML = '<div class="database-tree-lazy-state"><span class="database-tree-lazy-spinner" aria-hidden="true"></span>Đang tải…</div>';
+      container.innerHTML = `<div class="database-tree-lazy-state"><span class="database-tree-lazy-spinner" aria-hidden="true"></span>${t("common.loading")}</div>`;
       try {
         const response = await $.get(databaseExplorer.data("tree-children-url"), {
           nodeId: databaseExplorer.data("node-id") || null,
@@ -409,7 +410,7 @@
       } catch (xhr) {
         container.innerHTML = "";
         const failure = document.createElement("div"); failure.className = "database-tree-lazy-state is-error";
-        failure.textContent = `${problemText(xhr)} Click đóng/mở để thử lại.`; container.appendChild(failure);
+        failure.textContent = t("error.retryTree", problemText(xhr)); container.appendChild(failure);
       } finally {
         delete container.dataset.loading; this.removeAttribute("aria-busy");
       }
@@ -447,7 +448,7 @@
     const closeModal = () => { modal.addClass("hidden"); $("#prepare-sql-button").trigger("focus"); };
     $("#prepare-sql-button").on("click", () => {
       if (!String($("#sql-editor").val()).trim()) {
-        feedback.removeClass("hidden").text("Nhập SQL trước khi thực thi.").trigger("focus");
+        feedback.removeClass("hidden").text(t("console.sqlRequired")).trigger("focus");
         return;
       }
       feedback.addClass("hidden");

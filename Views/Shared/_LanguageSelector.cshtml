@@ -1,0 +1,24 @@
+@using System.Globalization
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IAppLanguageCatalog Languages
+@inject ILanguagePreferenceAccessor Preference
+@inject IStringLocalizer<SharedResource> T
+@{
+    var selected = Preference.GetExplicitCulture(Context) ?? "auto";
+    var returnUrl = Context.Request.PathBase + Context.Request.Path + Context.Request.QueryString;
+}
+<form class="language-selector" asp-controller="Settings" asp-action="SetLanguage" method="post">
+    <input type="hidden" name="returnUrl" value="@returnUrl" />
+    <label>
+        <i class="fa fa-language" aria-hidden="true"></i>
+        <span class="sr-only">@T["Language.SelectLabel"]</span>
+        <select name="Preference" aria-label="@T["Language.SelectLabel"]" onchange="this.form.requestSubmit()">
+            <option value="auto" selected="@(selected == "auto")">@T["Language.AutoShort"]</option>
+            @foreach (var language in Languages.SupportedLanguages)
+            {
+                <option value="@language.Code" selected="@(selected == language.Code)">@language.NativeName</option>
+            }
+        </select>
+    </label>
+</form>

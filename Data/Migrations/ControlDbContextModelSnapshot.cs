@@ -122,6 +122,10 @@ namespace CitusManager.Data.Migrations
                     b.Property<bool>("PhoneNumberConfirmed")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("PreferredCulture")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text");
 

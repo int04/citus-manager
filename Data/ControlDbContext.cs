@@ -19,6 +19,8 @@ public sealed class ControlDbContext(DbContextOptions<ControlDbContext> options)
     {
         base.OnModelCreating(builder);
 
+        builder.Entity<ApplicationUser>().Property(x => x.PreferredCulture).HasMaxLength(16);
+
         builder.Entity<ClusterProfile>(entity =>
         {
             entity.HasIndex(x => new { x.Host, x.Port, x.Database }).IsUnique();

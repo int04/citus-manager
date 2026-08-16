@@ -1,16 +1,21 @@
 using CitusManager.Domain;
+using CitusManager.Localization;
 using CitusManager.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace CitusManager.Controllers;
 
 public sealed class AccountController(
     UserManager<ApplicationUser> users,
     RoleManager<IdentityRole<Guid>> roles,
-    SignInManager<ApplicationUser> signIn) : Controller
+    SignInManager<ApplicationUser> signIn,
+    IAppLanguageCatalog languages,
+    ILanguagePreferenceAccessor languagePreference,
+    IStringLocalizer<AccountResource> text) : Controller
 {
     [AllowAnonymous]
     public async Task<IActionResult> Setup()
@@ -33,6 +38,7 @@ public sealed class AccountController(
             UserName = model.Email.Trim(),
             Email = model.Email.Trim(),
             DisplayName = model.DisplayName.Trim(),
+            PreferredCulture = languagePreference.GetExplicitCulture(HttpContext),
             EmailConfirmed = true
         };
         var result = await users.CreateAsync(user, model.Password);
@@ -63,9 +69,13 @@ public sealed class AccountController(
             model.Email.Trim(), model.Password, model.RememberMe, lockoutOnFailure: true);
         if (!result.Succeeded)
         {
-            ModelState.AddModelError(string.Empty, "Email hoặc mật khẩu không đúng.");
+            ModelState.AddModelError(string.Empty, text["Login.InvalidCredentials"]);
             return View(model);
         }
+        var user = await users.FindByEmailAsync(model.Email.Trim());
+        var culture = languages.Normalize(user?.PreferredCulture);
+        if (culture is null) LanguageCookie.Delete(Response, Request.IsHttps);
+        else LanguageCookie.Write(Response, culture, Request.IsHttps);
         return LocalRedirect(returnUrl ?? Url.Action("Index", "Home")!);
     }
 

@@ -6,9 +6,10 @@ const SQL_KEYWORDS = ["SELECT","FROM","WHERE","JOIN","LEFT JOIN","RIGHT JOIN","F
 const RESERVED_IDENTIFIERS = new Set(SQL_KEYWORDS.flatMap(value => value.toLowerCase().split(/\s+/)).concat(["user","current_user","session_user","table","column","constraint","primary","references"]));
 const sqlIdentifier = value => /^[a-z_][a-z0-9_$]*$/.test(value) && !RESERVED_IDENTIFIERS.has(value) ? value : `"${value.replaceAll('"','""')}"`;
 const qualifiedIdentifier = (...parts) => parts.map(sqlIdentifier).join(".");
+const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
 
 function jsonHeaders(token) { return { "Content-Type": "application/json", "RequestVerificationToken": token }; }
-function stamp(value = Date.now()) { return new Intl.DateTimeFormat("sv-SE", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)); }
+function stamp(value = Date.now()) { return window.CitusI18n?.date(value, { dateStyle: "short", timeStyle: "medium" }) ?? new Date(value).toLocaleString(); }
 function scopeLabel(scope, database = "Database") { return [database, scope.schema, scope.objectName].filter(Boolean).join("."); }
 
 export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, updateFooter, showError }) {
@@ -42,8 +43,8 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     const destructive = statements.some(x => String(x.risk).toLowerCase() === "destructive");
     const modal = root.querySelector("[data-console-confirm]");
     modal.classList.toggle("is-destructive", destructive);
-    modal.querySelector("h3").textContent = destructive ? "Xác nhận lệnh có thể phá hủy dữ liệu" : "Xác nhận mutation";
-    modal.querySelector("p").textContent = destructive ? "UPDATE/DELETE không WHERE hoặc DDL phá hủy có thể ảnh hưởng toàn object." : "Các statement sau sẽ thay đổi dữ liệu hoặc schema.";
+    modal.querySelector("h3").textContent = destructive ? t("console.confirmDestructive") : t("console.confirmMutation");
+    modal.querySelector("p").textContent = destructive ? t("console.destructiveHelp") : t("console.mutationHelp");
     modal.querySelector("ul").innerHTML = statements.map(x => `<li><b>${html(x.command)}</b> · line ${x.startLine}–${x.endLine}</li>`).join("");
     modal.classList.remove("hidden");
     return new Promise(resolve => {
@@ -56,7 +57,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
 
   function renderResults(workspace, root) {
     const tabs = root.querySelector("[data-console-result-tabs]");
-    tabs.innerHTML = `<button class="${workspace.activeResult == null ? "is-active" : ""}" data-output-tab>Output</button>${workspace.results.map((result,index) => `<button class="${workspace.activeResult === index ? "is-active" : ""}" data-result-tab="${index}">Result ${index+1} <small>${result.rows.length}</small></button>`).join("")}`;
+    tabs.innerHTML = `<button class="${workspace.activeResult == null ? "is-active" : ""}" data-output-tab>${t("console.output")}</button>${workspace.results.map((result,index) => `<button class="${workspace.activeResult === index ? "is-active" : ""}" data-result-tab="${index}">Result ${index+1} <small>${result.rows.length}</small></button>`).join("")}`;
     const output = root.querySelector("[data-console-output]"), data = root.querySelector("[data-console-data]");
     output.classList.toggle("hidden", workspace.activeResult != null); data.classList.toggle("hidden", workspace.activeResult == null);
     output.innerHTML = workspace.output.map(line => `<div class="console-output-line ${line.kind || ""}"><time>[${html(stamp(line.time))}]</time> <span>${html(line.text)}</span></div>`).join("");
@@ -70,15 +71,15 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     const host = root.querySelector("[data-console-history-list]");
     try {
       const rows = await workspace.history.list(search);
-      host.innerHTML = rows.length ? rows.map(item => `<button type="button" data-history-id="${item.id}" title="Nạp query vào editor"><i class="fa ${item.success ? "fa-check-circle" : "fa-times-circle"}"></i><span><b>${html(item.command || "SQL")}</b><small>${html(stamp(item.timestamp))} · ${item.duration || 0} ms</small><code>${html(item.sql.slice(0,160))}</code></span><i class="fa fa-trash" data-history-delete="${item.id}" title="Xóa"></i></button>`).join("") : '<p class="console-history-empty">Chưa có lịch sử query.</p>';
+      host.innerHTML = rows.length ? rows.map(item => `<button type="button" data-history-id="${item.id}" title="${t("console.loadHistory")}"><i class="fa ${item.success ? "fa-check-circle" : "fa-times-circle"}"></i><span><b>${html(item.command || "SQL")}</b><small>${html(stamp(item.timestamp))} · ${item.duration || 0} ms</small><code>${html(item.sql.slice(0,160))}</code></span><i class="fa fa-trash" data-history-delete="${item.id}" title="${t("common.delete")}"></i></button>`).join("") : `<p class="console-history-empty">${t("console.noHistory")}</p>`;
       host.querySelectorAll("[data-history-id]").forEach(button => button.onclick = event => {
         if (event.target.closest("[data-history-delete]")) return;
         const item = rows.find(x => x.id === Number(button.dataset.historyId));
-        if (!item || (workspace.editor.getValue().trim() && workspace.editor.getValue() !== item.sql && !confirm("Thay nội dung editor hiện tại?"))) return;
+        if (!item || (workspace.editor.getValue().trim() && workspace.editor.getValue() !== item.sql && !confirm(t("console.replaceEditor")))) return;
         workspace.editor.setValue(item.sql); workspace.editor.focus();
       });
       host.querySelectorAll("[data-history-delete]").forEach(button => button.onclick = async event => { event.stopPropagation(); await workspace.history.remove(Number(button.dataset.historyDelete)); renderHistory(workspace, root, search); });
-    } catch { host.innerHTML = '<p class="console-history-empty">Không mở được IndexedDB history.</p>'; }
+    } catch { host.innerHTML = `<p class="console-history-empty">${t("console.historyUnavailable")}</p>`; }
   }
 
   function metadataCompletions(metadata) {
@@ -114,26 +115,26 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     stage.innerHTML = `<div class="database-query-console" data-query-console>
       <section class="query-console-editor-pane" style="height:${workspace.editorPercent}%">
         <div class="query-console-toolbar">
-          <button type="button" class="is-primary" data-console-run title="Ctrl+Enter · Không bôi: chạy tất cả · Có bôi: chỉ chạy selection"><i class="fa fa-play"></i> Run</button>
-          <button type="button" class="is-stop hidden" data-console-stop title="Dừng toàn bộ execution"><i class="fa fa-stop"></i> Stop</button>
-          <button type="button" data-console-format title="Format SQL · Ctrl+Shift+F · Có bôi: format selection"><i class="fa fa-indent"></i> Format</button>
-          <button type="button" data-console-clear><i class="fa fa-eraser"></i> Clear</button>
+          <button type="button" class="is-primary" data-console-run title="Ctrl+Enter"><i class="fa fa-play"></i> ${t("console.run")}</button>
+          <button type="button" class="is-stop hidden" data-console-stop><i class="fa fa-stop"></i> ${t("console.stop")}</button>
+          <button type="button" data-console-format title="Ctrl+Shift+F"><i class="fa fa-indent"></i> ${t("console.format")}</button>
+          <button type="button" data-console-clear><i class="fa fa-eraser"></i> ${t("console.clear")}</button>
           <span class="query-console-target"><i class="fa fa-database"></i> ${html(scopeLabel(workspace.scope))}</span>
-          <span class="query-console-mode ${nodeId ? "is-readonly" : ""}">${nodeId ? "Worker · read-only" : "Coordinator"}</span>
+          <span class="query-console-mode ${nodeId ? "is-readonly" : ""}">${nodeId ? t("console.workerReadOnly") : "Coordinator"}</span>
         </div><div class="query-console-editor" data-console-editor></div>
       </section>
-      <div class="query-console-splitter horizontal" role="separator" aria-orientation="horizontal" aria-label="Thay đổi chiều cao SQL editor" tabindex="0"></div>
+      <div class="query-console-splitter horizontal" role="separator" aria-orientation="horizontal" aria-label="${t("console.resizeEditor")}" tabindex="0"></div>
       <section class="query-console-bottom" style="height:${100-workspace.editorPercent}%">
-        <aside class="query-console-history" style="width:${workspace.historyPercent}%"><header><b>Query History</b><button type="button" data-history-clear title="Xóa toàn bộ"><i class="fa fa-trash"></i></button></header><label><i class="fa fa-search"></i><input data-history-search type="search" placeholder="Tìm query…"></label><div data-console-history-list></div></aside>
-        <div class="query-console-splitter vertical" role="separator" aria-orientation="vertical" aria-label="Thay đổi chiều rộng history" tabindex="0"></div>
+        <aside class="query-console-history" style="width:${workspace.historyPercent}%"><header><b>${t("console.history")}</b><button type="button" data-history-clear title="${t("common.delete")}"><i class="fa fa-trash"></i></button></header><label><i class="fa fa-search"></i><input data-history-search type="search"></label><div data-console-history-list></div></aside>
+        <div class="query-console-splitter vertical" role="separator" aria-orientation="vertical" aria-label="${t("console.resizeHistory")}" tabindex="0"></div>
         <main class="query-console-results" style="width:${100-workspace.historyPercent}%"><nav data-console-result-tabs></nav><div class="query-console-output" data-console-output></div><div class="query-console-data hidden" data-console-data></div></main>
       </section>
-      <div class="query-console-confirm hidden" data-console-confirm role="dialog" aria-modal="true"><div><i class="fa fa-exclamation-triangle"></i><h3>Xác nhận mutation</h3><p></p><ul></ul><footer><button type="button" data-confirm-cancel>Hủy</button><button type="button" data-confirm-run>Chạy statement</button></footer></div></div>
+      <div class="query-console-confirm hidden" data-console-confirm role="dialog" aria-modal="true"><div><i class="fa fa-exclamation-triangle"></i><h3></h3><p></p><ul></ul><footer><button type="button" data-confirm-cancel>${t("common.cancel")}</button><button type="button" data-confirm-run>${t("console.run")}</button></footer></div></div>
     </div>`;
     const root = stage.querySelector("[data-query-console]"), editorPane = root.querySelector(".query-console-editor-pane"), bottom = root.querySelector(".query-console-bottom"), historyPane = root.querySelector(".query-console-history"), resultPane = root.querySelector(".query-console-results");
     bindSplitter(workspace, root.querySelector(".query-console-splitter.horizontal"), "y", "editorPercent", editorPane, bottom);
     bindSplitter(workspace, root.querySelector(".query-console-splitter.vertical"), "x", "historyPercent", historyPane, resultPane);
-    if (!window.CitusQueryEditor) { root.querySelector("[data-console-editor]").innerHTML = '<p class="database-workspace-error">SQL editor bundle chưa tải.</p>'; return; }
+    if (!window.CitusQueryEditor) { root.querySelector("[data-console-editor]").innerHTML = `<p class="database-workspace-error">${t("console.editorUnavailable")}</p>`; return; }
     workspace.editor = window.CitusQueryEditor.create({ parent: root.querySelector("[data-console-editor]"), value: workspace.sql || "", onChange: value => { workspace.sql = value; workspace.dirty = !!value.trim(); }, onRun: () => execute(), onSkipStatement: index => workspace.skipQueuedStatement?.(index) });
     renderResults(workspace, root); renderHistory(workspace, root);
 
@@ -157,7 +158,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
         workspace.results = []; workspace.activeResult = null;
         workspace.output.push({ time: Date.now(), text: `${scopeLabel(workspace.scope, workspace.metadata?.database || "database")}> ${selected.map(x => x.command).join(", ")}` });
         const executionId = crypto.randomUUID();
-        const statuses = new Map(selected.map(x => [x.index, { statementIndex: x.index, line: editorLine(x), status: "queued", title: "Bỏ qua statement đang chờ" }]));
+        const statuses = new Map(selected.map(x => [x.index, { statementIndex: x.index, line: editorLine(x), status: "queued", title: t("console.skipQueued") }]));
         const refreshStatuses = () => workspace.editor.setStatuses([...statuses.values()]);
         refreshStatuses();
         workspace.sqlAbort = new AbortController();
@@ -166,13 +167,13 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
         workspace.skipQueuedStatement = async statementIndex => {
           const current = statuses.get(statementIndex);
           if (!current || current.status !== "queued" || current.skipRequested) return;
-          current.skipRequested = true; current.title = "Đang bỏ qua…"; refreshStatuses();
+          current.skipRequested = true; current.title = t("console.skipping"); refreshStatuses();
           try {
             await api(explorer.dataset.consoleSkipUrl, { executionId, statementIndex });
-            statuses.set(statementIndex, { ...current, status: "skipped", title: "Đã bỏ qua", skipRequested: false });
+            statuses.set(statementIndex, { ...current, status: "skipped", title: t("console.skipped"), skipRequested: false });
             workspace.output.push({ time: Date.now(), text: `${selected.find(x => x.index === statementIndex)?.command || "Statement"}: skipped` });
           } catch (error) {
-            current.skipRequested = false; current.title = "Bỏ qua statement đang chờ";
+            current.skipRequested = false; current.title = t("console.skipQueued");
             showError(error.message);
           }
           refreshStatuses(); renderResults(workspace, root);
@@ -180,7 +181,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
         workspace.cancelExecution = () => {
           statuses.forEach((status, index) => {
             if (status.status === "queued" || status.status === "running")
-              statuses.set(index, { ...status, status: "skipped", title: "Đã dừng" });
+              statuses.set(index, { ...status, status: "skipped", title: t("console.stopped") });
           });
           refreshStatuses(); workspace.sqlAbort?.abort();
         };
@@ -190,9 +191,9 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
         const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = "";
         const accept = event => {
           const descriptor = event.statementIndex == null ? null : analysis.statements.find(x => x.index === event.statementIndex);
-          if (event.type === "statementStarted" && descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "running", title: "Đang chạy" });
-          if (event.type === "statementSkipped" && descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "skipped", title: "Đã bỏ qua" });
-          if (event.type === "statementSucceeded" && descriptor) { statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "success", title: `Thành công · ${event.durationMilliseconds} ms` }); workspace.output.push({ time: event.timestamp, kind: "success", text: `${event.command}: ${event.message} (${event.durationMilliseconds} ms)` }); }
+          if (event.type === "statementStarted" && descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "running", title: t("console.runningShort") });
+          if (event.type === "statementSkipped" && descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "skipped", title: t("console.skipped") });
+          if (event.type === "statementSucceeded" && descriptor) { statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "success", title: t("console.successDuration", event.durationMilliseconds) }); workspace.output.push({ time: event.timestamp, kind: "success", text: `${event.command}: ${event.message} (${event.durationMilliseconds} ms)` }); }
           if (event.type === "statementFailed") {
             success = false;
             if (descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "error", title: event.message });
@@ -205,8 +206,8 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
             if (object) workspace.output.push({ time: event.timestamp, kind: "error-detail", text: `OBJECT: ${object}` });
             if (event.constraintName) workspace.output.push({ time: event.timestamp, kind: "error-detail", text: `CONSTRAINT: ${event.constraintName}` });
           }
-          if (event.type === "connected") workspace.output.push({ time: event.timestamp, text: `Connected · ${event.message}` });
-          if (event.type === "resultPage") { const descriptor = analysis.statements[event.statementIndex]; workspace.output.push({ time: event.timestamp, text: `${event.rows?.length || 0} rows retrieved in ${event.durationMilliseconds} ms (execution: ${event.executionMilliseconds || 0} ms, fetching: ${event.fetchingMilliseconds || 0} ms)` }); workspace.results.push({ sql: sql.substring(descriptor.start, descriptor.start + descriptor.length), nodeId: workspace.scope.nodeId, scope: workspace.scope, columns: event.columns || [], rows: event.rows || [], page: 1, pageSize: 20, hasPrevious: false, hasNext: !!event.isTruncated, widths: {} }); workspace.activeResult = workspace.results.length - 1; }
+          if (event.type === "connected") workspace.output.push({ time: event.timestamp, text: t("console.connected", event.message) });
+          if (event.type === "resultPage") { const descriptor = analysis.statements[event.statementIndex]; workspace.output.push({ time: event.timestamp, text: t("console.rowsRetrieved", event.rows?.length || 0, event.durationMilliseconds, event.executionMilliseconds || 0, event.fetchingMilliseconds || 0) }); workspace.results.push({ sql: sql.substring(descriptor.start, descriptor.start + descriptor.length), nodeId: workspace.scope.nodeId, scope: workspace.scope, columns: event.columns || [], rows: event.rows || [], page: 1, pageSize: 20, hasPrevious: false, hasNext: !!event.isTruncated, widths: {} }); workspace.activeResult = workspace.results.length - 1; }
           refreshStatuses(); renderResults(workspace, root);
         };
         while (true) { const chunk = await reader.read(); if (chunk.done) break; buffer += decoder.decode(chunk.value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop(); lines.filter(Boolean).forEach(line => accept(JSON.parse(line))); }
@@ -218,10 +219,10 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     }
     root.querySelector("[data-console-run]").onclick = () => execute();
     root.querySelector("[data-console-stop]").onclick = () => workspace.cancelExecution?.();
-    root.querySelector("[data-console-format]").onclick = () => { try { workspace.editor.formatSql(); } catch (error) { showError(`Không format được SQL: ${error.message}`); } };
+    root.querySelector("[data-console-format]").onclick = () => { try { workspace.editor.formatSql(); } catch (error) { showError(t("console.formatFailed", error.message)); } };
     root.querySelector("[data-console-clear]").onclick = () => { workspace.editor.setValue(""); workspace.output = []; workspace.results = []; workspace.activeResult = null; workspace.editor.setStatuses([]); renderResults(workspace, root); };
     root.querySelector("[data-history-search]").oninput = event => renderHistory(workspace, root, event.target.value);
-    root.querySelector("[data-history-clear]").onclick = async () => { if (confirm("Xóa toàn bộ query history của target này?")) { await workspace.history.clear(); renderHistory(workspace, root); } };
+    root.querySelector("[data-history-clear]").onclick = async () => { if (confirm(t("console.clearHistory"))) { await workspace.history.clear(); renderHistory(workspace, root); } };
     workspace.editor.focus(); updateFooter(workspace);
   }
   return { renderSqlWorkspace };

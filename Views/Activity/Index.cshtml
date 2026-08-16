@@ -1,11 +1,14 @@
 @model IReadOnlyList<DatabaseActivityResponse>
-@{ ViewData["Title"] = $"Activity · {ViewData["ClusterName"]}"; }
-<div class="page-heading"><div><p class="eyebrow">SANITIZED LIVE VIEW</p><h1>Activity · @ViewData["ClusterName"]</h1><p>Không hiển thị SQL text/parameters để tránh lộ secrets và dữ liệu nhạy cảm.</p></div><div class="heading-actions"><a class="btn btn-secondary" asp-controller="Clusters" asp-action="Details" asp-route-id="@ViewData["ClusterId"]">Về cluster</a><a class="btn btn-secondary" asp-action="Index" asp-route-clusterId="@ViewData["ClusterId"]">Refresh</a></div></div>
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<MonitoringResource> T
+@{ ViewData["Title"] = T["Activity.Title", ViewData["ClusterName"]!]; }
+<div class="page-heading"><div><p class="eyebrow">SANITIZED LIVE VIEW</p><h1>@T["Activity.Title", ViewData["ClusterName"]!]</h1><p>@T["Activity.Description"]</p></div><div class="heading-actions"><a class="btn btn-secondary" asp-controller="Clusters" asp-action="Details" asp-route-id="@ViewData["ClusterId"]">@T["Common.BackCluster"]</a><a class="btn btn-secondary" asp-action="Index" asp-route-clusterId="@ViewData["ClusterId"]">@T["Common.Refresh"]</a></div></div>
 @if (Model.Count == 0)
-{ <div class="empty-state"><h3>Không có session khác</h3><p>Chỉ collector session hiện tại và đã được loại khỏi danh sách.</p></div> }
+{ <div class="empty-state"><h3>@T["Activity.Empty"]</h3><p>@T["Activity.EmptyHelp"]</p></div> }
 else
 {
-    <div class="table-wrap"><table><thead><tr><th>PID</th><th>User / app</th><th>Client</th><th>State</th><th>Wait</th><th>Transaction age</th><th>Query age</th><th>Blocked by</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>PID</th><th>@T["Activity.UserApp"]</th><th>Client</th><th>State</th><th>Wait</th><th>@T["Activity.TransactionAge"]</th><th>@T["Activity.QueryAge"]</th><th>@T["Activity.BlockedBy"]</th></tr></thead><tbody>
     @foreach (var item in Model)
     { <tr><td><code>@item.Pid</code></td><td>@item.User<br/><small>@item.Application</small></td><td><code>@item.ClientAddress</code></td><td>@item.State</td><td>@item.WaitEventType / @item.WaitEvent</td><td>@Age(item.TransactionStartedAt)</td><td>@Age(item.QueryStartedAt)</td><td>@item.BlockingProcessCount</td></tr> }
     </tbody></table></div>

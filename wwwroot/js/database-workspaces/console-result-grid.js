@@ -8,6 +8,7 @@ const PAGE_SIZES = [5, 10, 15, 20, 25, 50, 100, 200, 500];
 const DEFAULT_ROW_HEIGHT = 36;
 
 export function createConsoleResultGrid({ explorer, token, showError = () => {} }) {
+  const t = (key, ...args) => window.CitusI18n?.t(key, ...args) ?? key;
   const post = createJsonApi(token);
   const { openRowInspector } = createRowInspector({ explorer, token, showError });
 
@@ -56,7 +57,7 @@ export function createConsoleResultGrid({ explorer, token, showError = () => {} 
     const required = metadata.isNullable === false ? '<i class="database-column-required" title="NOT NULL"></i>' : "";
     const comment = metadata.comment ? `<button type="button" class="database-column-comment" data-result-comment title="${html(metadata.comment)}" aria-label="Comment: ${html(metadata.comment)}"><i class="fa fa-info-circle"></i></button>` : "";
     const sortIcon = sort ? `<i class="database-sort-indicator is-${sort.direction.toLowerCase()}" title="Sort ${sort.direction}"><i class="fa fa-sort-${sort.direction === "ASC" ? "asc" : "desc"}"></i>${sort.priority > 1 ? `<sup>${sort.priority}</sup>` : ""}</i>` : "";
-    return `<th tabindex="0" draggable="true" data-column="${html(column.name)}" data-column-index="${originalIndex}" style="width:${result.widths[column.name] || 180}px" title="Kéo đổi vị trí · click sort"><span class="database-column-title">${key}${required}<b>${html(column.name)}</b>${comment}${sortIcon}</span><small>${html(column.dataType)}</small><i class="database-column-resizer" data-result-resize></i></th>`;
+    return `<th tabindex="0" draggable="true" data-column="${html(column.name)}" data-column-index="${originalIndex}" style="width:${result.widths[column.name] || 180}px" title="${t("grid.columnTitle")}"><span class="database-column-title">${key}${required}<b>${html(column.name)}</b>${comment}${sortIcon}</span><small>${html(column.dataType)}</small><i class="database-column-resizer" data-result-resize></i></th>`;
   }
 
   function toolbar(result) {
@@ -65,14 +66,14 @@ export function createConsoleResultGrid({ explorer, token, showError = () => {} 
     const canMutate = Boolean(result.metadata?.canEdit && result.origin?.editableColumns?.length);
     const canEditRows = Boolean(canMutate && result.identities?.some(Boolean));
     return `<div class="database-grid-toolbar console-result-toolbar">
-      <button type="button" data-result-first ${result.hasPrevious ? "" : "disabled"} title="Trang đầu"><i class="fa fa-fast-backward"></i></button>
-      <button type="button" data-result-prev ${result.hasPrevious ? "" : "disabled"} title="Trang trước"><i class="fa fa-chevron-left"></i></button>
+      <button type="button" data-result-first ${result.hasPrevious ? "" : "disabled"} title="${t("grid.firstPage")}"><i class="fa fa-fast-backward"></i></button>
+      <button type="button" data-result-prev ${result.hasPrevious ? "" : "disabled"} title="${t("grid.previousPage")}"><i class="fa fa-chevron-left"></i></button>
       <span class="console-result-range"><i class="fa fa-list-ol"></i> ${start}–${end}</span>
       <button type="button" data-result-count title="Exact count"><i class="fa fa-calculator"></i> ${result.exactCount == null ? "Count" : result.exactCount.toLocaleString()}</button>
       <button type="button" data-result-next ${result.hasNext ? "" : "disabled"} title="Trang sau"><i class="fa fa-chevron-right"></i></button>
       <label title="Rows per page"><i class="fa fa-th-list"></i><select data-result-size>${PAGE_SIZES.map(size => `<option value="${size}"${size === result.pageSize ? " selected" : ""}>${size}</option>`).join("")}</select></label>
-      <button type="button" data-result-refresh title="Chạy lại trang"><i class="fa fa-refresh"></i></button>
-      <label title="Tự động làm mới"><i class="fa fa-clock-o"></i><select data-result-auto><option value="0">Off</option>${[5,15,30,60].map(seconds => `<option value="${seconds}"${seconds === result.autoRefresh ? " selected" : ""}>${seconds}s</option>`).join("")}</select></label>
+      <button type="button" data-result-refresh title="${t("grid.reload")}"><i class="fa fa-refresh"></i></button>
+      <label title="${t("grid.autoRefresh")}"><i class="fa fa-clock-o"></i><select data-result-auto><option value="0">${t("common.off")}</option>${[5,15,30,60].map(seconds => `<option value="${seconds}"${seconds === result.autoRefresh ? " selected" : ""}>${seconds}s</option>`).join("")}</select></label>
       <span class="database-toolbar-separator"></span>
       <button type="button" data-result-add ${canMutate ? "" : "disabled"} title="Add row"><i class="fa fa-plus"></i></button>
       <button type="button" data-result-delete ${canEditRows ? "" : "disabled"} title="Delete selected rows"><i class="fa fa-minus"></i></button>
@@ -83,7 +84,7 @@ export function createConsoleResultGrid({ explorer, token, showError = () => {} 
       <button type="button" data-result-csv><i class="fa fa-download"></i> CSV</button>
       <button type="button" data-result-ddl ${result.origin ? "" : "disabled"}><i class="fa fa-code"></i> DDL</button>
       <button type="button" data-result-chart><i class="fa fa-bar-chart"></i> Chart</button>
-      <span class="console-replay-note">Paging chạy lại SELECT${canMutate ? " · editable base table" : " · read-only result"}</span>
+      <span class="console-replay-note">${t("console.replayNote", canMutate ? t("console.editableTable") : t("console.readOnlyResult"))}</span>
     </div>`;
   }
 
@@ -95,11 +96,10 @@ export function createConsoleResultGrid({ explorer, token, showError = () => {} 
     const tableWidth = rowHeaderWidth + visible.reduce((sum, {c}) => sum + (result.widths[c.name] || 180), 0);
     host.innerHTML = `<div class="console-result-grid database-data-workspace">${toolbar(result)}
       <div class="database-query-strip console-result-filter"><label><b>WHERE</b><input data-result-where value="${html(result.where || "")}" placeholder="WHERE…"></label><label><b>ORDER BY</b><input data-result-order value="${html(result.orderBy || "")}" placeholder="ORDER BY…"></label><button type="button" data-result-apply>Apply</button></div>
-      <div class="database-workspace-grid-shell"><div class="database-workspace-grid-scroll"><table class="database-workspace-grid ${result.showRowLocations ? "has-row-locations" : ""}" style="width:${tableWidth}px;--database-row-number-width:${rowHeaderWidth}px"><colgroup><col style="width:${rowHeaderWidth}px">${visible.map(({c}) => `<col style="width:${result.widths[c.name] || 180}px">`).join("")}</colgroup><thead><tr><th class="database-row-number"><span class="database-row-number-head"><span>#</span><button type="button" data-result-locations ${result.origin && result.rows.length ? "" : "disabled"} title="Tải worker của page"><i class="fa ${result.rowLocationsLoading ? "fa-spinner fa-spin" : "fa-server"}"></i></button></span><i class="database-column-resizer database-row-number-resizer" data-result-number-resize></i></th>${visible.map(({c,i}) => columnHeader(result,c,i)).join("")}</tr></thead>
-      <tbody>${result.rows.map((row,rowIndex) => rowHtml(result,row,rowIndex,visible)).join("")}${result.inserted.map((row,index) => insertedRowHtml(result,row,index,visible)).join("")}</tbody></table></div><div class="database-grid-loading ${result.loading ? "" : "hidden"}" role="status"><div><div class="database-spinner"></div><p>${html(result.loadingMessage || "Đang tải result…")}</p></div></div></div>
-      ${result.metadata?.canEdit && !result.identities?.some(Boolean) ? '<div class="database-readonly-note">Read-only: SELECT cần trả đủ primary key để sửa row an toàn.</div>' : ""}</div>`;
+      <div class="database-workspace-grid-shell"><div class="database-workspace-grid-scroll"><table class="database-workspace-grid ${result.showRowLocations ? "has-row-locations" : ""}" style="width:${tableWidth}px;--database-row-number-width:${rowHeaderWidth}px"><colgroup><col style="width:${rowHeaderWidth}px">${visible.map(({c}) => `<col style="width:${result.widths[c.name] || 180}px">`).join("")}</colgroup><thead><tr><th class="database-row-number"><span class="database-row-number-head"><span>#</span><button type="button" data-result-locations ${result.origin && result.rows.length ? "" : "disabled"} title="${t("grid.loadWorkers")}"><i class="fa ${result.rowLocationsLoading ? "fa-spinner fa-spin" : "fa-server"}"></i></button></span><i class="database-column-resizer database-row-number-resizer" data-result-number-resize></i></th>${visible.map(({c,i}) => columnHeader(result,c,i)).join("")}</tr></thead>
+      <tbody>${result.rows.map((row,rowIndex) => rowHtml(result,row,rowIndex,visible)).join("")}${result.inserted.map((row,index) => insertedRowHtml(result,row,index,visible)).join("")}</tbody></table></div><div class="database-grid-loading ${result.loading ? "" : "hidden"}" role="status"><div><div class="database-spinner"></div><p>${html(result.loadingMessage || t("console.loadingResult"))}</p></div></div></div></div>`;
 
-    const reload = async (page = result.page, pageSize = result.pageSize, message = "Đang tải result…") => {
+    const reload = async (page = result.page, pageSize = result.pageSize, message = t("console.loadingResult")) => {
       result.abort?.abort(); result.abort = new AbortController(); result.loading = true; result.loadingMessage = message; rerender();
       try {
         const data = await post(explorer.dataset.consoleResultQueryUrl, { sql: result.sql, nodeId: result.nodeId, scope: result.scope, page, pageSize, where: result.where || null, orderBy: result.orderBy || null }, result.abort.signal);
@@ -110,14 +110,14 @@ export function createConsoleResultGrid({ explorer, token, showError = () => {} 
 
     bind(host, result, rerender, reload, onChange);
     ensureMetadata(host, result, rerender);
-    if (!result.hydrated && !result.loading) { result.hydrated = true; queueMicrotask(() => reload(1, result.pageSize, "Đang nạp metadata và identity…")); }
+    if (!result.hydrated && !result.loading) { result.hydrated = true; queueMicrotask(() => reload(1, result.pageSize, t("console.loadingIdentity"))); }
   }
 
   function rowHtml(result, row, rowIndex, visible) {
     const height = result.rowHeights[`page:${result.page}:${rowIndex}`] || DEFAULT_ROW_HEIGHT;
     const location = rowLocationPresentation(result, rowIndex), label = (result.page - 1) * result.pageSize + rowIndex + 1;
     const locationHtml = location ? `<span class="database-row-location ${location.available ? "is-available" : ""}" title="${html(location.title)}"><i class="fa fa-map-marker"></i>${html(location.label)}</span>` : "";
-    const inspect = result.origin ? `<button type="button" data-result-inspect="${rowIndex}" title="Row details & placement"><i class="fa fa-info-circle"></i></button>` : '<button type="button" disabled title="Query không có single-table provenance"><i class="fa fa-info-circle"></i></button>';
+    const inspect = result.origin ? `<button type="button" data-result-inspect="${rowIndex}" title="${t("grid.rowDetails")}"><i class="fa fa-info-circle"></i></button>` : `<button type="button" disabled title="${t("console.noProvenance")}"><i class="fa fa-info-circle"></i></button>`;
     return `<tr data-visual-row="${rowIndex}" class="${result.activeRow === rowIndex ? "is-active-row " : ""}${result.deleted.has(rowIndex) ? "is-deleted" : ""}" style="height:${height}px"><th class="database-row-number" data-result-select-row="${rowIndex}"><span class="database-row-number-content ${location ? "has-location" : ""}"><span class="database-row-index">${label}</span>${locationHtml}${inspect}</span><i class="database-row-resizer" data-result-row-resize="page:${result.page}:${rowIndex}"></i></th>${visible.map(({c,i}) => cellHtml(result,row,rowIndex,c,i)).join("")}</tr>`;
   }
 
@@ -138,7 +138,7 @@ export function createConsoleResultGrid({ explorer, token, showError = () => {} 
     host.querySelector("[data-result-first]").onclick = () => reload(1);
     host.querySelector("[data-result-prev]").onclick = () => reload(Math.max(1, result.page - 1));
     host.querySelector("[data-result-next]").onclick = () => reload(result.page + 1);
-    host.querySelector("[data-result-refresh]").onclick = () => dirty(result) ? showError("Save/Revert trước khi refresh.") : reload();
+    host.querySelector("[data-result-refresh]").onclick = () => dirty(result) ? showError(t("grid.saveBeforeRefresh")) : reload();
     host.querySelector("[data-result-size]").onchange = event => reload(1, Number(event.target.value));
     host.querySelector("[data-result-apply]").onclick = apply;
     host.querySelectorAll("[data-result-where],[data-result-order]").forEach(input => input.onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); apply(); } });
@@ -165,7 +165,7 @@ export function createConsoleResultGrid({ explorer, token, showError = () => {} 
       header.ondragstart = event => { if (event.target.closest(".database-column-resizer,[data-result-comment]")) { event.preventDefault(); return; } dragged=header.dataset.column; event.dataTransfer.setData("text/plain",dragged); };
       header.ondragover = event => { if (dragged && dragged !== header.dataset.column) event.preventDefault(); };
       header.ondrop = event => { event.preventDefault(); if (reorderGridColumn(result,dragged,header.dataset.column,event.clientX > header.getBoundingClientRect().left+header.offsetWidth/2)) { rerender(); onChange?.(result); } dragged=null; };
-      header.onclick = event => { if (event.target.closest(".database-column-resizer,[data-result-comment]")) return; const index=Number(header.dataset.columnIndex); if(event.ctrlKey||event.metaKey){result.selected.clear();result.rows.forEach((_,row)=>result.selected.add(`${row}:${index}`));rerender();return;} cycleGridSort(result,header.dataset.column,event.shiftKey);result.exactCount=null;reload(1,result.pageSize,"Đang sắp xếp result…"); };
+      header.onclick = event => { if (event.target.closest(".database-column-resizer,[data-result-comment]")) return; const index=Number(header.dataset.columnIndex); if(event.ctrlKey||event.metaKey){result.selected.clear();result.rows.forEach((_,row)=>result.selected.add(`${row}:${index}`));rerender();return;} cycleGridSort(result,header.dataset.column,event.shiftKey);result.exactCount=null;reload(1,result.pageSize,t("grid.sorting")); };
       const handle=header.querySelector("[data-result-resize]");handle.onpointerdown=event=>{event.preventDefault();event.stopPropagation();const start=event.clientX,width=header.offsetWidth;handle.setPointerCapture(event.pointerId);handle.onpointermove=move=>{result.widths[header.dataset.column]=Math.max(32,width+move.clientX-start);header.style.width=`${result.widths[header.dataset.column]}px`;};handle.onpointerup=()=>onChange?.(result);};
     });
     const numberHandle=host.querySelector("[data-result-number-resize]");numberHandle.onpointerdown=event=>{event.preventDefault();const start=event.clientX,width=result.rowNumberWidth||58;numberHandle.setPointerCapture(event.pointerId);numberHandle.onpointermove=move=>{result.rowNumberWidth=Math.min(600,Math.max(42,width+move.clientX-start));};numberHandle.onpointerup=()=>{rerender();onChange?.(result);};};
@@ -184,7 +184,7 @@ export function createConsoleResultGrid({ explorer, token, showError = () => {} 
 
   async function editCell(host,result,cell,rerender) {
     const rowIndex=Number(cell.dataset.row),columnIndex=Number(cell.dataset.col),column=columnAt(result,columnIndex),insertIndex=cell.dataset.resultInsert;
-    if (insertIndex == null && result.origin && !result.metadata) { showError("Đang tải metadata để mở inline editor. Thử lại sau một lát."); return; }
+    if (insertIndex == null && result.origin && !result.metadata) { showError(t("console.metadataPending")); return; }
     if(insertIndex == null && (!result.metadata?.canEdit || !column.canEdit || !identityAt(result,rowIndex))) return openFullCell(result,rowIndex,columnIndex,cell);
     const name=result.columns[columnIndex].name,original=result.rows[rowIndex]?.[columnIndex];let current=cellValue(result,rowIndex,columnIndex)??"";
     if(insertIndex==null&&!result.pending.has(`${rowIndex}:${name}`)&&original?.isTruncated){try{const full=await post(explorer.dataset.consoleResultCellUrl,{sql:result.sql,nodeId:result.nodeId,scope:result.scope,rowOffset:(result.page-1)*result.pageSize+rowIndex,columnIndex,where:result.where||null,orderBy:result.orderBy||null});current=full.value??"";}catch(error){showError(error.message);return;}}

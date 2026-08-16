@@ -1,15 +1,19 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using CitusManager;
 using CitusManager.Data;
 using CitusManager.Domain;
 using CitusManager.Endpoints;
 using CitusManager.Middleware;
+using CitusManager.Localization;
 using CitusManager.Security;
 using CitusManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Localization;
+using Microsoft.AspNetCore.Mvc.Razor;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -37,6 +41,7 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>
     })
     .AddEntityFrameworkStores<ControlDbContext>()
     .AddDefaultTokenProviders();
+builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, AppUserClaimsPrincipalFactory>();
 
 builder.Services.ConfigureApplicationCookie(options =>
 {
@@ -58,6 +63,9 @@ builder.Services.AddAuthorization(options =>
 });
 
 builder.Services.AddControllersWithViews()
+    .AddViewLocalization(LanguageViewLocationExpanderFormat.Suffix)
+    .AddDataAnnotationsLocalization(options =>
+        options.DataAnnotationLocalizerProvider = (_, factory) => factory.Create(typeof(ValidationResource)))
     .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddValidation();
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -69,14 +77,30 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
-builder.Services.AddLocalization();
-builder.Services.Configure<RequestLocalizationOptions>(options =>
-{
-    var cultures = new[] { new CultureInfo("vi-VN"), new CultureInfo("en-US") };
-    options.DefaultRequestCulture = new("vi-VN");
-    options.SupportedCultures = cultures;
-    options.SupportedUICultures = cultures;
-});
+builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
+builder.Services.Configure<AppLocalizationOptions>(builder.Configuration.GetSection(AppLocalizationOptions.SectionName));
+builder.Services.AddSingleton<IAppLanguageCatalog, AppLanguageCatalog>();
+builder.Services.AddSingleton<ILanguagePreferenceAccessor, LanguagePreferenceAccessor>();
+builder.Services.AddOptions<RequestLocalizationOptions>()
+    .Configure<IAppLanguageCatalog>((options, languages) =>
+    {
+        var cultures = languages.SupportedLanguages.Select(x => new CultureInfo(x.Code)).ToArray();
+        options.DefaultRequestCulture = new(languages.DefaultCulture);
+        options.SupportedCultures = cultures;
+        options.SupportedUICultures = cultures;
+        options.FallBackToParentCultures = true;
+        options.FallBackToParentUICultures = true;
+        options.RequestCultureProviders =
+        [
+            new CustomRequestCultureProvider(context =>
+            {
+                var culture = languages.Normalize(context.User.FindFirst(LanguagePreferenceAccessor.CultureClaimType)?.Value);
+                return Task.FromResult(culture is null ? null : new ProviderCultureResult(culture, culture));
+            }),
+            new CookieRequestCultureProvider(),
+            new SupportedAcceptLanguageProvider(languages)
+        ];
+    });
 
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
@@ -126,9 +150,9 @@ else
 
 app.UseHttpsRedirection();
 app.UseMiddleware<SecurityHeadersMiddleware>(app.Environment.IsDevelopment());
-app.UseRequestLocalization();
 app.UseRouting();
 app.UseAuthentication();
+app.UseRequestLocalization();
 app.UseAuthorization();
 
 app.MapStaticAssets().AllowAnonymous();

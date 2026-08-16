@@ -1,20 +1,23 @@
 @model IReadOnlyList<OperationResponse>
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<OperationsResource> T
 @{
-    ViewData["Title"] = "Operations";
+    ViewData["Title"] = T["Title"];
     var running = Model.Count(x => x.Status is OperationStatus.Approved or OperationStatus.Running or OperationStatus.Cancelling);
     var attention = Model.Count(x => x.Status is OperationStatus.Failed or OperationStatus.RecoveryRequired);
 }
 <div class="page-heading">
-    <div><p class="eyebrow">DURABLE WORKFLOWS</p><h1>Operations</h1><p>Theo dõi plan, approval, execution checkpoint và recovery state trên toàn fleet.</p></div>
-    <a class="btn btn-secondary" asp-action="Index"><svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7L20 14"/><path d="M20 4v7h-7"/></svg>Refresh</a>
+    <div><p class="eyebrow">DURABLE WORKFLOWS</p><h1>@T["Title"]</h1><p>@T["Description"]</p></div>
+    <a class="btn btn-secondary" asp-action="Index"><svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7L20 14"/><path d="M20 4v7h-7"/></svg>@T["Common.Refresh"]</a>
 </div>
-<section class="metric-grid" aria-label="Operation summary">
-    <article class="metric-card"><span>Total operations</span><strong>@Model.Count</strong><small>latest 200 records</small></article>
-    <article class="metric-card"><span>Active</span><strong>@running</strong><small>approved / running / cancelling</small></article>
-    <article class="metric-card"><span>Awaiting approval</span><strong>@Model.Count(x => x.Status == OperationStatus.AwaitingApproval)</strong><small>requires another Admin</small></article>
-    <article class="metric-card @(attention > 0 ? "metric-danger" : null)"><span>Needs attention</span><strong>@attention</strong><small>failed / recovery required</small></article>
+<section class="metric-grid" aria-label="@T["Summary"]">
+    <article class="metric-card"><span>@T["Total"]</span><strong>@Model.Count</strong><small>@T["Latest"]</small></article>
+    <article class="metric-card"><span>@T["Active"]</span><strong>@running</strong><small>approved / running / cancelling</small></article>
+    <article class="metric-card"><span>@T["Awaiting"]</span><strong>@Model.Count(x => x.Status == OperationStatus.AwaitingApproval)</strong><small>@T["AnotherAdmin"]</small></article>
+    <article class="metric-card @(attention > 0 ? "metric-danger" : null)"><span>@T["Attention"]</span><strong>@attention</strong><small>failed / recovery required</small></article>
 </section>
 <section class="section-block">
-    <div class="section-title"><div><h2>Operation history</h2><p>Risk, state, requester và link tới immutable plan.</p></div></div>
+    <div class="section-title"><div><h2>@T["History"]</h2><p>@T["HistoryHelp"]</p></div></div>
     <partial name="~/Views/Clusters/_OperationTable.cshtml" model="Model" />
 </section>

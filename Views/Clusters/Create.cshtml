@@ -1,8 +1,12 @@
 @model CreateClusterRequest
-@{ ViewData["Title"] = "Thêm coordinator"; }
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<ClusterResource> T
+@inject IStringLocalizer<SharedResource> S
+@{ ViewData["Title"] = T["Create.Title"]; }
 
 <div class="page-heading narrow-heading">
-    <div><p class="eyebrow">READ-ONLY PREFLIGHT</p><h1>Thêm coordinator</h1><p>Kiểm tra endpoint Citus trước, sau đó đăng ký profile vào control-plane. Không tạo VM/container hoặc thay đổi cluster.</p></div>
+    <div><p class="eyebrow">READ-ONLY PREFLIGHT</p><h1>@T["Create.Title"]</h1><p>@T["Create.Description"]</p></div>
 </div>
 
 <form asp-action="Create" method="post" class="panel form-panel" id="cluster-create-form"
@@ -13,33 +17,33 @@
         <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-indigo-100 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300" aria-hidden="true">
             <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
         </span>
-        <div><h2>Coordinator endpoint</h2><p class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Dùng tài khoản chỉ có quyền đọc metadata nếu chỉ cần giám sát. Credentials được mã hóa trước khi lưu.</p></div>
+        <div><h2>Coordinator endpoint</h2><p class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">@T["Create.EndpointHelp"]</p></div>
     </div>
 
     <div class="form-grid">
-        <div class="field span-2"><label asp-for="Name">Tên hiển thị *</label><input asp-for="Name" autocomplete="off" placeholder="Production Citus" /><span asp-validation-for="Name"></span></div>
+        <div class="field span-2"><label asp-for="Name">@T["Create.DisplayName"] *</label><input asp-for="Name" autocomplete="off" placeholder="Production Citus" /><span asp-validation-for="Name"></span></div>
         <div class="field"><label asp-for="Host">Host / IP *</label><input asp-for="Host" autocomplete="off" placeholder="coordinator.internal" /><span asp-validation-for="Host"></span></div>
         <div class="field"><label asp-for="Port">Port *</label><input asp-for="Port" inputmode="numeric" /><span asp-validation-for="Port"></span></div>
-        <div class="field"><label asp-for="Database">Database *</label><input asp-for="Database" autocomplete="off" /><small>Citus metadata tách theo từng database.</small><span asp-validation-for="Database"></span></div>
+        <div class="field"><label asp-for="Database">Database *</label><input asp-for="Database" autocomplete="off" /><small>@T["Create.DatabaseHelp"]</small><span asp-validation-for="Database"></span></div>
         <div class="field"><label asp-for="SslMode">TLS mode *</label><select asp-for="SslMode" asp-items="Html.GetEnumSelectList<ClusterSslMode>()"></select></div>
         <div class="field"><label asp-for="Username">Username</label><input asp-for="Username" autocomplete="username" /></div>
-        <div class="field"><label asp-for="Password">Password</label><input asp-for="Password" type="password" autocomplete="current-password" /><small>Không ghi log hoặc trả lại qua API.</small></div>
-        <div class="field"><label asp-for="PrometheusBaseUrl">Prometheus URL</label><input asp-for="PrometheusBaseUrl" type="url" placeholder="https://prometheus.internal" autocomplete="url" /><small>Tùy chọn; SQL monitoring hoạt động độc lập.</small><span asp-validation-for="PrometheusBaseUrl"></span></div>
-        <div class="field"><label asp-for="PrometheusBearerToken">Prometheus bearer token</label><input asp-for="PrometheusBearerToken" type="password" autocomplete="new-password" /><small>Tùy chọn; mã hóa cùng cluster secrets.</small></div>
+        <div class="field"><label asp-for="Password">Password</label><input asp-for="Password" type="password" autocomplete="current-password" /><small>@T["Create.PasswordHelp"]</small></div>
+        <div class="field"><label asp-for="PrometheusBaseUrl">Prometheus URL</label><input asp-for="PrometheusBaseUrl" type="url" placeholder="https://prometheus.internal" autocomplete="url" /><small>@T["Create.PrometheusHelp"]</small><span asp-validation-for="PrometheusBaseUrl"></span></div>
+        <div class="field"><label asp-for="PrometheusBearerToken">Prometheus bearer token</label><input asp-for="PrometheusBearerToken" type="password" autocomplete="new-password" /><small>@T["Create.TokenHelp"]</small></div>
     </div>
 
     <div id="connection-test-result" class="connection-result hidden" role="status" aria-live="polite" tabindex="-1"></div>
 
-    <div class="callout mt-4"><strong>Read-only scan:</strong> PostgreSQL/Citus version, current database/user, function signatures, metadata views, nodes, distributed tables và shards.</div>
+    <div class="callout mt-4"><strong>@T["Create.Scan"]</strong> @T["Create.ScanHelp"]</div>
     <div class="form-actions">
-        <a class="btn btn-ghost" asp-controller="Home" asp-action="Index">Hủy</a>
+        <a class="btn btn-ghost" asp-controller="Home" asp-action="Index">@S["Common.Cancel"]</a>
         <button class="btn btn-secondary" id="test-connection-button" type="button">
             <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12h4l2-7 4 14 2-7h4"/></svg>
-            <span>Kiểm tra kết nối</span>
+            <span>@T["Create.Test"]</span>
         </button>
         <button class="btn btn-primary" id="register-cluster-button" type="submit">
             <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            <span>Đăng ký coordinator</span>
+            <span>@T["Create.Register"]</span>
         </button>
     </div>
 </form>
