@@ -18,8 +18,8 @@ namespace CitusManager.Services;
 public sealed class DatabaseExplorerOptions
 {
     public int CommandTimeoutSeconds { get; set; } = 60;
-    public int DefaultPageSize { get; set; } = 50;
-    public int[] AllowedPageSizes { get; set; } = [25, 50, 100];
+    public int DefaultPageSize { get; set; } = 20;
+    public int[] AllowedPageSizes { get; set; } = [5, 10, 15, 20, 25, 50, 100, 200, 500];
     public int MaxRowsPerResultSet { get; set; } = 1000;
     public int MaxResultSets { get; set; } = 10;
     public int MaxCellCharacters { get; set; } = 65_536;
@@ -617,8 +617,7 @@ public sealed class DatabaseExplorerService(
         return new(truncated ? text[..options.MaxCellCharacters] : text, false, truncated);
     }
 
-    private int NormalizePageSize(int requested) =>
-        options.AllowedPageSizes.Contains(requested) ? requested : options.DefaultPageSize;
+    private int NormalizePageSize(int requested) => Math.Clamp(requested > 0 ? requested : options.DefaultPageSize, 1, 500);
 
     private static bool SameObject(DatabaseObjectResponse item, string schema, string table) =>
         string.Equals(item.Schema, schema, StringComparison.Ordinal) &&

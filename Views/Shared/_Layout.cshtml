@@ -273,10 +273,19 @@
             .database-workspace-tabs { @@apply flex min-h-10 shrink-0 items-stretch overflow-x-auto border-b border-[#343b42] bg-[#1b2127] text-slate-300; scrollbar-width: thin; }
             .database-workspace-tab { @@apply flex min-w-36 max-w-64 shrink-0 cursor-pointer items-center gap-2 border-r border-[#343b42] px-3 text-left text-[11px] hover:bg-white/[.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500; }
             .database-workspace-tab.is-active { @@apply relative bg-[#252c33] text-white; box-shadow: inset 0 -3px 0 #ff806e; }
+            .database-workspace-tab.is-dragging { @@apply opacity-40; }
+            .database-workspace-tab.is-drop-before { box-shadow: inset 3px 0 0 #38bdf8; }
+            .database-workspace-tab.is-drop-after { box-shadow: inset -3px 0 0 #38bdf8; }
             .database-workspace-tab > span:nth-child(2) { @@apply min-w-0 flex-1 truncate; }
             .database-workspace-tab-icon { @@apply grid min-w-4 place-items-center text-[9px] text-cyan-300; }
             .database-workspace-tab i { @@apply text-[8px] not-italic text-amber-400; }
             .database-workspace-tab-close { @@apply grid size-5 place-items-center rounded hover:bg-white/10; }
+            .database-workspace-context-menu { @@apply fixed z-[70] w-64 rounded-sm border border-[#53606a] bg-[#20262c] p-1 text-[11px] text-slate-200 shadow-2xl; }
+            .database-workspace-context-menu button { @@apply flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-left hover:bg-sky-500/20 focus-visible:bg-sky-500/20 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-35; }
+            .database-workspace-context-menu button .fa { @@apply w-4 shrink-0 text-center text-slate-400; }
+            .database-workspace-context-menu button span { @@apply flex-1; }
+            .database-workspace-context-menu kbd { @@apply ml-3 bg-transparent p-0 font-sans text-[9px] text-slate-500; }
+            .database-workspace-context-menu [role="separator"] { @@apply my-1 border-t border-white/10; }
             .database-workspace-stage { @@apply min-h-0 flex-1 overflow-hidden bg-[#f6f7f8] dark:bg-[#20262c]; }
             .database-workspace-content { @@apply h-full min-h-0 overflow-hidden; }
             .database-simple-workspace { @@apply h-full overflow-auto p-3; }
@@ -294,10 +303,16 @@
             .database-toolbar-menu[open] > div { @@apply fixed z-[60] mt-1 flex min-w-36 flex-col rounded-sm border border-[#9ba9b2] bg-white p-1 shadow-xl dark:border-white/15 dark:bg-[#171d23]; }
             .database-toolbar-menu[open] > div button { @@apply w-full justify-start text-left; }
             .database-range-menu summary { @@apply min-w-20 justify-center font-mono font-semibold text-[#36576a] dark:text-sky-200; }
-            .database-range-menu[open] > div { @@apply min-w-40; }
+            .database-range-menu[open] > div { @@apply min-w-72 overflow-y-auto; max-height: min(78vh, 40rem); }
             .database-range-menu[open] > div p { @@apply px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-slate-500; }
             .database-range-menu[open] > div hr { @@apply my-1 border-t border-[#d2d9dd] dark:border-white/10; }
             .database-range-menu[open] > div button.is-active { @@apply bg-sky-100 font-semibold text-sky-800 dark:bg-sky-400/15 dark:text-sky-200; }
+            .database-page-range-list { @@apply grid grid-cols-2 gap-1 px-1 pb-1; }
+            .database-page-range-list button { @@apply min-w-0 justify-center font-mono; }
+            .database-page-range-gap { @@apply col-span-2 py-1 text-center text-slate-400; }
+            .database-page-size-select { @@apply flex flex-col gap-1 px-1 py-1; }
+            .database-page-size-select span { @@apply text-[9px] font-semibold text-slate-500; }
+            .database-page-size-select select { @@apply w-full border border-[#aeb9c2] bg-white font-mono text-[10px] dark:border-white/15 dark:bg-black/25; }
             .database-custom-page-size { @@apply mt-1 flex items-center gap-1 border-t border-[#d2d9dd] px-1 pt-1 dark:border-white/10; }
             .database-custom-page-size span { @@apply px-1 text-[9px] text-slate-500; }
             .database-custom-page-size input { @@apply min-w-0 flex-1 bg-white font-mono dark:bg-black/20; }

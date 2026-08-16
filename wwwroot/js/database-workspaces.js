@@ -10,10 +10,13 @@
   const token = document.querySelector("#database-antiforgery input[name='__RequestVerificationToken']")?.value || "";
   const nodeId = explorer.dataset.nodeId || null;
   const clusterKey = location.pathname.toLowerCase();
-  const storageKey = `cm-workspaces:${explorer.dataset.workspaceUser || "anonymous"}:${clusterKey}:${nodeId || "coordinator"}`;
+  const storageKey = `cm-workspaces:v2:${explorer.dataset.workspaceUser || "anonymous"}:${clusterKey}:${nodeId || "coordinator"}`;
   const workspaces = new Map();
   let activeKey = null;
+  let draggedWorkspaceKey = null;
   let consoleSequence = 0;
+  const defaultPageSize = 20;
+  const pageSizeOptions = [5, 10, 15, 20, 25, 50, 100, 200, 500];
 
   const html = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const problem = async response => {
@@ -32,7 +35,7 @@
   const icon = type => type === "sql" ? "⌘" : type === "structure" ? "▦" : type === "ddl" ? "DDL" : type === "chart" ? "⌁" : "▤";
 
   function persist() {
-    const safe = [...workspaces.values()].filter(x => !x.dirty).map(x => ({ key: x.key, type: x.type, schema: x.schema, name: x.name,
+    const safe = [...workspaces.values()].filter(x => !x.dirty).map(x => ({ key: x.key, type: x.type, schema: x.schema, name: x.name, displayName: x.displayName,
       page: x.page, pageSize: x.pageSize, where: x.where, orderBy: x.orderBy, widths: x.widths, hidden: x.hidden }));
     sessionStorage.setItem(storageKey, JSON.stringify({ activeKey, workspaces: safe }));
   }
@@ -42,22 +45,26 @@
     if (!candidate) { showError("Đã đạt 20 workspace và tất cả đều có thay đổi chưa lưu."); return false; }
     closeWorkspace(candidate.key, true); return true;
   }
-  function renderTabs() {
+  function renderTabs(revealKey = null) {
+    const previousScrollLeft = tabs.scrollLeft;
     tabs.replaceChildren();
     workspaces.forEach(ws => {
       const button = document.createElement("button"); button.type = "button"; button.role = "tab";
       button.className = `database-workspace-tab${ws.key === activeKey ? " is-active" : ""}`;
+      button.draggable = true;
       button.dataset.workspaceKey = ws.key; button.setAttribute("aria-selected", String(ws.key === activeKey));
       const mark = document.createElement("span"); mark.className = "database-workspace-tab-icon"; mark.textContent = icon(ws.type);
-      const label = document.createElement("span"); label.textContent = ws.type === "sql" ? ws.name : `${ws.name}${ws.type === "data" ? "" : ` · ${ws.type.toUpperCase()}`}`;
+      const label = document.createElement("span"); const title = ws.displayName || ws.name; label.textContent = ws.type === "sql" ? title : `${title}${ws.type === "data" ? "" : ` · ${ws.type.toUpperCase()}`}`; button.title = `${label.textContent} — kéo để sắp xếp, chuột phải để mở menu`;
       const dirty = document.createElement("i"); dirty.textContent = ws.dirty ? "●" : "";
       const close = document.createElement("span"); close.className = "database-workspace-tab-close"; close.textContent = "×"; close.title = "Đóng workspace";
       button.append(mark, label, dirty, close); tabs.appendChild(button);
     });
+    tabs.scrollLeft = previousScrollLeft;
+    if (revealKey) requestAnimationFrame(() => tabs.querySelector(`[data-workspace-key="${CSS.escape(revealKey)}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" }));
   }
   async function activate(key) {
     const ws = workspaces.get(key); if (!ws) return;
-    activeKey = key; ws.used = Date.now(); renderTabs(); empty.classList.add("hidden"); stage.classList.remove("hidden");
+    activeKey = key; ws.used = Date.now(); renderTabs(key); empty.classList.add("hidden"); stage.classList.remove("hidden");
     if (!ws.loaded && ws.type !== "sql" && ws.type !== "chart") {
       showWorkspaceLoading();
       try { await hydrateWorkspace(ws); } catch (error) { showError(error.message); stage.innerHTML = `<div class="database-workspace-error">${html(error.message)}</div>`; }
@@ -73,21 +80,101 @@
     else if (ws.type === "ddl") await loadDdl(ws);
     ws.loaded = true;
   }
-  function closeWorkspace(key, force = false) {
-    const ws = workspaces.get(key); if (!ws) return;
-    if (ws.dirty && !force && !window.confirm("Workspace có thay đổi chưa lưu. Đóng và bỏ thay đổi?")) return;
-    clearInterval(ws.autoTimer); ws.queryAbort?.abort(); ws.countAbort?.abort(); ws.sqlAbort?.abort();
-    const keys = [...workspaces.keys()], index = keys.indexOf(key); workspaces.delete(key);
-    if (activeKey === key) activeKey = [...workspaces.keys()][Math.max(0, index - 1)] || null;
-    renderTabs();
-    if (activeKey) activate(activeKey); else { stage.classList.add("hidden"); empty.classList.remove("hidden"); updateFooter(null); }
-    persist();
+  function closeWorkspaces(keys, force = false) {
+    const orderedKeys = [...workspaces.keys()], targets = [...new Set(keys)].filter(key => workspaces.has(key)); if (!targets.length) return;
+    const dirtyCount = targets.filter(key => workspaces.get(key).dirty).length;
+    if (dirtyCount && !force && !window.confirm(`${dirtyCount} workspace có thay đổi chưa lưu. Đóng và bỏ thay đổi?`)) return;
+    const activeIndex = orderedKeys.indexOf(activeKey), activeWasClosed = targets.includes(activeKey);
+    targets.forEach(key => { const ws = workspaces.get(key); clearInterval(ws.autoTimer); ws.queryAbort?.abort(); ws.countAbort?.abort(); ws.sqlAbort?.abort(); workspaces.delete(key); });
+    if (activeWasClosed) { const remaining = [...workspaces.keys()]; activeKey = remaining[Math.min(Math.max(activeIndex, 0), remaining.length - 1)] || null; }
+    if (activeKey && activeWasClosed) activate(activeKey);
+    else if (activeKey) { renderTabs(activeKey); persist(); }
+    else { renderTabs(); stage.classList.add("hidden"); empty.classList.remove("hidden"); updateFooter(null); persist(); }
+  }
+  function closeWorkspace(key, force = false) { closeWorkspaces([key], force); }
+  function duplicateWorkspace(key) {
+    const source = workspaces.get(key); if (!source || !ensureCapacity()) return;
+    const duplicateKey = `${source.key}:copy:${Date.now()}`, copyNumber = [...workspaces.values()].filter(ws => ws.key.startsWith(`${source.key}:copy:`)).length + 1;
+    const duplicate = { ...source, key: duplicateKey, displayName: `${source.displayName || source.name} (copy${copyNumber > 1 ? ` ${copyNumber}` : ""})`, dirty: false, used: Date.now(), autoTimer: null, queryAbort: null, countAbort: null, sqlAbort: null };
+    if (source.type === "data") Object.assign(duplicate, { rows: [], metadata: null, loaded: false, pending: new Map(), deleted: new Set(), inserted: [], selected: new Set(), autoRefresh: 0 });
+    else if (source.type === "structure" || source.type === "ddl") Object.assign(duplicate, { loaded: false, html: null, ddl: null });
+    else if (source.type === "chart") Object.assign(duplicate, { rows: [...source.rows], columns: [...source.columns], loaded: true });
+    else duplicate.loaded = true;
+    workspaces.set(duplicateKey, duplicate); activate(duplicateKey);
+  }
+  function reorderWorkspace(sourceKey, targetKey, after) {
+    if (!sourceKey || sourceKey === targetKey || !workspaces.has(sourceKey) || !workspaces.has(targetKey)) return;
+    const ordered = [...workspaces.entries()], source = ordered.find(([key]) => key === sourceKey), without = ordered.filter(([key]) => key !== sourceKey);
+    let targetIndex = without.findIndex(([key]) => key === targetKey); if (after) targetIndex++;
+    without.splice(targetIndex, 0, source); workspaces.clear(); without.forEach(([key, ws]) => workspaces.set(key, ws)); renderTabs(sourceKey); persist();
   }
   tabs.addEventListener("click", event => {
     const tab = event.target.closest("[data-workspace-key]"); if (!tab) return;
     if (event.target.closest(".database-workspace-tab-close")) closeWorkspace(tab.dataset.workspaceKey); else activate(tab.dataset.workspaceKey);
   });
   tabs.addEventListener("auxclick", event => { if (event.button === 1) closeWorkspace(event.target.closest("[data-workspace-key]")?.dataset.workspaceKey); });
+  const tabContextMenu = document.createElement("div");
+  tabContextMenu.className = "database-workspace-context-menu hidden"; tabContextMenu.role = "menu"; tabContextMenu.setAttribute("aria-label", "Tác vụ không gian làm việc");
+  tabContextMenu.innerHTML = `<button type="button" role="menuitem" data-tab-action="close"><i class="fa fa-times" aria-hidden="true"></i><span>Đóng tab</span><kbd>Ctrl+W</kbd></button>
+    <button type="button" role="menuitem" data-tab-action="close-others"><i class="fa fa-times-circle-o" aria-hidden="true"></i><span>Đóng mọi tab trừ tab này</span></button>
+    <button type="button" role="menuitem" data-tab-action="close-right"><i class="fa fa-step-forward" aria-hidden="true"></i><span>Đóng tab bên phải</span></button>
+    <button type="button" role="menuitem" data-tab-action="close-left"><i class="fa fa-step-backward" aria-hidden="true"></i><span>Đóng tab bên trái</span></button>
+    <div role="separator"></div>
+    <button type="button" role="menuitem" data-tab-action="duplicate"><i class="fa fa-clone" aria-hidden="true"></i><span>Nhân bản</span></button>
+    <div role="separator"></div>
+    <button type="button" role="menuitem" data-tab-action="close-all"><i class="fa fa-window-close-o" aria-hidden="true"></i><span>Đóng toàn bộ tab</span></button>`;
+  document.body.appendChild(tabContextMenu);
+  const hideTabContextMenu = () => { tabContextMenu.classList.add("hidden"); tabContextMenu.removeAttribute("data-workspace-key"); };
+  function showTabContextMenu(event, key) {
+    const keys = [...workspaces.keys()], index = keys.indexOf(key); if (index < 0) return;
+    event.preventDefault(); tabContextMenu.dataset.workspaceKey = key;
+    tabContextMenu.querySelector('[data-tab-action="close-left"]').disabled = index === 0;
+    tabContextMenu.querySelector('[data-tab-action="close-right"]').disabled = index === keys.length - 1;
+    tabContextMenu.querySelector('[data-tab-action="close-others"]').disabled = keys.length === 1;
+    tabContextMenu.classList.remove("hidden"); tabContextMenu.style.left = "0px"; tabContextMenu.style.top = "0px";
+    const bounds = tabContextMenu.getBoundingClientRect(), gutter = 8;
+    tabContextMenu.style.left = `${Math.max(gutter, Math.min(event.clientX, innerWidth - bounds.width - gutter))}px`;
+    tabContextMenu.style.top = `${Math.max(gutter, Math.min(event.clientY, innerHeight - bounds.height - gutter))}px`;
+    tabContextMenu.querySelector("button:not(:disabled)")?.focus();
+  }
+  tabs.addEventListener("contextmenu", event => { const tab = event.target.closest("[data-workspace-key]"); if (tab) showTabContextMenu(event, tab.dataset.workspaceKey); });
+  tabs.addEventListener("keydown", event => {
+    if (!(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
+    const tab = event.target.closest("[data-workspace-key]"); if (!tab) return; const bounds = tab.getBoundingClientRect();
+    showTabContextMenu({ preventDefault: () => event.preventDefault(), clientX: bounds.left + 12, clientY: bounds.bottom - 2 }, tab.dataset.workspaceKey);
+  });
+  tabContextMenu.addEventListener("click", event => {
+    const action = event.target.closest("[data-tab-action]")?.dataset.tabAction, key = tabContextMenu.dataset.workspaceKey; if (!action || !key) return;
+    const keys = [...workspaces.keys()], index = keys.indexOf(key); hideTabContextMenu();
+    if (action === "close") closeWorkspace(key);
+    else if (action === "close-all") closeWorkspaces(keys);
+    else if (action === "close-others") closeWorkspaces(keys.filter(candidate => candidate !== key));
+    else if (action === "close-right") closeWorkspaces(keys.slice(index + 1));
+    else if (action === "close-left") closeWorkspaces(keys.slice(0, index));
+    else if (action === "duplicate") duplicateWorkspace(key);
+  });
+  tabContextMenu.addEventListener("keydown", event => {
+    if (event.key === "Escape") { event.preventDefault(); const key = tabContextMenu.dataset.workspaceKey; hideTabContextMenu(); tabs.querySelector(`[data-workspace-key="${CSS.escape(key || "")}"]`)?.focus(); return; }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault(); const items = [...tabContextMenu.querySelectorAll("button:not(:disabled)")], current = items.indexOf(document.activeElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; items[next]?.focus();
+  });
+  document.addEventListener("pointerdown", event => { if (!tabContextMenu.classList.contains("hidden") && !tabContextMenu.contains(event.target)) hideTabContextMenu(); });
+  addEventListener("resize", hideTabContextMenu); tabs.addEventListener("scroll", hideTabContextMenu, { passive: true });
+  tabs.addEventListener("dragstart", event => {
+    const tab = event.target.closest("[data-workspace-key]"); if (!tab) return; hideTabContextMenu(); draggedWorkspaceKey = tab.dataset.workspaceKey; tab.classList.add("is-dragging");
+    event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", draggedWorkspaceKey);
+  });
+  tabs.addEventListener("dragover", event => {
+    const target = event.target.closest("[data-workspace-key]"); if (!target || target.dataset.workspaceKey === draggedWorkspaceKey) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = "move"; tabs.querySelectorAll(".is-drop-before,.is-drop-after").forEach(tab => tab.classList.remove("is-drop-before", "is-drop-after"));
+    target.classList.add(event.clientX >= target.getBoundingClientRect().left + target.offsetWidth / 2 ? "is-drop-after" : "is-drop-before");
+  });
+  tabs.addEventListener("drop", event => {
+    const target = event.target.closest("[data-workspace-key]"); if (!target || !draggedWorkspaceKey) return; event.preventDefault();
+    const sourceKey = draggedWorkspaceKey; draggedWorkspaceKey = null; reorderWorkspace(sourceKey, target.dataset.workspaceKey, event.clientX >= target.getBoundingClientRect().left + target.offsetWidth / 2);
+  });
+  tabs.addEventListener("dragend", () => { draggedWorkspaceKey = null; tabs.querySelectorAll(".is-dragging,.is-drop-before,.is-drop-after").forEach(tab => tab.classList.remove("is-dragging", "is-drop-before", "is-drop-after")); });
   tabs.addEventListener("keydown",event=>{if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;event.preventDefault();const keys=[...workspaces.keys()],current=keys.indexOf(activeKey);const next=event.key==="Home"?0:event.key==="End"?keys.length-1:(current+(event.key==="ArrowRight"?1:-1)+keys.length)%keys.length;activate(keys[next]);tabs.querySelector(`[data-workspace-key="${CSS.escape(keys[next])}"]`)?.focus();});
   document.addEventListener("keydown", event => {
     if (event.ctrlKey && event.key.toLowerCase() === "w" && activeKey) { event.preventDefault(); closeWorkspace(activeKey); }
@@ -99,7 +186,7 @@
 
   async function openObject(schema, name, type = "data") {
     const key = keyOf(schema, name, type); if (workspaces.has(key)) return activate(key); if (!ensureCapacity()) return;
-    const ws = { key, type, schema, name, page: 1, pageSize: 50, where: "", orderBy: "", widths: {}, hidden: [], rows: [],
+    const ws = { key, type, schema, name, page: 1, pageSize: defaultPageSize, where: "", orderBy: "", widths: {}, hidden: [], rows: [],
       metadata: null, dirty: false, pending: new Map(), deleted: new Set(), inserted: [], selected: new Set(), used: Date.now(), exactCount: null };
     workspaces.set(key, ws); activeKey = key; renderTabs(); empty.classList.add("hidden"); stage.classList.remove("hidden"); showWorkspaceLoading();
     try { await hydrateWorkspace(ws); }
@@ -144,7 +231,7 @@
     const totalLabel=total==null?"?":Number(total).toLocaleString(),approximate=ws.exactCount==null?" ~":"";
     return `<div class="database-grid-toolbar">
       <button data-page="1" ${ws.hasPrevious ? "" : "disabled"} title="Trang đầu" aria-label="Trang đầu"><i class="fa fa-fast-backward" aria-hidden="true"></i></button><button data-page="${ws.page - 1}" ${ws.hasPrevious ? "" : "disabled"} title="Trang trước" aria-label="Trang trước"><i class="fa fa-chevron-left" aria-hidden="true"></i></button>
-      <details class="database-toolbar-menu database-range-menu"><summary title="Chọn range hoặc số dòng mỗi trang"><i class="fa fa-list-ol" aria-hidden="true"></i><span>${start}–${end}</span></summary><div><p>Page ranges</p>${pageRangeOptions(ws)}<hr><p>Rows per page</p>${[5,10,15,25,50,100,200,500].map(size=>`<button data-page-size-option="${size}" class="${ws.pageSize===size?"is-active":""}>${size} rows</button>`).join("")}<label class="database-custom-page-size"><span>Custom</span><input data-custom-page-size type="number" min="1" max="500" step="1" placeholder="1–500" value="${[5,10,15,25,50,100,200,500].includes(ws.pageSize)?"":ws.pageSize}"><button type="button" data-apply-custom-page-size title="Áp dụng custom rows per page" aria-label="Áp dụng custom rows per page"><i class="fa fa-check" aria-hidden="true"></i></button></label></div></details>
+      <details class="database-toolbar-menu database-range-menu"><summary title="Chọn range hoặc số dòng mỗi trang"><i class="fa fa-list-ol" aria-hidden="true"></i><span>${start}–${end}</span></summary><div><p>Page ranges</p><div class="database-page-range-list">${pageRangeOptions(ws)}</div><hr><label class="database-page-size-select"><span>Rows per page</span><select data-page-size-select aria-label="Rows per page">${pageSizeOptions.map(size=>`<option value="${size}" ${ws.pageSize===size?"selected":""}>${size}</option>`).join("")}<option value="custom" ${pageSizeOptions.includes(ws.pageSize)?"":"selected"}>Custom…</option></select></label><label class="database-custom-page-size ${pageSizeOptions.includes(ws.pageSize)?"hidden":""}"><span>Custom</span><input data-custom-page-size type="number" min="1" max="500" step="1" placeholder="1–500" value="${pageSizeOptions.includes(ws.pageSize)?"":ws.pageSize}"><button type="button" data-apply-custom-page-size title="Áp dụng custom rows per page" aria-label="Áp dụng custom rows per page"><i class="fa fa-check" aria-hidden="true"></i></button></label></div></details>
       <button class="database-total-count" data-total-count ${nodeId?"disabled":""} title="${nodeId?"Exact count chỉ chạy trên coordinator":"Bấm để lấy exact count"}"><i class="fa ${ws.counting?"fa-times":"fa-calculator"}" aria-hidden="true"></i><span>${ws.counting?"Cancel count":`of ${totalLabel}${approximate}`}</span></button>
       <button data-page="${ws.page + 1}" ${ws.hasNext ? "" : "disabled"} title="Trang sau" aria-label="Trang sau"><i class="fa fa-chevron-right" aria-hidden="true"></i></button><button data-last-page ${ws.exactCount != null && ws.hasNext ? "" : "disabled"} title="Trang cuối" aria-label="Trang cuối"><i class="fa fa-fast-forward" aria-hidden="true"></i></button><button data-refresh title="Reload" aria-label="Reload"><i class="fa fa-refresh" aria-hidden="true"></i></button>
       <label title="Tự động làm mới"><i class="fa fa-clock-o" aria-hidden="true"></i><select data-auto-refresh aria-label="Tự động làm mới"><option value="0">Off</option><option value="5" ${ws.autoRefresh===5?"selected":""}>5s</option><option value="15" ${ws.autoRefresh===15?"selected":""}>15s</option><option value="30" ${ws.autoRefresh===30?"selected":""}>30s</option><option value="60" ${ws.autoRefresh===60?"selected":""}>60s</option></select></label>
@@ -153,7 +240,7 @@
       <span class="database-toolbar-spacer"></span><details class="database-toolbar-menu"><summary><i class="fa fa-columns" aria-hidden="true"></i><span>Columns</span></summary><div class="database-column-menu">${ws.columns.map(c=>`<label><input type="checkbox" data-column-visible="${html(c.name)}" ${ws.hidden.includes(c.name)?"":"checked"}> ${html(c.name)}</label>`).join("")}</div></details><details class="database-toolbar-menu"><summary><i class="fa fa-file-text-o" aria-hidden="true"></i><span>CSV</span></summary><div><button data-csv-page><i class="fa fa-download" aria-hidden="true"></i><span>Export page</span></button><button data-csv-all><i class="fa fa-cloud-download" aria-hidden="true"></i><span>Export all filter</span></button><button data-csv-import ${ws.metadata.canEdit ? "" : "disabled"}><i class="fa fa-upload" aria-hidden="true"></i><span>Import…</span></button></div></details><input class="hidden" data-csv-file type="file" accept=".csv,text/csv"><button data-open-ddl title="Open DDL"><i class="fa fa-code" aria-hidden="true"></i><span>DDL</span></button><button data-chart title="Create chart"><i class="fa fa-bar-chart" aria-hidden="true"></i><span>Chart</span></button>
     </div>`;
   }
-  function pageRangeOptions(ws){const exactLast=ws.exactCount==null?null:Math.max(1,Math.ceil(ws.exactCount/ws.pageSize)),knownLast=exactLast??Math.max(ws.page+(ws.hasNext?1:0),Math.ceil((ws.observedMinimum||0)/ws.pageSize),1),pages=new Set([1,ws.page-1,ws.page,ws.page+1,knownLast]);return [...pages].filter(page=>page>=1&&page<=knownLast).sort((a,b)=>a-b).map(page=>{const from=(page-1)*ws.pageSize+1,to=exactLast?Math.min(page*ws.pageSize,ws.exactCount):page*ws.pageSize;return `<button data-page="${page}" class="${page===ws.page?"is-active":""}" ${page===ws.page?"disabled":""}>${ws.exactCount===0?"0–0":`${from}–${to}`}</button>`;}).join("");}
+  function pageRangeOptions(ws){const total=ws.exactCount??Math.max(Number(ws.estimatedRows)||0,ws.observedMinimum||0),exactLast=ws.exactCount==null?null:Math.max(1,Math.ceil(ws.exactCount/ws.pageSize)),knownLast=Math.max(exactLast??Math.ceil(total/ws.pageSize),ws.page+(ws.hasNext?1:0),1);let pages;if(knownLast<=500)pages=Array.from({length:knownLast},(_,index)=>index+1);else{const candidates=new Set([1,2,3,knownLast-2,knownLast-1,knownLast]);for(let page=Math.max(1,ws.page-100);page<=Math.min(knownLast,ws.page+100);page++)candidates.add(page);pages=[...candidates].sort((a,b)=>a-b);}return pages.map((page,index)=>{const from=(page-1)*ws.pageSize+1,to=exactLast?Math.min(page*ws.pageSize,ws.exactCount):page*ws.pageSize,previous=pages[index-1],gap=previous&&page-previous>1?'<span class="database-page-range-gap">…</span>':"";return `${gap}<button data-page="${page}" class="${page===ws.page?"is-active":""}" ${page===ws.page?"disabled":""}>${ws.exactCount===0?"0–0":`${from}–${to}`}</button>`;}).join("");}
   function renderDataWorkspace(ws) {
     const visible = ws.columns.map((c, i) => ({ c, i })).filter(x => !ws.hidden.includes(x.c.name));
     stage.innerHTML = `<div class="database-data-workspace">${dataToolbar(ws)}
@@ -173,8 +260,7 @@
   }
   function bindDataWorkspace(ws) {
     stage.querySelectorAll("[data-page]").forEach(b => b.onclick = () => { ws.page = Number(b.dataset.page); loadRows(ws).catch(reportError); });
-    stage.querySelectorAll("[data-page-size-option]").forEach(button=>button.onclick=()=>changePageSize(ws,Number(button.dataset.pageSizeOption)));
-    const customPageSize=stage.querySelector("[data-custom-page-size]");stage.querySelector("[data-apply-custom-page-size]").onclick=()=>changePageSize(ws,Number(customPageSize.value));customPageSize.onkeydown=event=>{if(event.key==="Enter"){event.preventDefault();changePageSize(ws,Number(customPageSize.value));}};
+    const pageSizeSelect=stage.querySelector("[data-page-size-select]"),customPageSize=stage.querySelector("[data-custom-page-size]"),customPageSizeRow=customPageSize.closest(".database-custom-page-size");pageSizeSelect.onchange=()=>{if(pageSizeSelect.value==="custom"){customPageSizeRow.classList.remove("hidden");customPageSize.focus();}else changePageSize(ws,Number(pageSizeSelect.value));};stage.querySelector("[data-apply-custom-page-size]").onclick=()=>changePageSize(ws,Number(customPageSize.value));customPageSize.onkeydown=event=>{if(event.key==="Enter"){event.preventDefault();changePageSize(ws,Number(customPageSize.value));}};
     stage.querySelector("[data-last-page]").onclick = () => { if(ws.exactCount != null){ws.page=Math.max(1,Math.ceil(ws.exactCount/ws.pageSize));loadRows(ws).catch(reportError);} };
     stage.querySelector("[data-refresh]").onclick = () => ws.dirty ? showError("Save/Revert thay đổi trước khi refresh.") : loadRows(ws).catch(reportError);
     stage.querySelector("[data-total-count]").onclick = () => ws.counting ? ws.countAbort?.abort() : countRows(ws);
