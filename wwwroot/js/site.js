@@ -25,6 +25,50 @@
       button.setAttribute("aria-pressed", show ? "true" : "false");
     });
   });
+  const connectionResultElement = target => target?.jquery ? target[0] : target;
+  const clearConnectionResult = (target, restore = false) => {
+    const element = connectionResultElement(target);
+    if (!element) return;
+    const restoreFocus = element._connectionResultRestoreFocus;
+    element.classList.add("hidden");
+    element.classList.remove("is-dismissible");
+    element.replaceChildren();
+    element._connectionResultRestoreFocus = null;
+    if (restore && restoreFocus?.isConnected) restoreFocus.focus();
+  };
+  const makeConnectionResultDismissible = target => {
+    const element = connectionResultElement(target);
+    if (!element || element.querySelector("[data-connection-result-close]")) return element;
+    element._connectionResultRestoreFocus = document.activeElement;
+    element.classList.add("is-dismissible");
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "connection-result-close";
+    close.dataset.connectionResultClose = "";
+    close.setAttribute("aria-label", "Đóng thông báo lỗi");
+    close.title = "Đóng";
+    close.innerHTML = '<i class="fa fa-times" aria-hidden="true"></i>';
+    close.addEventListener("click", () => clearConnectionResult(element, true));
+    element.appendChild(close);
+    return element;
+  };
+  const showConnectionError = (target, message) => {
+    const element = connectionResultElement(target);
+    if (!element) return;
+    const content = document.createElement("span");
+    content.className = "connection-result-message";
+    content.textContent = message;
+    element.replaceChildren(content);
+    element.classList.add("error");
+    element.classList.remove("hidden");
+    makeConnectionResultDismissible(element);
+    element.focus();
+  };
+  window.CitusConnectionResult = {
+    clear: clearConnectionResult,
+    makeDismissible: makeConnectionResultDismissible,
+    showError: showConnectionError
+  };
   const clusterForm = $("[data-cluster-create-form]");
   if (clusterForm.length) {
     const testButton = $("#test-connection-button");
@@ -42,16 +86,18 @@
     const showResult = (kind, title, detail) => {
       const success = kind === "success";
       result
-        .removeClass("hidden success error")
+        .removeClass("hidden success error is-dismissible")
         .addClass(kind)
         .attr("role", success ? "status" : "alert")
         .empty()
         .append($("<strong>").addClass("block text-sm font-semibold").text(title))
-        .append($("<p>").addClass("mt-1 text-xs leading-5").text(detail))
-        .trigger("focus");
+        .append($("<p>").addClass("mt-1 text-xs leading-5").text(detail));
+      if (!success) makeConnectionResultDismissible(result);
+      result.trigger("focus");
     };
     clusterForm.find("#Host,#Port,#Database,#Username,#Password,#SslMode").on("input change", () => {
-      result.addClass("hidden").removeClass("success error").empty();
+      clearConnectionResult(result);
+      result.removeClass("success error");
     });
     const problemText = xhr => {
       const body = xhr.responseJSON;
@@ -193,7 +239,7 @@
     };
     const showLoading = target => target.html(
       '<div class="database-loading"><div><div class="database-spinner"></div><p>Đang truy vấn database…</p></div></div>');
-    const showError = xhr => feedback.removeClass("hidden").text(problemText(xhr)).trigger("focus");
+    const showError = xhr => showConnectionError(feedback, problemText(xhr));
     const requestData = extra => ({
       __RequestVerificationToken: token,
       Schema: selectedSchema,
@@ -430,7 +476,11 @@
         url: databaseExplorer.data("sql-url"), method: "POST",
         data: { __RequestVerificationToken: token, Sql: $("#sql-editor").val(), Confirmed: true }
       }).done(html => sqlResult.html(html)).fail(xhr => {
-        if (xhr.statusText !== "abort") sqlResult.html($("<div>").addClass("connection-result error").text(problemText(xhr)));
+        if (xhr.statusText !== "abort") {
+          const message = $("<div>").addClass("connection-result error").attr({ role: "alert", tabindex: "-1" });
+          sqlResult.html(message);
+          showConnectionError(message, problemText(xhr));
+        }
       }).always(() => {
         activeSqlRequest = null;
         runButton.prop("disabled", false);

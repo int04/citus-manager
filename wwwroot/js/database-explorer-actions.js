@@ -284,7 +284,7 @@
     fields.innerHTML = body;
     modalCard.classList.toggle("is-table-designer", variant === "table");
     modalCard.classList.toggle("is-destructive", danger);
-    error.classList.add("hidden"); error.textContent = "";
+    window.CitusConnectionResult.clear(error);
     submit.textContent = button;
     submit.className = danger ? "btn btn-danger" : "btn btn-primary";
     submit.disabled = false; submit.removeAttribute("aria-busy");
@@ -313,10 +313,10 @@
   form.addEventListener("submit", async event => {
     event.preventDefault();
     if (!form.reportValidity() || !modalSubmit) return;
-    error.classList.add("hidden");
+    window.CitusConnectionResult.clear(error);
     submit.disabled = true; submit.setAttribute("aria-busy", "true");
     try { await modalSubmit(); }
-    catch (xhr) { error.textContent = problemText(xhr); error.classList.remove("hidden"); error.focus(); }
+    catch (xhr) { window.CitusConnectionResult.showError(error, problemText(xhr)); }
     finally { submit.disabled = false; submit.removeAttribute("aria-busy"); }
   });
 

@@ -124,6 +124,9 @@
             .connection-result { @@apply rounded-xl border p-4; }
             .connection-result.success { @@apply border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/[.08] dark:text-emerald-200; }
             .connection-result.error { @@apply border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/[.08] dark:text-rose-200; }
+            .connection-result.is-dismissible { @@apply relative flex items-start gap-3 pr-14; }
+            .connection-result-message { @@apply min-w-0 flex-1 whitespace-pre-wrap break-words; }
+            .connection-result-close { @@apply absolute right-2 top-2 inline-flex size-9 cursor-pointer items-center justify-center rounded-md border border-transparent bg-transparent text-current opacity-70 transition hover:bg-rose-500/10 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-current focus:ring-offset-1 dark:hover:bg-white/[.08]; }
             .target-banner { @@apply mb-4 flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center; }
             .target-banner > div { @@apply min-w-0 flex-1; }
             .target-banner strong { @@apply block text-sm; }

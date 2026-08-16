@@ -116,6 +116,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
         <div class="query-console-toolbar">
           <button type="button" class="is-primary" data-console-run title="Ctrl+Enter · Không bôi: chạy tất cả · Có bôi: chỉ chạy selection"><i class="fa fa-play"></i> Run</button>
           <button type="button" class="is-stop hidden" data-console-stop title="Dừng toàn bộ execution"><i class="fa fa-stop"></i> Stop</button>
+          <button type="button" data-console-format title="Format SQL · Ctrl+Shift+F · Có bôi: format selection"><i class="fa fa-indent"></i> Format</button>
           <button type="button" data-console-clear><i class="fa fa-eraser"></i> Clear</button>
           <span class="query-console-target"><i class="fa fa-database"></i> ${html(scopeLabel(workspace.scope))}</span>
           <span class="query-console-mode ${nodeId ? "is-readonly" : ""}">${nodeId ? "Worker · read-only" : "Coordinator"}</span>
@@ -217,6 +218,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     }
     root.querySelector("[data-console-run]").onclick = () => execute();
     root.querySelector("[data-console-stop]").onclick = () => workspace.cancelExecution?.();
+    root.querySelector("[data-console-format]").onclick = () => { try { workspace.editor.formatSql(); } catch (error) { showError(`Không format được SQL: ${error.message}`); } };
     root.querySelector("[data-console-clear]").onclick = () => { workspace.editor.setValue(""); workspace.output = []; workspace.results = []; workspace.activeResult = null; workspace.editor.setStatuses([]); renderResults(workspace, root); };
     root.querySelector("[data-history-search]").oninput = event => renderHistory(workspace, root, event.target.value);
     root.querySelector("[data-history-clear]").onclick = async () => { if (confirm("Xóa toàn bộ query history của target này?")) { await workspace.history.clear(); renderHistory(workspace, root); } };

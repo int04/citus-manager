@@ -4,6 +4,7 @@ import { EditorView, keymap, gutter, GutterMarker } from "@codemirror/view";
 import { sql, PostgreSQL } from "@codemirror/lang-sql";
 import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { indentWithTab } from "@codemirror/commands";
+import { formatDialect, postgresql } from "sql-formatter";
 
 const setMarks = StateEffect.define();
 const marksField = StateField.define({
@@ -124,7 +125,11 @@ function create(options) {
       extensions: [
         basicSetup, sql({ dialect: PostgreSQL }), marksField, statusGutter(options.onSkipStatement), editorTheme,
         completionCompartment.of(completionExtension(completionValues)),
-        keymap.of([{ key: "Ctrl-Enter", preventDefault: true, run: () => { options.onRun?.(); return true; } }, indentWithTab, ...completionKeymap]),
+        keymap.of([
+          { key: "Ctrl-Enter", preventDefault: true, run: () => { options.onRun?.(); return true; } },
+          { key: "Ctrl-Shift-f", preventDefault: true, run: () => { formatEditorSql(view); return true; } },
+          indentWithTab, ...completionKeymap
+        ]),
         EditorView.updateListener.of(update => { if (update.docChanged) options.onChange?.(update.state.doc.toString()); })
       ]
     })
@@ -134,11 +139,35 @@ function create(options) {
     getValue: () => view.state.doc.toString(),
     setValue(value) { view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value || "" } }); },
     getSelection() { const range = view.state.selection.main; return { from: range.from, to: range.to, empty: range.empty, cursor: range.head }; },
+    formatSql() { return formatEditorSql(view); },
     setCompletions(values) { completionValues = values || []; view.dispatch({ effects: completionCompartment.reconfigure(completionExtension(completionValues)) }); },
     setStatuses(items) { view.dispatch({ effects: setMarks.of(items || []) }); },
     focus: () => view.focus(),
     destroy: () => view.destroy()
   };
+}
+
+function formatEditorSql(view) {
+  const range = view.state.selection.main;
+  const from = range.empty ? 0 : range.from;
+  const to = range.empty ? view.state.doc.length : range.to;
+  const source = view.state.doc.sliceString(from, to);
+  if (!source.trim()) return false;
+  const formatted = formatDialect(source, {
+    dialect: postgresql,
+    tabWidth: 2,
+    keywordCase: "upper",
+    linesBetweenQueries: 2
+  }).trim();
+  view.dispatch({
+    changes: { from, to, insert: formatted },
+    selection: range.empty
+      ? { anchor: from + formatted.length }
+      : { anchor: from, head: from + formatted.length },
+    scrollIntoView: true
+  });
+  view.focus();
+  return true;
 }
 
 window.CitusQueryEditor = { create };

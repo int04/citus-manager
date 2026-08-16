@@ -57,9 +57,9 @@ import { cycleGridSort, gridSelectionStatistics, gridSortState, normalizeColumnO
   }
 
   const jsonApi = createJsonApi(token);
-  const showError = message => { feedback.textContent = message; feedback.classList.remove("hidden"); feedback.focus(); };
+  const showError = message => window.CitusConnectionResult.showError(feedback, message);
   const reportError = error => { if (error?.name !== "AbortError") showError(error?.message || String(error)); };
-  const clearError = () => { feedback.textContent = ""; feedback.classList.add("hidden"); };
+  const clearError = () => window.CitusConnectionResult.clear(feedback);
   const { openRowInspector } = createRowInspector({ explorer, token, showError });
   const { loadRowLocations, invalidateRowLocations } = createRowLocationLoader({ explorer, jsonApi, nodeId, render: ws => { if (activeKey === ws.key) renderDataWorkspace(ws); }, reportError });
   const { exportCsv, previewCsvImport } = createCsvActions({ stage, explorer, token, showError, loadRows });
