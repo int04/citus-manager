@@ -58,6 +58,8 @@ public sealed class DatabaseController(
         catch (DBConcurrencyException) { return DatabaseMutationProblem(409, "Dữ liệu đã thay đổi", "Refresh workspace và áp dụng lại thay đổi."); }
         catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Dữ liệu không hợp lệ", exception.Message); }
         catch (InvalidOperationException exception) { return DatabaseMutationProblem(409, "Không thể lưu", exception.Message); }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.SerializationFailure)
+        { return DatabaseMutationProblem(409, "Dữ liệu vừa được thay đổi", "Refresh workspace rồi áp dụng lại thay đổi.", exception.SqlState); }
         catch (PostgresException exception) { return DatabaseMutationProblem(422, "PostgreSQL từ chối thay đổi", exception.MessageText, exception.SqlState); }
     }
 

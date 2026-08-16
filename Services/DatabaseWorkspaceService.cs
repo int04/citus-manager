@@ -46,7 +46,7 @@ public sealed class DatabaseWorkspaceService(
                 new TableStructureRequest { Schema = schema, Table = name, NodeId = nodeId }, ct);
             var workerColumns = structure.Columns.Select(column => new WorkspaceColumnResponse(
                 column.Name, column.DataType, column.IsNullable, column.IsPrimaryKey, false,
-                false, false, false, IsNumericType(column.DataType))).ToList();
+                false, false, false, IsNumericType(column.DataType), column.IsPrimaryKey, column.IsPrimaryKey)).ToList();
             return new(schema, name, DatabaseObjectKind.Table, DatabaseTableMode.Distributed, false, false,
                 "Worker là read-only.", null, null, workerColumns,
                 workerColumns.Where(column => column.IsPrimaryKey).Select(column => column.Name).ToList());
@@ -79,7 +79,7 @@ public sealed class DatabaseWorkspaceService(
                 Page = request.Page, PageSize = request.PageSize
             }, ct);
             var columns = workerPage.Columns.Select(column => new WorkspaceColumnResponse(column.Name, column.DataType,
-                true, false, false, false, false, false, IsNumericType(column.DataType))).ToList();
+                true, false, false, false, false, false, IsNumericType(column.DataType), false, false)).ToList();
             var workerRows = workerPage.Rows.Select(row => new DatabaseRowResponse(null,
                 row.Select(cell => new DatabaseCellResponse(cell.Value, cell.IsNull, cell.IsTruncated)).ToList())).ToList();
             return new(columns, workerRows, workerPage.Page, workerPage.PageSize, workerPage.HasPrevious, workerPage.HasNext,
@@ -142,7 +142,7 @@ public sealed class DatabaseWorkspaceService(
                   (where.Length == 0 ? "" : $" WHERE ({where})");
         DatabaseWorkspaceQueryValidator.Validate(sql, request.Schema, request.ObjectName);
         var watch = Stopwatch.StartNew();
-        await using var transaction = await connection.BeginTransactionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction)) await readOnly.ExecuteNonQueryAsync(ct);
         await using var command = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = options.CommandTimeoutSeconds };
         var count = Convert.ToInt64(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
@@ -192,26 +192,27 @@ public sealed class DatabaseWorkspaceService(
         var watch = Stopwatch.StartNew();
         var success = false;
         string? sqlState = null;
-        await using var transaction = await connection.BeginTransactionAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
         try
         {
             foreach (var row in request.Updates)
             {
                 ValidateChanges(row.Changes, columnMap, false);
+                await EnsureFingerprintAsync(connection, transaction, request.Schema, request.ObjectName,
+                    row.Keys, row.Fingerprint, keys, ct);
                 var parameters = new List<NpgsqlParameter>(); var index = 1;
                 var sets = row.Changes.Select(change => change.UseDefault ? $"{Quote(change.Column)} = DEFAULT" :
                     $"{Quote(change.Column)} = {AddValue(parameters, ref index, change, columnMap[change.Column].DataType)}").ToList();
                 var predicates = KeyPredicates(row.Keys, keys, parameters, ref index);
-                parameters.Add(new($"p{index}", row.Fingerprint));
-                predicates.Add($"md5(to_jsonb(t)::text) = @p{index++}");
                 var sql = $"UPDATE {Qualified(request.Schema, request.ObjectName)} AS t SET {string.Join(", ", sets)} WHERE {string.Join(" AND ", predicates)}";
                 await ExecuteOneAsync(connection, transaction, sql, parameters, ct);
             }
             foreach (var row in request.Deletes)
             {
+                await EnsureFingerprintAsync(connection, transaction, request.Schema, request.ObjectName,
+                    row.Keys, row.Fingerprint, keys, ct);
                 var parameters = new List<NpgsqlParameter>(); var index = 1;
                 var predicates = KeyPredicates(row.Keys, keys, parameters, ref index);
-                parameters.Add(new($"p{index}", row.Fingerprint)); predicates.Add($"md5(to_jsonb(t)::text) = @p{index}");
                 await ExecuteOneAsync(connection, transaction,
                     $"DELETE FROM {Qualified(request.Schema, request.ObjectName)} AS t WHERE {string.Join(" AND ", predicates)}", parameters, ct);
             }
@@ -227,7 +228,12 @@ public sealed class DatabaseWorkspaceService(
             await transaction.CommitAsync(ct); success = true;
             return new(request.Inserts.Count, request.Updates.Count, request.Deletes.Count, "Đã lưu thay đổi grid.");
         }
-        catch (PostgresException exception) { sqlState = exception.SqlState; await transaction.RollbackAsync(CancellationToken.None); throw; }
+        catch (Exception exception)
+        {
+            if (exception is PostgresException postgres) sqlState = postgres.SqlState;
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
         finally
         {
             watch.Stop();
@@ -460,7 +466,9 @@ public sealed class DatabaseWorkspaceService(
             SELECT a.attname, format_type(a.atttypid,a.atttypmod), NOT a.attnotnull,
                    EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=a.attrelid AND i.indisprimary AND a.attnum=ANY(i.indkey)),
                    a.attgenerated <> '', a.attidentity <> '', has_column_privilege(a.attrelid,a.attname,'UPDATE'),
-                   t.typcategory='N'
+                   t.typcategory='N',
+                   EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=a.attrelid AND i.indisvalid AND a.attnum=ANY(i.indkey)),
+                   EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=a.attrelid AND i.indisvalid AND i.indisunique AND a.attnum=ANY(i.indkey))
             FROM pg_attribute a JOIN pg_type t ON t.oid=a.atttypid
             WHERE a.attrelid=$1 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum
             """;
@@ -470,7 +478,8 @@ public sealed class DatabaseWorkspaceService(
         {
             var name = reader.GetString(0); var generated = reader.GetBoolean(4); var identity = reader.GetBoolean(5);
             result.Add(new(name, reader.GetString(1), reader.GetBoolean(2), reader.GetBoolean(3), name == distributionColumn,
-                generated, identity, reader.GetBoolean(6) && !generated && name != distributionColumn && !reader.GetBoolean(3), reader.GetBoolean(7)));
+                generated, identity, reader.GetBoolean(6) && !generated && name != distributionColumn && !reader.GetBoolean(3),
+                reader.GetBoolean(7), reader.GetBoolean(8), reader.GetBoolean(9)));
         }
         return result;
     }
@@ -508,6 +517,21 @@ public sealed class DatabaseWorkspaceService(
     {
         await using var command = new NpgsqlCommand(sql, connection, transaction); foreach (var parameter in parameters) command.Parameters.Add(parameter);
         if (await command.ExecuteNonQueryAsync(ct) != 1) throw new DBConcurrencyException("Row changed or no longer exists.");
+    }
+
+    private static async Task EnsureFingerprintAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string schema, string table,
+        IReadOnlyDictionary<string, string?> values, string expectedFingerprint,
+        IReadOnlyList<WorkspaceColumnResponse> keys, CancellationToken ct)
+    {
+        var parameters = new List<NpgsqlParameter>(); var index = 1;
+        var predicates = KeyPredicates(values, keys, parameters, ref index);
+        var sql = $"SELECT md5(to_jsonb(t)::text) FROM {Qualified(schema, table)} AS t WHERE {string.Join(" AND ", predicates)}";
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        foreach (var parameter in parameters) command.Parameters.Add(parameter);
+        var actual = await command.ExecuteScalarAsync(ct);
+        if (actual is null or DBNull || !string.Equals(Convert.ToString(actual, CultureInfo.InvariantCulture), expectedFingerprint, StringComparison.Ordinal))
+            throw new DBConcurrencyException("Row changed or no longer exists.");
     }
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";

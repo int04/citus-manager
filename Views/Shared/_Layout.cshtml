@@ -290,15 +290,21 @@
             .database-toolbar-menu summary { @@apply flex min-h-7 cursor-pointer list-none items-center rounded-sm px-2 text-[10px] hover:bg-white/70 dark:hover:bg-white/[.06]; }
             .database-toolbar-menu[open] > div { @@apply fixed z-40 mt-1 flex min-w-36 flex-col rounded-sm border border-[#9ba9b2] bg-white p-1 shadow-xl dark:border-white/15 dark:bg-[#171d23]; }
             .database-toolbar-menu[open] > div button { @@apply w-full justify-start text-left; }
+            .database-range-menu summary { @@apply min-w-20 justify-center font-mono font-semibold text-[#36576a] dark:text-sky-200; }
+            .database-range-menu[open] > div { @@apply min-w-40; }
+            .database-range-menu[open] > div p { @@apply px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-slate-500; }
+            .database-range-menu[open] > div hr { @@apply my-1 border-t border-[#d2d9dd] dark:border-white/10; }
+            .database-range-menu[open] > div button.is-active { @@apply bg-sky-100 font-semibold text-sky-800 dark:bg-sky-400/15 dark:text-sky-200; }
+            .database-total-count { @@apply font-mono; }
             .database-column-menu { @@apply max-h-72 overflow-y-auto; }
             .database-column-menu label { @@apply flex min-h-7 cursor-pointer items-center gap-2 whitespace-nowrap px-2 text-[10px] hover:bg-sky-50 dark:hover:bg-sky-400/10; }
             .database-column-menu input { @@apply size-3.5; }
-            .database-query-strip { @@apply grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] border-b border-[#aeb9c2] bg-[#edf0f2] dark:border-white/10 dark:bg-[#20262c]; }
+            .database-query-strip { @@apply relative z-40 grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] border-b border-[#aeb9c2] bg-[#edf0f2] dark:border-white/10 dark:bg-[#20262c]; }
             .database-query-strip label { @@apply relative flex min-w-0 items-center border-r border-[#bac4ca] dark:border-white/10; }
             .database-query-strip b { @@apply shrink-0 px-2 font-mono text-[10px] font-medium text-[#44677d] dark:text-sky-300; }
             .database-query-strip input { @@apply min-h-9 min-w-0 flex-1 border-0 bg-transparent px-1 font-mono text-[11px] outline-none focus:ring-0 dark:text-slate-100; }
             .database-query-strip > button { @@apply min-w-14 px-3 text-[10px] font-semibold hover:bg-white/70 dark:hover:bg-white/[.06]; }
-            .database-query-suggestions { @@apply absolute left-0 top-full z-30 max-h-60 w-full overflow-y-auto border border-[#8799a5] bg-white p-1 shadow-xl dark:border-white/15 dark:bg-[#171d23]; }
+            .database-query-suggestions { @@apply absolute left-0 top-full z-50 max-h-60 w-full overflow-y-auto border border-[#8799a5] bg-white p-1 shadow-xl dark:border-white/15 dark:bg-[#171d23]; }
             .database-query-suggestions button { @@apply block min-h-7 w-full rounded-sm px-2 text-left font-mono text-[10px] hover:bg-sky-100 dark:hover:bg-sky-400/15; }
             .database-query-suggestions button.is-active { @@apply bg-sky-100 dark:bg-sky-400/15; }
             .database-workspace-grid-scroll { @@apply min-h-0 flex-1 overflow-auto overscroll-contain; scrollbar-color: #8c9aa3 transparent; scrollbar-width: thin; }
@@ -306,6 +312,15 @@
             .database-workspace-grid th, .database-workspace-grid td { @@apply relative h-9 max-h-24 overflow-hidden border-r border-b border-[#c6d0d6] px-2 text-left align-middle dark:border-white/[.08]; }
             .database-workspace-grid thead th { @@apply sticky top-0 z-20 bg-[#dfe4e7] text-[#2e4655] dark:bg-[#30373e] dark:text-slate-200; }
             .database-workspace-grid thead th > span { @@apply block truncate font-medium; }
+            .database-workspace-grid thead .database-column-title { @@apply flex min-w-0 items-center gap-1; }
+            .database-column-title b { @@apply min-w-0 flex-1 truncate font-medium; }
+            .database-column-key { @@apply grid size-3.5 shrink-0 place-items-center not-italic; }
+            .database-column-key svg { @@apply size-3.5 fill-none stroke-current; stroke-width: 2; }
+            .database-column-key.is-primary { @@apply text-amber-500; }
+            .database-column-key.is-indexed { @@apply text-slate-400 dark:text-slate-300; }
+            .database-column-required { @@apply size-1.5 shrink-0 rounded-full bg-emerald-500 not-italic ring-1 ring-emerald-700/20; }
+            .database-sort-indicator { @@apply ml-auto shrink-0 font-mono text-[11px] font-bold not-italic text-sky-600 dark:text-sky-300; }
+            .database-sort-indicator sup { @@apply ml-0.5 text-[7px]; }
             .database-workspace-grid thead th > small { @@apply block truncate text-[8px] font-normal text-[#71838e] dark:text-slate-500; }
             .database-workspace-grid tbody tr:nth-child(even) td { @@apply bg-[#f0f3f5] dark:bg-white/[.018]; }
             .database-workspace-grid td { @@apply cursor-cell whitespace-nowrap bg-white text-[#263b48] dark:bg-[#22282e] dark:text-slate-200; }
@@ -314,7 +329,9 @@
             .database-workspace-grid tr.is-deleted td { @@apply bg-red-100/80 text-red-700 line-through dark:bg-red-500/10 dark:text-red-300; }
             .database-workspace-grid tr.is-inserted td { @@apply bg-emerald-50 dark:bg-emerald-500/[.07]; }
             .database-row-number { @@apply sticky left-0 z-10 w-12 min-w-12 max-w-12 bg-[#e2e7ea] text-center font-normal text-[#667985] dark:bg-[#292f35] dark:text-slate-500; }
-            .database-workspace-grid thead .database-row-number { @@apply z-30; }
+            .database-workspace-grid tbody > tr > .database-row-number { position: sticky; left: 0; z-index: 25; background-color: #e2e7ea; background-clip: padding-box; box-shadow: 1px 0 0 #aeb9c2; }
+            [data-theme="dark"] .database-workspace-grid tbody > tr > .database-row-number { background-color: #292f35; box-shadow: 1px 0 0 rgba(255,255,255,.1); }
+            .database-workspace-grid thead .database-row-number { @@apply z-30; position: sticky; top: 0; left: 0; }
             .database-column-resizer { @@apply absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-sky-500; }
             .database-cell-editor { @@apply absolute inset-0 z-10 h-full w-full border-2 border-sky-500 bg-white px-2 font-mono text-[11px] outline-none dark:bg-[#11161c]; }
             .database-readonly-note { @@apply shrink-0 border-t border-[#bdc7cd] bg-[#eef1f3] px-3 py-1 text-[9px] text-[#637783] dark:border-white/10 dark:bg-[#1b2127] dark:text-slate-500; }
