@@ -45,6 +45,8 @@
 .database-query-console .query-console-results>nav button.is-active{border-bottom-color:var(--qc-tab-accent);background:var(--qc-header);color:var(--qc-text)}
 .database-query-console .query-console-output{background:var(--qc-surface);color:var(--qc-text)}
 .database-query-console .console-output-line time,.database-query-console .console-replay-note{color:var(--qc-muted)}
+.database-query-console .console-output-line.error-detail span{color:#d79a66;white-space:pre-wrap}
+[data-theme="dark"] .database-query-console .console-output-line.error-detail span{color:#f2b77f}
 .database-query-console .console-result-toolbar{border-color:var(--qc-border);background:var(--qc-toolbar);color:var(--qc-text)}
 .database-query-console .console-result-toolbar select{background:var(--qc-surface)}
 .database-query-console .console-result-filter{border-color:var(--qc-border);background:var(--qc-panel)}

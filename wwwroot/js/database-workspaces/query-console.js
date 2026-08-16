@@ -95,7 +95,12 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
         values.push({ label: columnName, apply: columnName, detail: `${relation.schema}.${relation.name}`, type: "property", boost: isActiveObject ? 110 : sameSchema ? 70 : 0 });
       });
     });
-    metadata.joinSuggestions.forEach(label => values.push({ label, type: "keyword", detail: "foreign key JOIN", boost: 100 }));
+    metadata.joinSuggestions.forEach(item => {
+      const source = `${item.sourceSchema}.${item.sourceRelation}`.toLowerCase();
+      const target = `${item.targetSchema}.${item.targetRelation}`.toLowerCase();
+      values.push({ label: item.sql, apply: item.sql, type: "keyword", detail: `FK · ${source} → ${target}`, boost: 100,
+        joinSource: [source, item.sourceRelation.toLowerCase()], joinTarget: [target, item.targetRelation.toLowerCase()] });
+    });
     metadata.functions.forEach(label => values.push({ label, type: "function", apply: `${label}()`, boost: 20 }));
     metadata.dataTypes.forEach(label => values.push({ label, type: "type", boost: 15 }));
     return values;
@@ -187,7 +192,18 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
           if (event.type === "statementStarted" && descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "running", title: "Đang chạy" });
           if (event.type === "statementSkipped" && descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "skipped", title: "Đã bỏ qua" });
           if (event.type === "statementSucceeded" && descriptor) { statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "success", title: `Thành công · ${event.durationMilliseconds} ms` }); workspace.output.push({ time: event.timestamp, kind: "success", text: `${event.command}: ${event.message} (${event.durationMilliseconds} ms)` }); }
-          if (event.type === "statementFailed") { success = false; if (descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "error", title: event.message }); workspace.output.push({ time: event.timestamp, kind: "error", text: `${event.sqlState ? `[${event.sqlState}] ` : ""}${event.message}` }); }
+          if (event.type === "statementFailed") {
+            success = false;
+            if (descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "error", title: event.message });
+            const prefix = [event.serverSeverity, event.sqlState].filter(Boolean).join(" · ");
+            workspace.output.push({ time: event.timestamp, kind: "error", text: `${prefix ? `[${prefix}] ` : ""}${event.message}` });
+            if (event.serverDetail) workspace.output.push({ time: event.timestamp, kind: "error-detail", text: `DETAIL: ${event.serverDetail}` });
+            if (event.serverHint) workspace.output.push({ time: event.timestamp, kind: "error-detail", text: `HINT: ${event.serverHint}` });
+            if (event.errorPosition) workspace.output.push({ time: event.timestamp, kind: "error-detail", text: `POSITION: ${event.errorPosition}` });
+            const object = [event.schemaName, event.tableName].filter(Boolean).join(".");
+            if (object) workspace.output.push({ time: event.timestamp, kind: "error-detail", text: `OBJECT: ${object}` });
+            if (event.constraintName) workspace.output.push({ time: event.timestamp, kind: "error-detail", text: `CONSTRAINT: ${event.constraintName}` });
+          }
           if (event.type === "connected") workspace.output.push({ time: event.timestamp, text: `Connected · ${event.message}` });
           if (event.type === "resultPage") { const descriptor = analysis.statements[event.statementIndex]; workspace.output.push({ time: event.timestamp, text: `${event.rows?.length || 0} rows retrieved in ${event.durationMilliseconds} ms (execution: ${event.executionMilliseconds || 0} ms, fetching: ${event.fetchingMilliseconds || 0} ms)` }); workspace.results.push({ sql: sql.substring(descriptor.start, descriptor.start + descriptor.length), nodeId: workspace.scope.nodeId, scope: workspace.scope, columns: event.columns || [], rows: event.rows || [], page: 1, pageSize: 20, hasPrevious: false, hasNext: !!event.isTruncated, widths: {} }); workspace.activeResult = workspace.results.length - 1; }
           refreshStatuses(); renderResults(workspace, root);

@@ -437,12 +437,16 @@ public sealed record QueryConsoleScope(
 public sealed record QueryConsoleRelationResponse(
     string Schema, string Name, string Kind, IReadOnlyList<string> Columns);
 
+/// <summary>One directional foreign-key JOIN offered by SQL autocomplete.</summary>
+public sealed record QueryConsoleJoinSuggestionResponse(
+    string SourceSchema, string SourceRelation, string TargetSchema, string TargetRelation, string Sql);
+
 /// <summary>Catalog metadata used by the SQL editor autocomplete provider.</summary>
 public sealed record QueryConsoleMetadataResponse(
     string Database, string TargetLabel, bool IsReadOnly, QueryConsoleScope Scope,
     IReadOnlyList<string> Schemas, IReadOnlyList<QueryConsoleRelationResponse> Relations,
     IReadOnlyList<string> Functions, IReadOnlyList<string> DataTypes,
-    IReadOnlyList<string> JoinSuggestions);
+    IReadOnlyList<QueryConsoleJoinSuggestionResponse> JoinSuggestions);
 
 public enum ConsoleRiskLevel
 {
@@ -494,7 +498,10 @@ public sealed record ConsoleExecutionEvent(
     IReadOnlyList<ResultColumnResponse>? Columns = null,
     IReadOnlyList<IReadOnlyList<CellValueResponse>>? Rows = null,
     bool? IsTruncated = null, string? SqlState = null, string? QueryHash = null,
-    long? ExecutionMilliseconds = null, long? FetchingMilliseconds = null);
+    long? ExecutionMilliseconds = null, long? FetchingMilliseconds = null,
+    string? ServerDetail = null, string? ServerHint = null, int? ErrorPosition = null,
+    string? ServerSeverity = null, string? SchemaName = null, string? TableName = null,
+    string? ConstraintName = null);
 
 /// <summary>Stateless page request for one previously executed SELECT.</summary>
 public sealed record QueryConsoleResultRequest

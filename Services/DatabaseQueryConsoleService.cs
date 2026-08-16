@@ -179,7 +179,14 @@ public sealed class DatabaseQueryConsoleService(
                     await AuditAsync(actorId, clusterId, target, descriptor, false, watch.Elapsed, null, exception.SqlState);
                     terminalEvent = new("statementFailed", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
                         SafePostgresMessage(exception), (long)watch.Elapsed.TotalMilliseconds, SqlState: exception.SqlState,
-                        QueryHash: descriptor.SqlHash);
+                        QueryHash: descriptor.SqlHash,
+                        ServerDetail: SanitizeConsoleServerText(exception.Detail),
+                        ServerHint: SanitizeConsoleServerText(exception.Hint),
+                        ErrorPosition: exception.Position,
+                        ServerSeverity: SanitizeConsoleServerText(exception.Severity),
+                        SchemaName: SanitizeConsoleServerText(exception.SchemaName),
+                        TableName: SanitizeConsoleServerText(exception.TableName),
+                        ConstraintName: SanitizeConsoleServerText(exception.ConstraintName));
                     failed = true;
                 }
                 catch (NpgsqlException)
@@ -325,11 +332,12 @@ public sealed class DatabaseQueryConsoleService(
         await transaction.CommitAsync(ct);
     }
 
-    private async Task<IReadOnlyList<string>> ReadJoinSuggestionsAsync(NpgsqlConnection connection, string? schema, CancellationToken ct)
+    private async Task<IReadOnlyList<QueryConsoleJoinSuggestionResponse>> ReadJoinSuggestionsAsync(NpgsqlConnection connection, string? schema, CancellationToken ct)
     {
         const string sql = """
-            SELECT format('JOIN %I.%I ON %I.%I = %I.%I', tn.nspname, tc.relname,
-                          sc.relname, sa.attname, tc.relname, ta.attname)
+            SELECT sn.nspname, sc.relname, tn.nspname, tc.relname,
+                   string_agg(format('%I.%I = %I.%I', sc.relname, sa.attname,
+                                     tc.relname, ta.attname), ' AND ' ORDER BY sk.ord)
             FROM pg_constraint con
             JOIN pg_class sc ON sc.oid = con.conrelid JOIN pg_namespace sn ON sn.oid = sc.relnamespace
             JOIN pg_class tc ON tc.oid = con.confrelid JOIN pg_namespace tn ON tn.oid = tc.relnamespace
@@ -338,13 +346,23 @@ public sealed class DatabaseQueryConsoleService(
             JOIN pg_attribute sa ON sa.attrelid = sc.oid AND sa.attnum = sk.attnum
             JOIN pg_attribute ta ON ta.attrelid = tc.oid AND ta.attnum = tk.attnum
             WHERE con.contype = 'f' AND ($1::text IS NULL OR sn.nspname = $1 OR tn.nspname = $1)
-            ORDER BY sn.nspname, sc.relname LIMIT 500
+            GROUP BY con.oid, sn.nspname, sc.relname, tn.nspname, tc.relname
+            ORDER BY sn.nspname, sc.relname, tn.nspname, tc.relname LIMIT 500
             """;
-        var result = new List<string>();
+        var result = new List<QueryConsoleJoinSuggestionResponse>();
         await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = options.CommandTimeoutSeconds };
         command.Parameters.AddWithValue((object?)schema ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct)) result.Add(reader.GetString(0));
+        while (await reader.ReadAsync(ct))
+        {
+            var sourceSchema = reader.GetString(0); var sourceRelation = reader.GetString(1);
+            var targetSchema = reader.GetString(2); var targetRelation = reader.GetString(3);
+            var condition = reader.GetString(4);
+            result.Add(new(sourceSchema, sourceRelation, targetSchema, targetRelation,
+                $"JOIN {Qualified(targetSchema, targetRelation)} ON {condition}"));
+            result.Add(new(targetSchema, targetRelation, sourceSchema, sourceRelation,
+                $"JOIN {Qualified(sourceSchema, sourceRelation)} ON {condition}"));
+        }
         return result;
     }
 
@@ -415,13 +433,18 @@ public sealed class DatabaseQueryConsoleService(
         return new(truncated ? value[..options.MaxCellCharacters] : value, false, truncated);
     }
 
-    private static string SafePostgresMessage(PostgresException exception) => exception.SqlState switch
+    private static string SafePostgresMessage(PostgresException exception) =>
+        SanitizeConsoleServerText(exception.MessageText) ?? "PostgreSQL từ chối statement.";
+
+    internal static string? SanitizeConsoleServerText(string? value)
     {
-        PostgresErrorCodes.InsufficientPrivilege => "Không đủ quyền PostgreSQL để chạy statement.",
-        PostgresErrorCodes.QueryCanceled => "Statement đã bị hủy hoặc vượt timeout.",
-        PostgresErrorCodes.SyntaxError => "SQL syntax không hợp lệ.",
-        _ => "PostgreSQL từ chối statement."
-    };
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var safe = Regex.Replace(value, @"(?i)\b(password|pwd)\s*=\s*([^\s;]+)", "$1=[REDACTED]");
+        safe = Regex.Replace(safe, @"(?i)postgres(?:ql)?://[^@\s]+@", "postgresql://[REDACTED]@");
+        safe = Regex.Replace(safe, @"-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----", "[REDACTED PRIVATE KEY]", RegexOptions.IgnoreCase);
+        safe = new string(safe.Where(character => character is '\r' or '\n' or '\t' || !char.IsControl(character)).ToArray()).Trim();
+        return safe.Length <= 4000 ? safe : safe[..4000] + "…";
+    }
     private static string TrimTerminator(string sql) => sql.Trim().TrimEnd(';');
     private static string QuoteIdentifier(string value) => $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
     private static string Qualified(string schema, string name) => $"{QuoteIdentifier(schema)}.{QuoteIdentifier(name)}";

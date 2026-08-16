@@ -54,7 +54,21 @@ function statusGutter(onSkip) {
 function completionSource(context, values) {
   const word = context.matchBefore(/[\w$.]+/);
   if (!word && !context.explicit) return null;
-  return { from: word ? word.from : context.pos, options: values.map(item => typeof item === "string" ? { label: item, type: "keyword" } : item), validFor: /^[\w$.]*$/ };
+  const sqlBeforeCursor = context.state.doc.sliceString(0, context.pos);
+  const currentStatement = sqlBeforeCursor.slice(sqlBeforeCursor.lastIndexOf(";") + 1);
+  const usedRelations = new Set();
+  const relationPattern = /\b(?:FROM|JOIN)\s+((?:"(?:[^"]|"")*"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:"(?:[^"]|"")*"|[A-Za-z_][\w$]*))?)/gi;
+  for (const match of currentStatement.matchAll(relationPattern)) {
+    const relation = match[1].replaceAll(/\s+/g, "").replaceAll('"', "").toLowerCase();
+    usedRelations.add(relation);
+    usedRelations.add(relation.split(".").at(-1));
+  }
+  const options = values
+    .map(item => typeof item === "string" ? { label: item, type: "keyword" } : item)
+    .filter(item => !item.joinSource ||
+      (item.joinSource.some(source => usedRelations.has(source)) &&
+       !item.joinTarget.some(target => usedRelations.has(target))));
+  return { from: word ? word.from : context.pos, options, validFor: /^[\w$.]*$/ };
 }
 
 function completionIcon(completion) {

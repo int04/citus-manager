@@ -89,4 +89,18 @@ public sealed class ConsoleSqlAnalyzerTests
     [InlineData("select * + 1 from admin_jobs")]
     public void Does_not_treat_expression_projection_as_direct_star(string sql) =>
         Assert.False(DatabaseQueryConsoleService.IsDirectStarProjection(sql));
+
+    [Fact]
+    public void Preserves_actionable_citus_error_text()
+    {
+        const string message = "complex joins are only supported when all distributed tables are co-located and joined on their distribution columns";
+
+        Assert.Equal(message, DatabaseQueryConsoleService.SanitizeConsoleServerText(message));
+    }
+
+    [Theory]
+    [InlineData("password=secret host=worker", "password=[REDACTED] host=worker")]
+    [InlineData("postgresql://admin:secret@worker:5432/citusdb", "postgresql://[REDACTED]@worker:5432/citusdb")]
+    public void Redacts_credentials_from_console_server_errors(string message, string expected) =>
+        Assert.Equal(expected, DatabaseQueryConsoleService.SanitizeConsoleServerText(message));
 }
