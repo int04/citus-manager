@@ -60,6 +60,9 @@ public sealed record DatabaseTypeResponse(string Name, string DisplayName);
 /// <summary>One PostgreSQL operator class available to an index access method.</summary>
 public sealed record DatabaseOperatorClassResponse(string AccessMethod, string Name);
 
+/// <summary>One catalog table eligible as a foreign-key target.</summary>
+public sealed record DatabaseForeignKeyTargetResponse(string Schema, string Name, IReadOnlyList<string> Columns);
+
 /// <summary>Capabilities and catalog choices used by database action dialogs.</summary>
 public sealed record DatabaseActionMetadataResponse(
     IReadOnlyList<string> Schemas,
@@ -69,6 +72,7 @@ public sealed record DatabaseActionMetadataResponse(
     IReadOnlyList<string> IndexAccessMethods,
     IReadOnlyList<string> Collations,
     IReadOnlyList<DatabaseOperatorClassResponse> OperatorClasses,
+    IReadOnlyList<DatabaseForeignKeyTargetResponse> ForeignKeyTargets,
     IReadOnlyList<string> Tablespaces,
     IReadOnlyList<string> Roles,
     bool SupportsNullsNotDistinct,
@@ -169,12 +173,15 @@ public sealed record CreateTableKeyRequest
 public sealed record CreateTableForeignKeyRequest
 {
     [MaxLength(63)] public string? Name { get; init; }
+    [MaxLength(4000)] public string? Comment { get; init; }
     [MinLength(1), MaxLength(64)] public required IReadOnlyList<string> Columns { get; init; }
     [Required, MaxLength(63)] public required string ReferencedSchema { get; init; }
     [Required, MaxLength(63)] public required string ReferencedTable { get; init; }
     [MinLength(1), MaxLength(64)] public required IReadOnlyList<string> ReferencedColumns { get; init; }
     public DatabaseReferentialAction OnUpdate { get; init; } = DatabaseReferentialAction.NoAction;
     public DatabaseReferentialAction OnDelete { get; init; } = DatabaseReferentialAction.NoAction;
+    public bool Deferrable { get; init; }
+    public bool InitiallyDeferred { get; init; }
 }
 
 /// <summary>Index definition created atomically with a new table.</summary>

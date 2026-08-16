@@ -72,6 +72,42 @@ public sealed class DatabaseObjectDdlSafetyTests
     }
 
     [Fact]
+    public void Initially_deferred_foreign_key_requires_deferrable()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            ForeignKeys =
+            [
+                new()
+                {
+                    Name = "events_tenant_fk", Columns = ["tenant_id"], ReferencedSchema = "public",
+                    ReferencedTable = "tenants", ReferencedColumns = ["id"], InitiallyDeferred = true
+                }
+            ]
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
+    public void Foreign_key_comment_requires_named_constraint()
+    {
+        var request = Table(DatabaseTableMode.Local, null!) with
+        {
+            DistributionColumn = null,
+            ForeignKeys =
+            [
+                new()
+                {
+                    Comment = "Tenant relationship", Columns = ["tenant_id"], ReferencedSchema = "public",
+                    ReferencedTable = "tenants", ReferencedColumns = ["id"]
+                }
+            ]
+        };
+        Assert.Throws<ArgumentException>(() => DatabaseObjectDdlSafety.ValidateCreateTable(request));
+    }
+
+    [Fact]
     public void Key_rejects_column_not_in_table()
     {
         var request = Table(DatabaseTableMode.Local, null!) with

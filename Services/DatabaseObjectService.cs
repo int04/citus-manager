@@ -155,6 +155,26 @@ public sealed class DatabaseObjectService(
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             while (await reader.ReadAsync(cancellationToken))
                 operatorClasses.Add(new(reader.GetString(0), reader.GetString(1)));
+        var foreignKeyTargetMap = new Dictionary<(string Schema, string Name), List<string>>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT n.nspname, c.relname, a.attname
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+            WHERE c.relkind IN ('r','p')
+              AND n.nspname NOT IN ('pg_catalog','information_schema','citus','pg_toast')
+              AND n.nspname NOT LIKE 'pg_temp_%' AND n.nspname NOT LIKE 'pg_toast_temp_%'
+            ORDER BY n.nspname, c.relname, a.attnum
+            """, connection))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var key = (reader.GetString(0), reader.GetString(1));
+                if (!foreignKeyTargetMap.TryGetValue(key, out var columns)) foreignKeyTargetMap[key] = columns = [];
+                columns.Add(reader.GetString(2));
+            }
+        var foreignKeyTargets = foreignKeyTargetMap.Select(item =>
+            new DatabaseForeignKeyTargetResponse(item.Key.Schema, item.Key.Name, item.Value)).ToList();
         var tablespaces = await ReadStringListAsync(connection,
             "SELECT spcname FROM pg_tablespace WHERE spcname <> 'pg_global' ORDER BY spcname", cancellationToken);
         var roles = await ReadStringListAsync(connection,
@@ -174,7 +194,7 @@ public sealed class DatabaseObjectService(
 
         var (reference, distributedCapability) = await ReadCreateCapabilitiesAsync(connection, cancellationToken);
         var supportsNullsNotDistinct = connection.PostgreSqlVersion.Major >= 15;
-        return new(schemas, types, distributed, accessMethods, indexAccessMethods, collations, operatorClasses,
+        return new(schemas, types, distributed, accessMethods, indexAccessMethods, collations, operatorClasses, foreignKeyTargets,
             tablespaces, roles, supportsNullsNotDistinct, reference, distributedCapability,
             hasCitus ? await ReadCitusVersionAsync(connection, cancellationToken) : null);
     }
@@ -277,11 +297,13 @@ public sealed class DatabaseObjectService(
                     definitions.AddRange(request.ForeignKeys.Select(foreignKey =>
                     {
                         var constraint = string.IsNullOrWhiteSpace(foreignKey.Name) ? string.Empty : $"CONSTRAINT {Quote(foreignKey.Name)} ";
+                        var deferrable = foreignKey.Deferrable
+                            ? $" DEFERRABLE{(foreignKey.InitiallyDeferred ? " INITIALLY DEFERRED" : " INITIALLY IMMEDIATE")}" : " NOT DEFERRABLE";
                         return $"{constraint}FOREIGN KEY ({string.Join(", ", foreignKey.Columns.Select(Quote))}) " +
                                $"REFERENCES {Qualified(foreignKey.ReferencedSchema, foreignKey.ReferencedTable)} " +
                                $"({string.Join(", ", foreignKey.ReferencedColumns.Select(Quote))}) " +
                                $"ON UPDATE {DatabaseObjectDdlSafety.ReferentialActionSql(foreignKey.OnUpdate)} " +
-                               $"ON DELETE {DatabaseObjectDdlSafety.ReferentialActionSql(foreignKey.OnDelete)}";
+                               $"ON DELETE {DatabaseObjectDdlSafety.ReferentialActionSql(foreignKey.OnDelete)}{deferrable}";
                     }));
 
                     definitions.AddRange(request.Checks.Select(check =>
@@ -341,6 +363,10 @@ public sealed class DatabaseObjectService(
                     foreach (var column in request.Columns.Where(column => column.Comment is not null))
                         await ExecuteCommandAsync(connection,
                             $"COMMENT ON COLUMN {Qualified(request.Schema, request.Name)}.{Quote(column.Name)} IS {DatabaseObjectDdlSafety.QuoteLiteral(column.Comment!)}",
+                            cancellationToken, transaction);
+                    foreach (var foreignKey in request.ForeignKeys.Where(foreignKey => foreignKey.Comment is not null))
+                        await ExecuteCommandAsync(connection,
+                            $"COMMENT ON CONSTRAINT {Quote(foreignKey.Name!)} ON {Qualified(request.Schema, request.Name)} IS {DatabaseObjectDdlSafety.QuoteLiteral(foreignKey.Comment!)}",
                             cancellationToken, transaction);
                     foreach (var grant in request.Grants)
                     {
@@ -735,6 +761,11 @@ internal static class DatabaseObjectDdlSafety
         foreach (var foreignKey in request.ForeignKeys)
         {
             if (!string.IsNullOrWhiteSpace(foreignKey.Name)) ValidateIdentifier(foreignKey.Name, nameof(foreignKey.Name));
+            if (foreignKey.Comment?.IndexOf('\0') >= 0) throw new ArgumentException("Foreign-key comment contains an invalid character.");
+            if (foreignKey.Comment is not null && string.IsNullOrWhiteSpace(foreignKey.Name))
+                throw new ArgumentException("A named foreign key is required when adding a comment.");
+            if (foreignKey.InitiallyDeferred && !foreignKey.Deferrable)
+                throw new ArgumentException("INITIALLY DEFERRED requires a deferrable foreign key.");
             ValidateColumnList(foreignKey.Columns, columnNames, "Foreign key");
             ValidateIdentifier(foreignKey.ReferencedSchema, nameof(foreignKey.ReferencedSchema));
             ValidateIdentifier(foreignKey.ReferencedTable, nameof(foreignKey.ReferencedTable));

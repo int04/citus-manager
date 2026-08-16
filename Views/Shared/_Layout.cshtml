@@ -573,7 +573,25 @@
             .dg-auto-name-toggle { @@apply flex items-center gap-1.5 text-[9px] font-normal text-[#8d989f]; }
             .dg-auto-name-toggle input { @@apply size-3 accent-sky-500; }
             .dg-fk-properties { grid-template-columns: repeat(3,minmax(11rem,1fr)); }
+            .dg-fk-property-form { @@apply grid gap-3 border-b border-[#3d4248] p-4; }
+            .dg-fk-property-row { display: grid; grid-template-columns: 9.5rem minmax(0,1fr); align-items: center; gap: 1rem; color: #e3e8eb; font-size: 11px; }
+            .dg-fk-property-row > span { @@apply flex items-center justify-between font-medium; }
+            .dg-fk-property-row input:not([type=checkbox]), .dg-fk-property-row select, .dg-fk-property-row textarea { @@apply min-h-9 min-w-0 rounded-[3px] border border-[#4a535b] bg-[#22282d] px-3 text-[11px] text-[#edf1f3] focus:border-[#55b9ee] focus-visible:outline-none; }
+            .dg-fk-property-row textarea { @@apply resize-y py-2; }
+            .dg-fk-columns-section { min-height: 300px; }
+            .dg-fk-columns-workspace { display: grid; grid-template-columns: minmax(12rem,.7fr) minmax(18rem,1.3fr); min-height: 230px; border: 1px solid #3d444a; border-top: 0; }
             .dg-fk-mapping-list { @@apply min-h-32 border border-t-0 border-[#3d444a] bg-[#22272c] p-2; }
+            .dg-fk-columns-workspace .dg-fk-mapping-list { @@apply border-0 border-r border-[#3d444a]; }
+            .dg-fk-mapping-item { @@apply block w-full rounded-[2px] px-2 py-1.5 text-left text-[11px] text-[#aeb7be] hover:bg-white/[.05] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#4a9ff5]; }
+            .dg-fk-mapping-item span { @@apply px-1 text-[#68c8d2]; }
+            .dg-fk-mapping-item.is-active { @@apply bg-[#3788df] text-white; }
+            .dg-fk-column-properties { @@apply grid content-start gap-3 p-4; }
+            .dg-fk-column-properties label, .dg-fk-action-properties > label { display: grid; grid-template-columns: 8rem minmax(0,1fr); align-items: center; gap: .75rem; color: #e3e8eb; font-size: 11px; }
+            .dg-fk-column-properties select, .dg-fk-action-properties select { @@apply min-h-9 min-w-0 rounded-[3px] border border-[#4a535b] bg-[#22282d] px-3 text-[11px] text-[#edf1f3] focus:border-[#55b9ee] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45; }
+            .dg-fk-action-properties { @@apply grid gap-3 border-t border-[#3d4248] p-4; }
+            .dg-fk-toggle-row { @@apply ml-[8.75rem] flex flex-wrap items-center gap-8; }
+            .dg-fk-toggle-row label { @@apply flex items-center gap-2 text-[11px] text-[#edf1f3]; }
+            .dg-fk-toggle-row input { @@apply size-4 accent-[#ff786f] disabled:cursor-not-allowed disabled:opacity-40; }
             .dg-fk-mapping-row { display: grid; grid-template-columns: 24px minmax(8rem,1fr) 24px minmax(8rem,1fr) 32px; align-items: center; gap: .5rem; padding: .25rem; }
             .dg-fk-mapping-row > span:first-child { @@apply text-center text-[9px] text-[#748089]; }
             .dg-fk-mapping-row select, .dg-fk-mapping-row input { @@apply min-h-8 min-w-0 rounded-[2px] border border-[#4a5158] bg-[#20252a] px-2 text-[10px] text-[#e5e9eb] focus:border-[#4a9ff5] focus-visible:outline-none; }
@@ -621,6 +639,9 @@
                 .dg-index-property-row, .dg-index-column-properties label, .dg-index-advanced-properties label { grid-template-columns: minmax(0,1fr); gap: .35rem; }
                 .dg-index-toggle-row { @@apply ml-0; }
                 .dg-index-columns-workspace { grid-template-columns: minmax(0,1fr); }
+                .dg-fk-property-row, .dg-fk-column-properties label, .dg-fk-action-properties > label { grid-template-columns: minmax(0,1fr); gap: .35rem; }
+                .dg-fk-columns-workspace { grid-template-columns: minmax(0,1fr); }
+                .dg-fk-toggle-row { @@apply ml-0; }
                 .dg-column-property-form { @@apply px-3 py-4; }
                 .dg-column-property-row, .dg-column-toggle-row { grid-template-columns: minmax(0,1fr); gap: .35rem; }
                 .dg-column-toggle-row > span { display: none; }

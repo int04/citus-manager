@@ -522,10 +522,10 @@
     });
   }
   function uniqueAutoObjectName(base, current) {
-    const rows = [...document.querySelectorAll(".dg-key-row, .dg-index-row")].filter(row => row !== current);
-    const used = new Set(rows.map(row => row.dataset.keyName || row.dataset.indexName).filter(Boolean));
+    const rows = [...document.querySelectorAll(".dg-key-row, .dg-index-row, .dg-foreign-key-row")].filter(row => row !== current);
+    const used = new Set(rows.map(row => row.dataset.keyName || row.dataset.indexName || row.dataset.foreignKeyName).filter(Boolean));
     if (!used.has(base)) return base;
-    const suffix = current.classList.contains("dg-index-row") ? "_idx" : "_key";
+    const suffix = current.classList.contains("dg-index-row") ? "_idx" : current.classList.contains("dg-foreign-key-row") ? "_fk" : "_key";
     const candidate = `${truncatePgIdentifier(base, 63 - suffix.length)}${suffix}`;
     if (!used.has(candidate)) return candidate;
     let number = 2;
@@ -541,6 +541,10 @@
       if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns.map(column => column.name)), row);
       renderIndexSummary(row);
     });
+    document.querySelectorAll(".dg-foreign-key-row").forEach(row => {
+      if (row.dataset.foreignKeyAutoName !== "false") row.dataset.foreignKeyName = uniqueAutoObjectName(`${autoObjectBase(foreignKeyRowData(row).mappings.map(mapping => mapping.local))}_fk`, row);
+      renderForeignKeySummary(row);
+    });
     const activeKey = activeKeyRow();
     if (activeKey && activeKey.dataset.keyAutoName !== "false") {
       document.getElementById("database-key-name").value = activeKey.dataset.keyName;
@@ -550,6 +554,11 @@
     if (activeIndex && activeIndex.dataset.indexAutoName !== "false") {
       document.getElementById("database-index-name").value = activeIndex.dataset.indexName;
       document.querySelector("[data-index-editor-title]").textContent = activeIndex.dataset.indexName;
+    }
+    const activeForeignKey = activeForeignKeyRow();
+    if (activeForeignKey && activeForeignKey.dataset.foreignKeyAutoName !== "false") {
+      document.getElementById("database-foreign-key-name").value = activeForeignKey.dataset.foreignKeyName;
+      document.querySelector("[data-foreign-key-editor-title]").textContent = activeForeignKey.dataset.foreignKeyName;
     }
     refreshKeyCount();
   }
@@ -732,8 +741,12 @@
   }
   function foreignKeyRowData(row) {
     let mappings = []; try { mappings = JSON.parse(row.dataset.foreignKeyMappings || "[]"); } catch { mappings = []; }
-    return { name: row.dataset.foreignKeyName || "", referencedSchema: row.dataset.referencedSchema || "public", referencedTable: row.dataset.referencedTable || "",
-      onUpdate: row.dataset.onUpdate || "NoAction", onDelete: row.dataset.onDelete || "NoAction", mappings };
+    return { name: row.dataset.foreignKeyName || "", comment: row.dataset.foreignKeyComment || "", referencedSchema: row.dataset.referencedSchema || "public", referencedTable: row.dataset.referencedTable || "",
+      onUpdate: row.dataset.onUpdate || "NoAction", onDelete: row.dataset.onDelete || "NoAction", deferrable: row.dataset.foreignKeyDeferrable === "true",
+      initiallyDeferred: row.dataset.foreignKeyInitiallyDeferred === "true", mappings };
+  }
+  function foreignKeyTarget(fk = foreignKeyRowData(activeForeignKeyRow() || document.createElement("div"))) {
+    return (designerMetadata?.foreignKeyTargets || []).find(target => target.schema === fk.referencedSchema && target.name === fk.referencedTable);
   }
   function renderForeignKeySummary(row) {
     const fk = foreignKeyRowData(row), locals = fk.mappings.map(mapping => mapping.local).filter(Boolean);
@@ -745,36 +758,62 @@
     document.querySelector("[data-designer-section='foreign-keys']")?.click();
     document.querySelectorAll(".dg-foreign-key-row").forEach(item => item.classList.toggle("is-active", item === row));
     document.getElementById("database-foreign-key-empty")?.classList.add("hidden"); document.getElementById("database-foreign-key-editor")?.classList.remove("hidden");
-    const fk = foreignKeyRowData(row);
-    document.getElementById("database-foreign-key-name").value = fk.name; document.getElementById("database-fk-schema").value = fk.referencedSchema;
-    document.getElementById("database-fk-table").value = fk.referencedTable; document.getElementById("database-fk-on-update").value = fk.onUpdate; document.getElementById("database-fk-on-delete").value = fk.onDelete;
+    const fk = foreignKeyRowData(row), auto = row.dataset.foreignKeyAutoName !== "false";
+    document.getElementById("database-foreign-key-name").value = fk.name; document.getElementById("database-foreign-key-name").readOnly = auto; document.getElementById("database-foreign-key-auto-name").checked = auto;
+    document.getElementById("database-foreign-key-comment").value = fk.comment;
+    const targetIndex = (designerMetadata?.foreignKeyTargets || []).findIndex(target => target.schema === fk.referencedSchema && target.name === fk.referencedTable);
+    document.getElementById("database-fk-target").value = targetIndex >= 0 ? String(targetIndex) : "";
+    document.getElementById("database-fk-on-update").value = fk.onUpdate; document.getElementById("database-fk-on-delete").value = fk.onDelete;
+    document.getElementById("database-fk-deferrable").checked = fk.deferrable; document.getElementById("database-fk-initially-deferred").checked = fk.initiallyDeferred;
+    document.getElementById("database-fk-initially-deferred").disabled = !fk.deferrable;
     document.querySelector("[data-foreign-key-editor-title]").textContent = fk.name || "foreign_key"; renderForeignKeyMappings(row);
     document.getElementById("database-remove-foreign-key").disabled = false;
   }
   function updateForeignKeyFromEditor() {
     const row = activeForeignKeyRow(); if (!row) return;
-    row.dataset.foreignKeyName = document.getElementById("database-foreign-key-name").value.trim(); row.dataset.referencedSchema = document.getElementById("database-fk-schema").value;
-    row.dataset.referencedTable = document.getElementById("database-fk-table").value.trim(); row.dataset.onUpdate = document.getElementById("database-fk-on-update").value; row.dataset.onDelete = document.getElementById("database-fk-on-delete").value;
+    row.dataset.foreignKeyName = document.getElementById("database-foreign-key-name").value.trim(); row.dataset.foreignKeyComment = document.getElementById("database-foreign-key-comment").value;
+    const target = (designerMetadata?.foreignKeyTargets || [])[Number(document.getElementById("database-fk-target").value)];
+    row.dataset.referencedSchema = target?.schema || ""; row.dataset.referencedTable = target?.name || "";
+    row.dataset.onUpdate = document.getElementById("database-fk-on-update").value; row.dataset.onDelete = document.getElementById("database-fk-on-delete").value;
+    row.dataset.foreignKeyDeferrable = document.getElementById("database-fk-deferrable").checked;
+    const initiallyDeferred = document.getElementById("database-fk-initially-deferred"); initiallyDeferred.disabled = row.dataset.foreignKeyDeferrable !== "true"; if (initiallyDeferred.disabled) initiallyDeferred.checked = false;
+    row.dataset.foreignKeyInitiallyDeferred = initiallyDeferred.checked;
+    if (row.dataset.foreignKeyAutoName !== "false") updateAutoObjectNames();
     renderForeignKeySummary(row); document.querySelector("[data-foreign-key-editor-title]").textContent = row.dataset.foreignKeyName || "foreign_key"; updateTableSqlPreview();
   }
   function renderForeignKeyMappings(row) {
     const list = document.getElementById("database-fk-mapping-list"), mappings = foreignKeyRowData(row).mappings;
-    list.innerHTML = mappings.length ? mappings.map((mapping, index) => `<div class="dg-fk-mapping-row" data-fk-mapping-index="${index}"><span>${index + 1}</span><select data-fk-local aria-label="Local column">${tableColumnNames().map(name => `<option value="${html(name)}" ${name === mapping.local ? "selected" : ""}>${html(name)}</option>`).join("")}</select><span class="dg-mapping-arrow">→</span><input data-fk-referenced value="${html(mapping.referenced || "")}" maxlength="63" placeholder="id" aria-label="Referenced column"><button type="button" data-remove-fk-mapping aria-label="Remove mapping">×</button></div>`).join("") : '<div class="dg-key-column-empty">Add at least one column mapping</div>';
-    list.querySelectorAll(".dg-fk-mapping-row").forEach(mappingRow => {
-      mappingRow.addEventListener("input", updateForeignKeyMappings); mappingRow.addEventListener("change", updateForeignKeyMappings);
-      mappingRow.querySelector("[data-remove-fk-mapping]").addEventListener("click", () => { mappingRow.remove(); updateForeignKeyMappings(); });
-    });
+    list.innerHTML = mappings.length ? mappings.map((mapping, index) => `<button type="button" class="dg-fk-mapping-item ${index === 0 ? "is-active" : ""}" data-fk-mapping-index="${index}" role="option">${html(mapping.local || "<none>")} <span>→</span> ${html(mapping.referenced || "<none>")}</button>`).join("") : '<div class="dg-key-column-empty">Add at least one column mapping</div>';
+    list.querySelectorAll(".dg-fk-mapping-item").forEach(item => item.addEventListener("click", () => { list.querySelectorAll(".dg-fk-mapping-item").forEach(other => other.classList.toggle("is-active", other === item)); syncForeignKeyMappingEditor(); }));
+    syncForeignKeyMappingEditor();
   }
-  function updateForeignKeyMappings() {
-    const row = activeForeignKeyRow(); if (!row) return;
-    row.dataset.foreignKeyMappings = JSON.stringify([...document.querySelectorAll(".dg-fk-mapping-row")].map(mappingRow => ({ local: mappingRow.querySelector("[data-fk-local]").value, referenced: mappingRow.querySelector("[data-fk-referenced]").value.trim() })));
-    renderForeignKeySummary(row); updateTableSqlPreview();
+  function syncForeignKeyMappingEditor() {
+    const row = activeForeignKeyRow(), selected = document.querySelector(".dg-fk-mapping-item.is-active"), mapping = row && selected ? foreignKeyRowData(row).mappings[Number(selected.dataset.fkMappingIndex)] : null;
+    const local = document.getElementById("database-fk-local-column"), referenced = document.getElementById("database-fk-target-column");
+    local.innerHTML = `<option value="">&lt;none&gt;</option>${tableColumnNames().map(name => `<option value="${html(name)}" ${name === mapping?.local ? "selected" : ""}>${html(name)}</option>`).join("")}`;
+    referenced.innerHTML = `<option value="">&lt;none&gt;</option>${(foreignKeyTarget()?.columns || []).map(name => `<option value="${html(name)}" ${name === mapping?.referenced ? "selected" : ""}>${html(name)}</option>`).join("")}`;
+    local.disabled = !mapping; referenced.disabled = !mapping;
+  }
+  function updateForeignKeyMappingFromEditor() {
+    const row = activeForeignKeyRow(), selected = document.querySelector(".dg-fk-mapping-item.is-active"); if (!row || !selected) return;
+    const fk = foreignKeyRowData(row), position = Number(selected.dataset.fkMappingIndex);
+    fk.mappings[position] = { local: document.getElementById("database-fk-local-column").value, referenced: document.getElementById("database-fk-target-column").value };
+    row.dataset.foreignKeyMappings = JSON.stringify(fk.mappings); updateAutoObjectNames(); renderForeignKeyMappings(row); renderForeignKeySummary(row); updateTableSqlPreview();
+  }
+  function mutateForeignKeyMappings(action) {
+    const row = activeForeignKeyRow(); if (!row) return; const fk = foreignKeyRowData(row), selected = document.querySelector(".dg-fk-mapping-item.is-active"), position = selected ? Number(selected.dataset.fkMappingIndex) : -1;
+    if (action === "add") fk.mappings.push({ local: tableColumnNames().find(name => !fk.mappings.some(mapping => mapping.local === name)) || "", referenced: foreignKeyTarget()?.columns.find(name => !fk.mappings.some(mapping => mapping.referenced === name)) || "" });
+    if (action === "remove" && position >= 0) fk.mappings.splice(position, 1);
+    if ((action === "up" || action === "down") && position >= 0) { const target = position + (action === "up" ? -1 : 1); if (target >= 0 && target < fk.mappings.length) [fk.mappings[position], fk.mappings[target]] = [fk.mappings[target], fk.mappings[position]]; }
+    row.dataset.foreignKeyMappings = JSON.stringify(fk.mappings); updateAutoObjectNames(); renderForeignKeyMappings(row); renderForeignKeySummary(row); updateTableSqlPreview();
   }
   function addForeignKeyRow(metadata, initial = {}) {
     const row = document.createElement("button"); row.type = "button"; row.className = "dg-foreign-key-row dg-tree-object-row"; row.setAttribute("role", "option");
-    row.dataset.foreignKeyName = initial.name || ""; row.dataset.referencedSchema = initial.referencedSchema || metadata.schemas[0] || "public"; row.dataset.referencedTable = initial.referencedTable || "";
+    const firstTarget = metadata.foreignKeyTargets?.[0]; row.dataset.foreignKeyAutoName = initial.name ? "false" : "true"; row.dataset.foreignKeyName = initial.name || ""; row.dataset.foreignKeyComment = initial.comment || ""; row.dataset.referencedSchema = initial.referencedSchema || firstTarget?.schema || ""; row.dataset.referencedTable = initial.referencedTable || firstTarget?.name || "";
     row.dataset.onUpdate = initial.onUpdate || "NoAction"; row.dataset.onDelete = initial.onDelete || "NoAction";
-    row.dataset.foreignKeyMappings = JSON.stringify(initial.mappings || tableColumnNames().slice(0, 1).map(local => ({ local, referenced: "id" })));
+    row.dataset.foreignKeyDeferrable = initial.deferrable ? "true" : "false"; row.dataset.foreignKeyInitiallyDeferred = initial.initiallyDeferred ? "true" : "false";
+    row.dataset.foreignKeyMappings = JSON.stringify(initial.mappings || tableColumnNames().slice(0, 1).map(local => ({ local, referenced: firstTarget?.columns?.[0] || "" })));
+    if (row.dataset.foreignKeyAutoName !== "false") row.dataset.foreignKeyName = uniqueAutoObjectName(`${autoObjectBase(foreignKeyRowData(row).mappings.map(mapping => mapping.local))}_fk`, row);
     renderForeignKeySummary(row); row.addEventListener("click", () => selectForeignKeyRow(row)); wireObjectTreeKeyboard(row, "dg-foreign-key-row", selectForeignKeyRow, removeActiveForeignKey); document.getElementById("database-foreign-key-list").appendChild(row);
     selectForeignKeyRow(row); refreshForeignKeyCount(); updateTableSqlPreview(); document.getElementById("database-foreign-key-name").focus();
   }
@@ -979,13 +1018,18 @@
     document.getElementById("database-add-foreign-key").addEventListener("click", () => addForeignKeyRow(metadata));
     document.getElementById("database-empty-add-foreign-key").addEventListener("click", () => addForeignKeyRow(metadata));
     document.getElementById("database-remove-foreign-key").addEventListener("click", removeActiveForeignKey);
-    ["database-foreign-key-name", "database-fk-schema", "database-fk-table", "database-fk-on-update", "database-fk-on-delete"].forEach(id => {
+    document.getElementById("database-foreign-key-name").addEventListener("input", () => { const row = activeForeignKeyRow(); if (!row) return; row.dataset.foreignKeyAutoName = "false"; document.getElementById("database-foreign-key-auto-name").checked = false; document.getElementById("database-foreign-key-name").readOnly = false; updateForeignKeyFromEditor(); });
+    document.getElementById("database-foreign-key-auto-name").addEventListener("change", event => { const row = activeForeignKeyRow(); if (!row) return; row.dataset.foreignKeyAutoName = event.target.checked ? "true" : "false"; document.getElementById("database-foreign-key-name").readOnly = event.target.checked; if (event.target.checked) updateAutoObjectNames(); else updateForeignKeyFromEditor(); });
+    ["database-foreign-key-comment", "database-fk-on-update", "database-fk-on-delete", "database-fk-deferrable", "database-fk-initially-deferred"].forEach(id => {
       document.getElementById(id).addEventListener("input", updateForeignKeyFromEditor); document.getElementById(id).addEventListener("change", updateForeignKeyFromEditor);
     });
-    document.getElementById("database-add-fk-mapping").addEventListener("click", () => {
-      const row = activeForeignKeyRow(); if (!row) return; const fk = foreignKeyRowData(row), next = tableColumnNames().find(name => !fk.mappings.some(mapping => mapping.local === name)) || tableColumnNames()[0];
-      if (!next) return; fk.mappings.push({ local: next, referenced: "id" }); row.dataset.foreignKeyMappings = JSON.stringify(fk.mappings); renderForeignKeyMappings(row); renderForeignKeySummary(row); updateTableSqlPreview();
-    });
+    document.getElementById("database-fk-target").addEventListener("change", () => { const row = activeForeignKeyRow(); if (!row) return; updateForeignKeyFromEditor(); const fk = foreignKeyRowData(row), targetColumns = new Set(foreignKeyTarget(fk)?.columns || []); fk.mappings = fk.mappings.map(mapping => ({ ...mapping, referenced: targetColumns.has(mapping.referenced) ? mapping.referenced : "" })); row.dataset.foreignKeyMappings = JSON.stringify(fk.mappings); renderForeignKeyMappings(row); updateTableSqlPreview(); });
+    document.getElementById("database-add-fk-mapping").addEventListener("click", () => mutateForeignKeyMappings("add"));
+    document.getElementById("database-remove-fk-mapping").addEventListener("click", () => mutateForeignKeyMappings("remove"));
+    document.getElementById("database-move-fk-mapping-up").addEventListener("click", () => mutateForeignKeyMappings("up"));
+    document.getElementById("database-move-fk-mapping-down").addEventListener("click", () => mutateForeignKeyMappings("down"));
+    document.getElementById("database-fk-local-column").addEventListener("change", updateForeignKeyMappingFromEditor);
+    document.getElementById("database-fk-target-column").addEventListener("change", updateForeignKeyMappingFromEditor);
     document.getElementById("database-add-index").addEventListener("click", () => addIndexRow());
     document.getElementById("database-empty-add-index").addEventListener("click", () => addIndexRow());
     document.getElementById("database-remove-index").addEventListener("click", removeActiveIndex);
@@ -1113,7 +1157,7 @@
     const actionSql = value => ({ NoAction: "NO ACTION", Restrict: "RESTRICT", Cascade: "CASCADE", SetNull: "SET NULL", SetDefault: "SET DEFAULT" })[value] || "NO ACTION";
     document.querySelectorAll(".dg-foreign-key-row").forEach(row => {
       const fk = foreignKeyRowData(row), local = fk.mappings.map(mapping => mapping.local), referenced = fk.mappings.map(mapping => mapping.referenced);
-      definitions.push(`  ${fk.name ? `CONSTRAINT ${quoteId(fk.name)} ` : ""}FOREIGN KEY (${(local.length ? local : ["column_name"]).map(quoteId).join(", ")}) REFERENCES ${quoteId(fk.referencedSchema)}.${quoteId(fk.referencedTable || "referenced_table")} (${(referenced.length ? referenced : ["id"]).map(quoteId).join(", ")}) ON UPDATE ${actionSql(fk.onUpdate)} ON DELETE ${actionSql(fk.onDelete)}`);
+      definitions.push(`  ${fk.name ? `CONSTRAINT ${quoteId(fk.name)} ` : ""}FOREIGN KEY (${(local.length ? local : ["column_name"]).map(quoteId).join(", ")}) REFERENCES ${quoteId(fk.referencedSchema || "schema")}.${quoteId(fk.referencedTable || "referenced_table")} (${(referenced.length ? referenced : ["id"]).map(quoteId).join(", ")}) ON UPDATE ${actionSql(fk.onUpdate)} ON DELETE ${actionSql(fk.onDelete)}${fk.deferrable ? ` DEFERRABLE ${fk.initiallyDeferred ? "INITIALLY DEFERRED" : "INITIALLY IMMEDIATE"}` : " NOT DEFERRABLE"}`);
     });
     document.querySelectorAll(".dg-check-row").forEach(row => {
       const check = checkRowData(row);
@@ -1149,6 +1193,7 @@
       sql += `\n\nSELECT create_distributed_table(\n  '${schema.replaceAll("'", "''")}.${table.replaceAll("'", "''")}',\n  '${distribution.replaceAll("'", "''")}',\n  ${options.join(",\n  ")}\n);`;
     }
     if (form.elements.Comment?.value) sql += `\n\nCOMMENT ON TABLE ${quoteId(schema)}.${quoteId(table)} IS ${quoteLiteral(form.elements.Comment.value)};`;
+    document.querySelectorAll(".dg-foreign-key-row").forEach(row => { const fk = foreignKeyRowData(row); if (fk.comment && fk.name) sql += `\n\nCOMMENT ON CONSTRAINT ${quoteId(fk.name)} ON ${quoteId(schema)}.${quoteId(table)} IS ${quoteLiteral(fk.comment)};`; });
     document.querySelectorAll(".dg-table-grant-row").forEach(row => {
       const role = row.querySelector("[data-grant-role]").value || "role";
       const privileges = [...row.querySelectorAll("[data-grant-privilege]:checked")].map(input => input.value);
@@ -1311,14 +1356,13 @@
               <div id="database-foreign-key-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No foreign key selected</strong><p>Add a foreign key to configure its target and column mappings.</p><button type="button" id="database-empty-add-foreign-key" class="dg-toolbar-button">+ Add foreign key</button></div>
               <div id="database-foreign-key-editor" class="dg-object-editor hidden">
                 <header class="dg-key-editor-heading"><span class="dg-foreign-key-icon" aria-hidden="true"></span><strong data-foreign-key-editor-title>foreign_key</strong><span>constraint</span></header>
-                <div class="dg-property-grid dg-fk-properties">
-                  <label><span>Name <em>optional</em></span><input id="database-foreign-key-name" maxlength="63" placeholder="orders_customer_fkey"></label>
-                  <label><span>Referenced schema</span><select id="database-fk-schema">${(metadata.schemas.length ? metadata.schemas : ["public"]).map(item => `<option value="${html(item)}">${html(item)}</option>`).join("")}</select></label>
-                  <label><span>Referenced table</span><input id="database-fk-table" maxlength="63" placeholder="customers"></label>
-                  <label><span>On update</span><select id="database-fk-on-update">${referentialOptions()}</select></label>
-                  <label><span>On delete</span><select id="database-fk-on-delete">${referentialOptions()}</select></label>
+                <div class="dg-fk-property-form">
+                  <label class="dg-fk-property-row"><span>Name <span class="dg-auto-name-toggle"><input id="database-foreign-key-auto-name" type="checkbox" checked> Auto</span></span><input id="database-foreign-key-name" maxlength="63" placeholder="users_id_fk" readonly></label>
+                  <label class="dg-fk-property-row"><span>Comment</span><textarea id="database-foreign-key-comment" maxlength="4000" rows="2" placeholder="Optional constraint description"></textarea></label>
+                  <label class="dg-fk-property-row"><span>Target Table</span><select id="database-fk-target"><option value="">Select target table…</option>${(metadata.foreignKeyTargets || []).map((target, index) => `<option value="${index}">${html(target.schema)}.${html(target.name)}</option>`).join("")}</select></label>
                 </div>
-                <section class="dg-key-columns-section"><div class="dg-key-columns-heading"><div><strong>Column mappings</strong><small>Local column → referenced column</small></div><div class="dg-key-column-toolbar"><button type="button" id="database-add-fk-mapping" aria-label="Add mapping">+</button></div></div><div id="database-fk-mapping-list" class="dg-fk-mapping-list"></div></section>
+                <section class="dg-key-columns-section dg-fk-columns-section"><div class="dg-key-columns-heading"><div><strong>Columns</strong><small>Local column → target column</small></div><div class="dg-key-column-toolbar" role="toolbar" aria-label="Foreign key column actions"><button type="button" id="database-add-fk-mapping" aria-label="Add mapping">+</button><button type="button" id="database-remove-fk-mapping" aria-label="Remove mapping">−</button><span></span><button type="button" id="database-move-fk-mapping-up" aria-label="Move mapping up">↑</button><button type="button" id="database-move-fk-mapping-down" aria-label="Move mapping down">↓</button></div></div><div class="dg-fk-columns-workspace"><div id="database-fk-mapping-list" class="dg-fk-mapping-list" role="listbox"></div><div class="dg-fk-column-properties"><label><span>Column Name</span><select id="database-fk-local-column" disabled></select></label><label><span>Target Name</span><select id="database-fk-target-column" disabled></select></label></div></div></section>
+                <div class="dg-fk-action-properties"><div class="dg-fk-toggle-row"><label><input id="database-fk-deferrable" type="checkbox"> Deferrable</label><label><input id="database-fk-initially-deferred" type="checkbox" disabled> Initially Deferred</label></div><label><span>On Delete</span><select id="database-fk-on-delete">${referentialOptions()}</select></label><label><span>On Update</span><select id="database-fk-on-update">${referentialOptions()}</select></label></div>
               </div>
             </section>
             <section data-designer-panel="indexes" class="dg-designer-panel hidden">
@@ -1387,9 +1431,9 @@
         [...document.querySelectorAll(".dg-foreign-key-row")].forEach((row, index) => {
           const fk = foreignKeyRowData(row);
           if (!fk.referencedTable || !fk.mappings.length || fk.mappings.some(mapping => !mapping.local || !mapping.referenced)) throw { responseJSON: { detail: `Foreign key ${fk.name || index + 1} chưa đủ table/column mapping.` } };
-          data[`ForeignKeys[${index}].Name`] = fk.name || null; data[`ForeignKeys[${index}].ReferencedSchema`] = fk.referencedSchema; data[`ForeignKeys[${index}].ReferencedTable`] = fk.referencedTable;
+          data[`ForeignKeys[${index}].Name`] = fk.name || null; data[`ForeignKeys[${index}].Comment`] = fk.comment || null; data[`ForeignKeys[${index}].ReferencedSchema`] = fk.referencedSchema; data[`ForeignKeys[${index}].ReferencedTable`] = fk.referencedTable;
           fk.mappings.forEach((mapping, mappingIndex) => { data[`ForeignKeys[${index}].Columns[${mappingIndex}]`] = mapping.local; data[`ForeignKeys[${index}].ReferencedColumns[${mappingIndex}]`] = mapping.referenced; });
-          data[`ForeignKeys[${index}].OnUpdate`] = fk.onUpdate; data[`ForeignKeys[${index}].OnDelete`] = fk.onDelete;
+          data[`ForeignKeys[${index}].OnUpdate`] = fk.onUpdate; data[`ForeignKeys[${index}].OnDelete`] = fk.onDelete; data[`ForeignKeys[${index}].Deferrable`] = fk.deferrable; data[`ForeignKeys[${index}].InitiallyDeferred`] = fk.initiallyDeferred;
         });
         [...document.querySelectorAll(".dg-index-row")].forEach((row, index) => {
           const item = indexRowData(row); if (!item.columns.length) throw { responseJSON: { detail: `Index ${item.name || index + 1} phải có ít nhất một column.` } };
