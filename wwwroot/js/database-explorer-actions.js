@@ -282,8 +282,9 @@
       picker.querySelector(".dg-colocate-trigger")?.setAttribute("aria-expanded", "false");
     });
   });
-  const closeFloatingMenus = () => {
+  const closeFloatingMenus = event => {
     closeMenu(false);
+    if (event?.target instanceof Element && event.target.closest("[data-colocate-picker]")) return;
     document.querySelectorAll("[data-colocate-popover]").forEach(item => item.classList.add("hidden"));
     document.querySelectorAll(".dg-colocate-trigger[aria-expanded=true]").forEach(item => item.setAttribute("aria-expanded", "false"));
   };

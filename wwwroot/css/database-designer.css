@@ -1,10 +1,42 @@
 /* Table Designer palette follows the Database workspace instead of the generic modal surface. */
 .database-modal:has(.database-action-card.is-table-designer) {
-  background: rgb(3 7 12 / 76%);
+  background: rgb(30 41 59 / 34%);
   backdrop-filter: blur(6px) saturate(90%);
 }
 
 .database-action-card.is-table-designer {
+  --dg-popup: #f3f6f8;
+  --dg-popup-elevated: #ffffff;
+  --dg-popup-recessed: #e8edf1;
+  --dg-popup-sidebar: #edf2f5;
+  --dg-popup-border: #b8c4cd;
+  --dg-scroll-track: #e5ebef;
+  --dg-scroll-thumb: #9baab5;
+  --dg-scroll-thumb-hover: #778b99;
+  --dg-text: #263743;
+  --dg-muted: #667b89;
+  --dg-control: #ffffff;
+  --dg-control-border: #aebbc5;
+  --dg-control-readonly: #e7edf1;
+  --dg-hover: #e3edf3;
+  --dg-object: #dde6eb;
+  --dg-active: #c9e5f7;
+  --dg-active-text: #173f59;
+  --dg-accent: #287dcc;
+  --dg-danger: #b42318;
+  color: var(--dg-text);
+  background: linear-gradient(180deg, var(--dg-popup-elevated), var(--dg-popup));
+  border-color: var(--dg-popup-border);
+  box-shadow:
+    0 28px 80px rgb(15 23 42 / 26%),
+    0 0 0 1px rgb(255 255 255 / 55%) inset;
+}
+
+[data-theme="dark"] .database-modal:has(.database-action-card.is-table-designer) {
+  background: rgb(3 7 12 / 76%);
+}
+
+[data-theme="dark"] .database-action-card.is-table-designer {
   --dg-popup: #171d24;
   --dg-popup-elevated: #1b232c;
   --dg-popup-recessed: #141a21;
@@ -13,12 +45,18 @@
   --dg-scroll-track: #151c23;
   --dg-scroll-thumb: #506474;
   --dg-scroll-thumb-hover: #687f90;
-  color: #dce3e8;
-  background: linear-gradient(180deg, var(--dg-popup-elevated), var(--dg-popup));
-  border-color: var(--dg-popup-border);
-  box-shadow:
-    0 28px 90px rgb(0 0 0 / 64%),
-    0 0 0 1px rgb(255 255 255 / 3%) inset;
+  --dg-text: #dce3e8;
+  --dg-muted: #93a3ae;
+  --dg-control: #20272e;
+  --dg-control-border: #46515a;
+  --dg-control-readonly: #22272c;
+  --dg-hover: #27323b;
+  --dg-object: #222d37;
+  --dg-active: #294b63;
+  --dg-active-text: #ffffff;
+  --dg-accent: #55a8d6;
+  --dg-danger: #ff8179;
+  box-shadow: 0 28px 90px rgb(0 0 0 / 64%), 0 0 0 1px rgb(255 255 255 / 3%) inset;
 }
 
 .database-action-card.is-table-designer .database-action-heading,
@@ -28,7 +66,7 @@
 }
 
 .database-action-card.is-table-designer .pma-modal-copy {
-  color: #93a3ae;
+  color: var(--dg-muted);
 }
 
 .database-action-card.is-table-designer .dg-table-designer {
@@ -37,7 +75,7 @@
 }
 
 .database-action-card.is-table-designer .dg-designer-sidebar {
-  color: #cbd5dc;
+  color: var(--dg-text);
   background: var(--dg-popup-sidebar);
   border-color: var(--dg-popup-border);
 }
@@ -65,18 +103,20 @@
 }
 
 .database-action-card.is-table-designer .dg-preview-splitter {
-  background: #202a33;
+  background: var(--dg-popup-recessed);
   border-color: var(--dg-popup-border);
 }
 
 .database-action-card.is-table-designer .dg-designer-object {
-  background: #222d37;
+  color: var(--dg-text);
+  background: var(--dg-object);
   border-color: transparent;
 }
 
 .database-action-card.is-table-designer .dg-designer-object.is-active,
 .database-action-card.is-table-designer .dg-designer-tree button.is-active {
-  background: #294b63;
+  color: var(--dg-active-text);
+  background: var(--dg-active);
   box-shadow: 0 0 0 1px rgb(94 181 235 / 16%) inset;
 }
 
@@ -258,8 +298,33 @@
 
 /* Searchable Citus colocation picker. The popover is fixed so modal scroll areas cannot clip it. */
 .dg-colocate-picker {
+  --dg-popup-elevated: #ffffff;
+  --dg-popup-recessed: #e8edf1;
+  --dg-popup-border: #b8c4cd;
+  --dg-scroll-track: #e5ebef;
+  --dg-scroll-thumb: #9baab5;
+  --dg-text: #263743;
+  --dg-muted: #667b89;
+  --dg-control: #ffffff;
+  --dg-control-border: #aebbc5;
+  --dg-active: #c9e5f7;
+  --dg-active-text: #173f59;
   position: relative;
   min-width: 0;
+}
+
+[data-theme="dark"] .dg-colocate-picker {
+  --dg-popup-elevated: #1b232c;
+  --dg-popup-recessed: #141a21;
+  --dg-popup-border: #40505d;
+  --dg-scroll-track: #151c23;
+  --dg-scroll-thumb: #506474;
+  --dg-text: #dce3e8;
+  --dg-muted: #93a3ae;
+  --dg-control: #20272e;
+  --dg-control-border: #46515a;
+  --dg-active: #294b63;
+  --dg-active-text: #ffffff;
 }
 
 .dg-colocate-trigger {
@@ -270,16 +335,16 @@
   justify-content: space-between;
   gap: 10px;
   padding: 7px 10px;
-  color: #e0e6ea;
-  background: #20272e;
-  border: 1px solid #46515a;
+  color: var(--dg-text);
+  background: var(--dg-control);
+  border: 1px solid var(--dg-control-border);
   border-radius: 3px;
   text-align: left;
 }
 
 .dg-colocate-trigger:hover,
 .dg-colocate-trigger[aria-expanded="true"] {
-  background: #252f38;
+  background: var(--dg-popup-elevated);
   border-color: #5d788a;
 }
 
@@ -304,12 +369,14 @@
   position: fixed;
   z-index: 90;
   display: flex;
+  height: min(320px, calc(100dvh - 20px));
   flex-direction: column;
   min-height: 180px;
   overflow: hidden;
-  color: #dce3e8;
-  background: #171e26;
-  border: 1px solid #40505d;
+  pointer-events: auto;
+  color: var(--dg-text);
+  background: var(--dg-popup-elevated);
+  border: 1px solid var(--dg-popup-border);
   border-radius: 5px;
   box-shadow: 0 18px 52px rgb(0 0 0 / 58%);
 }
@@ -324,8 +391,8 @@
   align-items: center;
   gap: 8px;
   padding: 6px 9px;
-  background: #141a21;
-  border-bottom: 1px solid #34414c;
+  background: var(--dg-popup-recessed);
+  border-bottom: 1px solid var(--dg-popup-border);
 }
 
 .dg-colocate-search > .fa {
@@ -338,9 +405,9 @@
   min-width: 0;
   height: 30px;
   padding: 4px 8px;
-  color: #e6ebee;
-  background: #202932;
-  border: 1px solid #455561;
+  color: var(--dg-text);
+  background: var(--dg-control);
+  border: 1px solid var(--dg-control-border);
   border-radius: 3px;
   outline: none;
 }
@@ -355,14 +422,16 @@
   min-height: 0;
   padding: 5px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   scrollbar-width: thin;
-  scrollbar-color: #506474 #151c23;
+  scrollbar-color: var(--dg-scroll-thumb) var(--dg-scroll-track);
 }
 
 .dg-colocate-option-group > small {
   display: block;
   padding: 7px 8px 4px;
-  color: #8294a0;
+  color: var(--dg-muted);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -377,15 +446,15 @@
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  color: #d9e0e5;
+  color: var(--dg-text);
   border-radius: 3px;
   text-align: left;
 }
 
 .dg-colocate-options [role="option"]:hover,
 .dg-colocate-options [role="option"]:focus-visible {
-  color: #fff;
-  background: #294b63;
+  color: var(--dg-active-text);
+  background: var(--dg-active);
   outline: none;
 }
 
@@ -402,13 +471,547 @@
 }
 
 .dg-colocate-options [role="option"] > small {
-  color: #7f919d;
+  color: var(--dg-muted);
   font-size: 9px;
 }
 
 .dg-colocate-empty {
   padding: 22px 14px;
-  color: #84949f;
+  color: var(--dg-muted);
   text-align: center;
   font-size: 10px;
+}
+
+/* Neutralize the original dark-only designer rules when the application uses light theme. */
+.database-action-card.is-table-designer {
+  color-scheme: light;
+}
+
+[data-theme="dark"] .database-action-card.is-table-designer {
+  color-scheme: dark;
+}
+
+.database-action-card.is-table-designer :is(
+  .database-action-heading h2,
+  .dg-table-root-heading,
+  .dg-key-editor-heading,
+  .database-column-toolbar,
+  .dg-key-empty-state strong,
+  .dg-column-property-row,
+  .dg-property-grid > label,
+  .dg-table-root-properties > label,
+  .dg-table-grants,
+  .dg-sql-preview header,
+  .dg-sql-preview pre,
+  .dg-sql-preview code
+) {
+  color: var(--dg-text);
+}
+
+.database-action-card.is-table-designer :is(
+  .database-action-heading .eyebrow,
+  .dg-key-empty-state p,
+  .dg-table-root-properties small,
+  .dg-property-grid small,
+  .dg-tree-count,
+  .dg-sql-preview header small
+) {
+  color: var(--dg-muted);
+}
+
+.database-action-card.is-table-designer :is(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  select,
+  textarea
+) {
+  color: var(--dg-text);
+  background-color: var(--dg-control);
+  border-color: var(--dg-control-border);
+}
+
+.database-action-card.is-table-designer :is(input, textarea)::placeholder {
+  color: var(--dg-muted);
+  opacity: 0.8;
+}
+
+.database-action-card.is-table-designer .dg-tree-object-row strong {
+  color: var(--dg-text);
+}
+
+.database-action-card.is-table-designer .dg-tree-object-row small {
+  color: var(--dg-muted);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-table-root-heading strong,
+  .dg-key-editor-heading strong,
+  .database-column-toolbar strong,
+  .dg-designer-tree button
+) {
+  color: var(--dg-text);
+}
+
+.database-action-card.is-table-designer .database-action-close {
+  color: var(--dg-muted);
+}
+
+.database-action-card.is-table-designer .database-action-footer .btn:not(.btn-primary):not(.btn-danger) {
+  color: var(--dg-text);
+  background: var(--dg-control);
+  border-color: var(--dg-control-border);
+}
+
+.database-action-card.is-table-designer .database-action-footer .btn:not(.btn-primary):not(.btn-danger):hover {
+  background: var(--dg-object);
+}
+
+.database-action-card.is-table-designer .dg-tree-object-row:hover {
+  background: color-mix(in srgb, var(--dg-active) 55%, transparent);
+}
+
+/* Database context menus follow the global light/dark theme. */
+.database-context-menu {
+  --ctx-bg: #ffffff;
+  --ctx-border: #b8c4cd;
+  --ctx-text: #263743;
+  --ctx-muted: #6c7e8a;
+  --ctx-hover: #d9ecf8;
+  --ctx-hover-text: #173f59;
+  --ctx-separator: #d8e0e5;
+  --ctx-shadow: rgb(15 23 42 / 22%);
+  color-scheme: light;
+}
+
+[data-theme="dark"] .database-context-menu {
+  --ctx-bg: #2b2f34;
+  --ctx-border: #42474d;
+  --ctx-text: #e5e9ed;
+  --ctx-muted: #9da4ab;
+  --ctx-hover: #2f8cf4;
+  --ctx-hover-text: #ffffff;
+  --ctx-separator: #454a50;
+  --ctx-shadow: rgb(0 0 0 / 55%);
+  color-scheme: dark;
+}
+
+.database-context-list,
+.database-context-submenu {
+  color: var(--ctx-text);
+  background: var(--ctx-bg);
+  border-color: var(--ctx-border);
+  box-shadow: 0 14px 38px var(--ctx-shadow);
+  scrollbar-color: var(--ctx-muted) var(--ctx-bg);
+}
+
+.database-context-item,
+.database-context-item.is-danger {
+  color: var(--ctx-text);
+}
+
+.database-context-item:disabled,
+.database-context-item kbd,
+.database-context-arrow {
+  color: var(--ctx-muted);
+}
+
+.database-context-separator {
+  border-color: var(--ctx-separator);
+}
+
+.database-context-item:hover,
+.database-context-item:focus-visible,
+.database-context-item.is-danger:hover,
+.database-context-item.is-danger:focus-visible {
+  color: var(--ctx-hover-text);
+  background: var(--ctx-hover);
+}
+
+.database-context-item:hover kbd,
+.database-context-item:focus-visible kbd {
+  color: var(--ctx-hover-text);
+  opacity: 0.82;
+}
+
+.database-context-item.is-danger:not(:hover):not(:focus-visible) {
+  color: #b42318;
+}
+
+[data-theme="dark"] .database-context-item.is-danger:not(:hover):not(:focus-visible) {
+  color: #ff8a82;
+}
+
+.database-context-list::-webkit-scrollbar,
+.database-context-submenu::-webkit-scrollbar {
+  width: 9px;
+}
+
+.database-context-list::-webkit-scrollbar-thumb,
+.database-context-submenu::-webkit-scrollbar-thumb {
+  background: var(--ctx-muted);
+  background-clip: padding-box;
+  border: 2px solid var(--ctx-bg);
+  border-radius: 999px;
+}
+
+/* Complete Table Designer theme normalization. All panels consume the same semantic tokens. */
+.database-action-card.is-table-designer :is(
+  .dg-key-detail,
+  .dg-key-detail-standalone,
+  .dg-key-editor,
+  .dg-key-column-property,
+  .dg-index-column-properties,
+  .dg-index-advanced-properties,
+  .dg-fk-column-properties,
+  .dg-check-properties
+) {
+  color: var(--dg-text);
+  background: var(--dg-popup);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-key-column-list,
+  .dg-fk-mapping-list,
+  .dg-option-group,
+  .dg-key-kind-control label,
+  .dg-grants-empty
+) {
+  color: var(--dg-text);
+  background: var(--dg-popup-sidebar);
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-table-root-properties,
+  .dg-table-grants,
+  .dg-table-grants > header,
+  .dg-column-property-form,
+  .dg-key-properties,
+  .dg-key-columns-heading,
+  .dg-key-columns-workspace,
+  .dg-index-property-form,
+  .dg-index-columns-section,
+  .dg-index-columns-workspace,
+  .dg-fk-property-form,
+  .dg-fk-columns-section,
+  .dg-fk-columns-workspace,
+  .dg-property-grid,
+  .dg-key-toolbar,
+  .dg-key-column-toolbar,
+  .dg-designer-toolbar,
+  .database-column-toolbar
+) {
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-column-property-row,
+  .dg-column-toggle-row label,
+  .dg-identity-options > label,
+  .dg-identity-cycle > span:last-child,
+  .dg-key-name-field,
+  .dg-key-kind-control legend,
+  .dg-key-kind-control strong,
+  .dg-key-column-property,
+  .dg-index-property-row,
+  .dg-index-toggle-row label,
+  .dg-index-column-properties label,
+  .dg-index-advanced-properties label,
+  .dg-key-columns-heading strong,
+  .dg-fk-property-row,
+  .dg-fk-toggle-row label,
+  .dg-property-grid > label,
+  .dg-option-group label,
+  .dg-inline-check,
+  .dg-auto-name-toggle
+) {
+  color: var(--dg-text);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-column-form-note,
+  .dg-key-name-field em,
+  .dg-key-kind-control small,
+  .dg-key-column-property small,
+  .dg-key-columns-heading small,
+  .dg-key-column-empty,
+  .dg-property-grid em,
+  .dg-property-grid label > small,
+  .dg-option-group legend,
+  .dg-disabled-option,
+  .dg-grants-empty,
+  .dg-auto-name-toggle
+) {
+  color: var(--dg-muted);
+}
+
+.database-action-card.is-table-designer :is(
+  input[readonly],
+  input:disabled,
+  select:disabled,
+  textarea:disabled,
+  .is-immutable
+) {
+  color: var(--dg-muted);
+  background-color: var(--dg-control-readonly);
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-toolbar-button,
+  .dg-key-toolbar button,
+  .dg-key-column-toolbar button,
+  .dg-designer-toolbar button
+) {
+  color: var(--dg-text);
+  background: var(--dg-control);
+  border-color: var(--dg-control-border);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-toolbar-button,
+  .dg-key-toolbar button,
+  .dg-key-column-toolbar button,
+  .dg-designer-toolbar button
+):hover:not(:disabled) {
+  color: var(--dg-text);
+  background: var(--dg-hover);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-object-tree-row,
+  .dg-tree-object-row,
+  .dg-key-row,
+  .dg-key-column-row,
+  .dg-index-column-row,
+  .dg-fk-mapping-item
+) {
+  color: var(--dg-text);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-tree-object-row,
+  .dg-key-row,
+  .dg-key-column-row,
+  .dg-index-column-row,
+  .dg-fk-mapping-item
+):hover {
+  color: var(--dg-text);
+  background: var(--dg-hover);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-tree-object-row,
+  .dg-key-row,
+  .dg-key-column-row,
+  .dg-index-column-row,
+  .dg-fk-mapping-item
+).is-active {
+  color: var(--dg-active-text);
+  background: var(--dg-active);
+  border-left-color: var(--dg-accent);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-tree-object-row,
+  .dg-key-row,
+  .dg-key-column-row,
+  .dg-index-column-row,
+  .dg-fk-mapping-item
+).is-active :is(strong, small, span) {
+  color: inherit;
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-key-kind-control label:has(input:checked),
+  .dg-option-group:focus-within
+) {
+  background: color-mix(in srgb, var(--dg-active) 68%, var(--dg-control));
+  border-color: var(--dg-accent);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-key-empty-icon,
+  .dg-key-editor-heading > span:last-child,
+  .dg-key-kind-badge
+) {
+  color: var(--dg-muted);
+  background: var(--dg-control-readonly);
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-object-panel-toolbar .is-danger,
+  .dg-key-panel-toolbar .is-danger
+) {
+  color: var(--dg-danger);
+}
+
+.database-action-card.is-table-designer :is(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  select,
+  textarea,
+  button
+):focus-visible {
+  outline: none;
+  border-color: var(--dg-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dg-accent) 18%, transparent);
+}
+
+.database-action-card.is-table-designer .database-designer-warning {
+  color: #7a4a00;
+  background: #fff4d6;
+  border-color: #e7bd5a;
+}
+
+[data-theme="dark"] .database-action-card.is-table-designer .database-designer-warning {
+  color: #f3d486;
+  background: #302a1e;
+  border-color: #66542b;
+}
+
+.database-action-card.is-table-designer .connection-result.error {
+  color: #9f1d1d;
+  background: #fff0ef;
+  border-color: #e8aaa6;
+}
+
+[data-theme="dark"] .database-action-card.is-table-designer .connection-result.error {
+  color: #f0aaa8;
+  background: #382b2c;
+  border-color: #6b4141;
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-table-citus-options,
+  .dg-distribution-panel
+) {
+  color: var(--dg-text);
+  background: var(--dg-popup-sidebar);
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-table-citus-options > header,
+  .dg-table-grant-row,
+  .dg-fk-action-properties
+) {
+  border-color: var(--dg-popup-border);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-table-citus-options > header strong,
+  .dg-table-grants > header strong,
+  .dg-table-grant-row label,
+  .dg-fk-column-properties label,
+  .dg-fk-action-properties > label
+) {
+  color: var(--dg-text);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-table-citus-options > header small,
+  .dg-table-grants > header small
+) {
+  color: var(--dg-muted);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-table-grants > header button,
+  .dg-table-grant-row button
+) {
+  background: var(--dg-control);
+  border-color: var(--dg-control-border);
+}
+
+.database-action-card.is-table-designer .dg-table-grants > header button:hover {
+  background: var(--dg-hover);
+}
+
+.database-action-card.is-table-designer .dg-table-grant-row button {
+  color: var(--dg-danger);
+}
+
+.database-action-card.is-table-designer .dg-table-grant-row button:hover {
+  background: color-mix(in srgb, var(--dg-danger) 12%, transparent);
+}
+
+.database-action-card.is-table-designer .dg-table-root-properties label:first-child input {
+  color: var(--dg-text);
+  background: var(--dg-control);
+  border-color: var(--dg-control-border);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-table-root-heading > span:last-child,
+  .dg-key-editor-heading > span:last-child
+) {
+  color: var(--dg-muted);
+  background: var(--dg-control-readonly);
+}
+
+.database-action-card.is-table-designer .dg-sql-preview :is(pre, code) {
+  color: var(--dg-text);
+  background: transparent;
+}
+
+.database-action-card.is-table-designer .dg-preview-caret {
+  color: var(--dg-muted);
+}
+
+.database-action-card.is-table-designer .dg-preview-splitter > span {
+  background: var(--dg-scroll-thumb);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-designer-object,
+  .dg-designer-tree button
+):hover {
+  color: var(--dg-text);
+  background: var(--dg-hover);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-designer-toolbar,
+  .dg-key-toolbar,
+  .dg-key-column-toolbar
+) button:first-child {
+  color: var(--dg-accent);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-designer-toolbar,
+  .dg-key-toolbar,
+  .dg-key-column-toolbar
+) button:nth-child(2) {
+  color: var(--dg-danger);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-fk-mapping-row button,
+  [data-remove-row]
+) {
+  color: var(--dg-danger);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-fk-mapping-row button,
+  [data-remove-row]
+):hover {
+  background: color-mix(in srgb, var(--dg-danger) 12%, transparent);
+}
+
+.database-action-card.is-table-designer :is(
+  .dg-fk-mapping-row > span:first-child,
+  .dg-mapping-arrow
+) {
+  color: var(--dg-muted);
+}
+
+.database-action-card.is-table-designer .dg-key-empty-icon::after {
+  color: var(--dg-muted);
+}
+
+.database-action-card.is-table-designer .dg-preview-splitter:hover,
+.database-action-card.is-table-designer .dg-preview-splitter.is-dragging {
+  background: color-mix(in srgb, var(--dg-active) 72%, var(--dg-popup-recessed));
 }
