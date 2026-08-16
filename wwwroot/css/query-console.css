@@ -25,6 +25,8 @@
 .database-query-console .query-console-toolbar button:hover,.database-query-console .console-result-toolbar button:hover{border-color:var(--qc-border-strong);background:var(--qc-hover)}
 .database-query-console .query-console-toolbar button:focus-visible,.database-query-console .console-result-toolbar button:focus-visible,.database-query-console .query-console-history button:focus-visible{outline-color:var(--qc-accent)}
 .database-query-console .query-console-toolbar button.is-primary{border-color:#397aa2;background:#4d8db4;color:#fff}
+.database-query-console .query-console-toolbar button.is-stop{border-color:#b94b52;background:#983b42;color:#fff}
+[data-theme="dark"] .database-query-console .query-console-toolbar button.is-stop{border-color:#ef6b73;background:#a83f47;color:#fff}
 [data-theme="dark"] .database-query-console .query-console-toolbar button.is-primary{border-color:#3186d8;background:#287dcc}
 .database-query-console .query-console-target{color:var(--qc-text)}
 .database-query-console .query-console-mode{border-color:var(--qc-border-strong);color:#34789e}
@@ -69,6 +71,9 @@
 .database-query-console .cm-cursor,.database-query-console .cm-dropCursor{border-left-color:var(--qc-caret)!important;border-left-width:2px!important}
 .database-query-console .cm-selectionLayer .cm-selectionBackground,.database-query-console .cm-editor.cm-focused>.cm-scroller>.cm-selectionLayer .cm-selectionBackground{background:var(--qc-editor-selection)!important}
 .database-query-console .cm-content ::selection{background:var(--qc-editor-selection-native)!important;color:var(--qc-editor-selection-text)!important}
+.database-query-console .cm-query-status-cancel{display:grid;width:22px;height:22px;place-items:center;border:0;border-radius:3px;background:transparent;color:#ef6b73;cursor:pointer}
+.database-query-console .cm-query-status-cancel:hover{background:rgba(239,107,115,.16);color:#ff8c93}
+.database-query-console .cm-query-status-cancel:focus-visible{outline:2px solid var(--qc-accent);outline-offset:-1px}
 .console-cell-modal>div{border-color:#8799a5;background:#f7f7f7;color:#263b48}
 .console-cell-modal header,.console-cell-modal footer{border-color:#bdc7cd;background:#e4e8eb}
 .console-cell-modal pre{background:#fff;color:#182c39}

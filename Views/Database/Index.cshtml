@@ -16,6 +16,7 @@
      data-console-metadata-url="@Url.Action("ConsoleMetadata", "Database", new { clusterId = Model.Cluster.Id })"
      data-console-analyze-url="@Url.Action("AnalyzeConsoleSql", "Database", new { clusterId = Model.Cluster.Id })"
      data-console-execute-url="@Url.Action("ExecuteConsoleSql", "Database", new { clusterId = Model.Cluster.Id })"
+     data-console-skip-url="@Url.Action("SkipConsoleStatement", "Database", new { clusterId = Model.Cluster.Id })"
      data-console-result-query-url="@Url.Action("QueryConsoleResult", "Database", new { clusterId = Model.Cluster.Id })"
      data-console-result-count-url="@Url.Action("CountConsoleResult", "Database", new { clusterId = Model.Cluster.Id })"
      data-console-result-cell-url="@Url.Action("ReadConsoleResultCell", "Database", new { clusterId = Model.Cluster.Id })"

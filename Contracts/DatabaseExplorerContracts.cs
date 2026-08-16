@@ -470,6 +470,7 @@ public sealed record AnalyzeConsoleSqlResponse(
 /// <summary>Payload for sequential SQL console execution.</summary>
 public sealed record ExecuteConsoleSqlRequest
 {
+    public Guid ExecutionId { get; init; }
     [Required, MinLength(1), MaxLength(1_000_000)] public required string Sql { get; init; }
     public int? NodeId { get; init; }
     [MaxLength(100)] public IReadOnlyList<int>? StatementIndexes { get; init; }
@@ -477,6 +478,13 @@ public sealed record ExecuteConsoleSqlRequest
     [MaxLength(100)] public IReadOnlyList<int>? DestructiveConfirmedStatementIndexes { get; init; }
     [MaxLength(64)] public string? AnalysisHash { get; init; }
     public QueryConsoleScope? Scope { get; init; }
+}
+
+/// <summary>Skips one statement that is still queued in an active console execution.</summary>
+public sealed record SkipConsoleStatementRequest
+{
+    public Guid ExecutionId { get; init; }
+    [Range(0, int.MaxValue)] public int StatementIndex { get; init; }
 }
 
 /// <summary>One event in the NDJSON SQL execution stream.</summary>

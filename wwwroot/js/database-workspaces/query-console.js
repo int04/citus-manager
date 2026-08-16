@@ -110,7 +110,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
       <section class="query-console-editor-pane" style="height:${workspace.editorPercent}%">
         <div class="query-console-toolbar">
           <button type="button" class="is-primary" data-console-run title="Ctrl+Enter · Không bôi: chạy tất cả · Có bôi: chỉ chạy selection"><i class="fa fa-play"></i> Run</button>
-          <button type="button" data-console-stop disabled><i class="fa fa-stop"></i> Stop</button>
+          <button type="button" class="is-stop hidden" data-console-stop title="Dừng toàn bộ execution"><i class="fa fa-stop"></i> Stop</button>
           <button type="button" data-console-clear><i class="fa fa-eraser"></i> Clear</button>
           <span class="query-console-target"><i class="fa fa-database"></i> ${html(scopeLabel(workspace.scope))}</span>
           <span class="query-console-mode ${nodeId ? "is-readonly" : ""}">${nodeId ? "Worker · read-only" : "Coordinator"}</span>
@@ -128,7 +128,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     bindSplitter(workspace, root.querySelector(".query-console-splitter.horizontal"), "y", "editorPercent", editorPane, bottom);
     bindSplitter(workspace, root.querySelector(".query-console-splitter.vertical"), "x", "historyPercent", historyPane, resultPane);
     if (!window.CitusQueryEditor) { root.querySelector("[data-console-editor]").innerHTML = '<p class="database-workspace-error">SQL editor bundle chưa tải.</p>'; return; }
-    workspace.editor = window.CitusQueryEditor.create({ parent: root.querySelector("[data-console-editor]"), value: workspace.sql || "", onChange: value => { workspace.sql = value; workspace.dirty = !!value.trim(); }, onRun: () => execute() });
+    workspace.editor = window.CitusQueryEditor.create({ parent: root.querySelector("[data-console-editor]"), value: workspace.sql || "", onChange: value => { workspace.sql = value; workspace.dirty = !!value.trim(); }, onRun: () => execute(), onSkipStatement: index => workspace.skipQueuedStatement?.(index) });
     renderResults(workspace, root); renderHistory(workspace, root);
 
     const metadataUrl = new URL(explorer.dataset.consoleMetadataUrl, location.origin);
@@ -150,30 +150,57 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
         if (!(await confirmRisk(root, risky))) return;
         workspace.results = []; workspace.activeResult = null;
         workspace.output.push({ time: Date.now(), text: `${scopeLabel(workspace.scope, workspace.metadata?.database || "database")}> ${selected.map(x => x.command).join(", ")}` });
-        workspace.editor.setStatuses(selected.map(x => ({ line: editorLine(x), status: "queued", title: "Đang chờ" })));
-        const statuses = new Map(selected.map(x => [x.index, { line: editorLine(x), status: "queued", title: "Đang chờ" }]));
-        workspace.sqlAbort = new AbortController(); root.querySelector("[data-console-run]").disabled = true; root.querySelector("[data-console-stop]").disabled = false;
+        const executionId = crypto.randomUUID();
+        const statuses = new Map(selected.map(x => [x.index, { statementIndex: x.index, line: editorLine(x), status: "queued", title: "Bỏ qua statement đang chờ" }]));
+        const refreshStatuses = () => workspace.editor.setStatuses([...statuses.values()]);
+        refreshStatuses();
+        workspace.sqlAbort = new AbortController();
+        const runButton = root.querySelector("[data-console-run]"), stopButton = root.querySelector("[data-console-stop]");
+        runButton.classList.add("hidden"); stopButton.classList.remove("hidden");
+        workspace.skipQueuedStatement = async statementIndex => {
+          const current = statuses.get(statementIndex);
+          if (!current || current.status !== "queued" || current.skipRequested) return;
+          current.skipRequested = true; current.title = "Đang bỏ qua…"; refreshStatuses();
+          try {
+            await api(explorer.dataset.consoleSkipUrl, { executionId, statementIndex });
+            statuses.set(statementIndex, { ...current, status: "skipped", title: "Đã bỏ qua", skipRequested: false });
+            workspace.output.push({ time: Date.now(), text: `${selected.find(x => x.index === statementIndex)?.command || "Statement"}: skipped` });
+          } catch (error) {
+            current.skipRequested = false; current.title = "Bỏ qua statement đang chờ";
+            showError(error.message);
+          }
+          refreshStatuses(); renderResults(workspace, root);
+        };
+        workspace.cancelExecution = () => {
+          statuses.forEach((status, index) => {
+            if (status.status === "queued" || status.status === "running")
+              statuses.set(index, { ...status, status: "skipped", title: "Đã dừng" });
+          });
+          refreshStatuses(); workspace.sqlAbort?.abort();
+        };
         const started = performance.now(); let success = true;
-        const response = await fetch(explorer.dataset.consoleExecuteUrl, { method: "POST", headers: jsonHeaders(token), signal: workspace.sqlAbort.signal, body: JSON.stringify({ sql, nodeId: workspace.scope.nodeId, scope: workspace.scope, statementIndexes: selected.map(x => x.index), confirmedStatementIndexes: risky.filter(x => String(x.risk).toLowerCase() === "write").map(x => x.index), destructiveConfirmedStatementIndexes: risky.filter(x => String(x.risk).toLowerCase() === "destructive").map(x => x.index), analysisHash: analysis.queryHash }) });
+        const response = await fetch(explorer.dataset.consoleExecuteUrl, { method: "POST", headers: jsonHeaders(token), signal: workspace.sqlAbort.signal, body: JSON.stringify({ executionId, sql, nodeId: workspace.scope.nodeId, scope: workspace.scope, statementIndexes: selected.map(x => x.index), confirmedStatementIndexes: risky.filter(x => String(x.risk).toLowerCase() === "write").map(x => x.index), destructiveConfirmedStatementIndexes: risky.filter(x => String(x.risk).toLowerCase() === "destructive").map(x => x.index), analysisHash: analysis.queryHash }) });
         if (!response.ok) throw new Error(await problem(response));
         const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = "";
         const accept = event => {
-          if (event.type === "statementStarted") statuses.set(event.statementIndex, { line: editorLine(analysis.statements[event.statementIndex]), status: "running", title: "Đang chạy" });
-          if (event.type === "statementSucceeded") { statuses.set(event.statementIndex, { line: editorLine(analysis.statements[event.statementIndex]), status: "success", title: `Thành công · ${event.durationMilliseconds} ms` }); workspace.output.push({ time: event.timestamp, kind: "success", text: `${event.command}: ${event.message} (${event.durationMilliseconds} ms)` }); }
-          if (event.type === "statementFailed") { success = false; if (event.statementIndex != null) statuses.set(event.statementIndex, { line: editorLine(analysis.statements[event.statementIndex]), status: "error", title: event.message }); workspace.output.push({ time: event.timestamp, kind: "error", text: `${event.sqlState ? `[${event.sqlState}] ` : ""}${event.message}` }); }
+          const descriptor = event.statementIndex == null ? null : analysis.statements.find(x => x.index === event.statementIndex);
+          if (event.type === "statementStarted" && descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "running", title: "Đang chạy" });
+          if (event.type === "statementSkipped" && descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "skipped", title: "Đã bỏ qua" });
+          if (event.type === "statementSucceeded" && descriptor) { statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "success", title: `Thành công · ${event.durationMilliseconds} ms` }); workspace.output.push({ time: event.timestamp, kind: "success", text: `${event.command}: ${event.message} (${event.durationMilliseconds} ms)` }); }
+          if (event.type === "statementFailed") { success = false; if (descriptor) statuses.set(event.statementIndex, { statementIndex: event.statementIndex, line: editorLine(descriptor), status: "error", title: event.message }); workspace.output.push({ time: event.timestamp, kind: "error", text: `${event.sqlState ? `[${event.sqlState}] ` : ""}${event.message}` }); }
           if (event.type === "connected") workspace.output.push({ time: event.timestamp, text: `Connected · ${event.message}` });
           if (event.type === "resultPage") { const descriptor = analysis.statements[event.statementIndex]; workspace.output.push({ time: event.timestamp, text: `${event.rows?.length || 0} rows retrieved in ${event.durationMilliseconds} ms (execution: ${event.executionMilliseconds || 0} ms, fetching: ${event.fetchingMilliseconds || 0} ms)` }); workspace.results.push({ sql: sql.substring(descriptor.start, descriptor.start + descriptor.length), nodeId: workspace.scope.nodeId, scope: workspace.scope, columns: event.columns || [], rows: event.rows || [], page: 1, pageSize: 20, hasPrevious: false, hasNext: !!event.isTruncated, widths: {} }); workspace.activeResult = workspace.results.length - 1; }
-          workspace.editor.setStatuses([...statuses.values()]); renderResults(workspace, root);
+          refreshStatuses(); renderResults(workspace, root);
         };
         while (true) { const chunk = await reader.read(); if (chunk.done) break; buffer += decoder.decode(chunk.value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop(); lines.filter(Boolean).forEach(line => accept(JSON.parse(line))); }
         if (buffer.trim()) accept(JSON.parse(buffer));
         await workspace.history.add({ sql, context: scopeLabel(workspace.scope), command: selected.map(x => x.command).join(", "), success, duration: Math.round(performance.now()-started), queryHash: analysis.queryHash });
         renderHistory(workspace, root);
       } catch (error) { if (error.name !== "AbortError") { showError(error.message); workspace.output.push({ time: Date.now(), kind: "error", text: error.message }); renderResults(workspace, root); } }
-      finally { workspace.sqlAbort = null; root.querySelector("[data-console-run]").disabled = false; root.querySelector("[data-console-stop]").disabled = true; }
+      finally { workspace.sqlAbort = null; workspace.skipQueuedStatement = null; workspace.cancelExecution = null; root.querySelector("[data-console-run]").classList.remove("hidden"); root.querySelector("[data-console-stop]").classList.add("hidden"); }
     }
     root.querySelector("[data-console-run]").onclick = () => execute();
-    root.querySelector("[data-console-stop]").onclick = () => workspace.sqlAbort?.abort();
+    root.querySelector("[data-console-stop]").onclick = () => workspace.cancelExecution?.();
     root.querySelector("[data-console-clear]").onclick = () => { workspace.editor.setValue(""); workspace.output = []; workspace.results = []; workspace.activeResult = null; workspace.editor.setStatuses([]); renderResults(workspace, root); };
     root.querySelector("[data-history-search]").oninput = event => renderHistory(workspace, root, event.target.value);
     root.querySelector("[data-history-clear]").onclick = async () => { if (confirm("Xóa toàn bộ query history của target này?")) { await workspace.history.clear(); renderHistory(workspace, root); } };

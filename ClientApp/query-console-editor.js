@@ -15,25 +15,35 @@ const marksField = StateField.define({
 });
 
 class StatusMarker extends GutterMarker {
-  constructor(status, title) { super(); this.status = status; this.title = title || status; }
-  eq(other) { return this.status === other.status && this.title === other.title; }
+  constructor(status, title, statementIndex, onSkip) { super(); this.status = status; this.title = title || status; this.statementIndex = statementIndex; this.onSkip = onSkip; }
+  eq(other) { return this.status === other.status && this.title === other.title && this.statementIndex === other.statementIndex; }
   toDOM() {
-    const node = document.createElement("i");
-    const icons = { queued: "fa-clock-o", running: "fa-spinner fa-spin", success: "fa-check-circle", error: "fa-times-circle", skipped: "fa-minus-circle" };
-    node.className = `fa ${icons[this.status] || "fa-circle-o"} cm-query-status-${this.status}`;
-    node.title = this.title; node.setAttribute("aria-label", this.title);
-    return node;
+    if (this.status === "queued" && Number.isInteger(this.statementIndex) && this.onSkip) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "cm-query-status-cancel";
+      button.title = this.title;
+      button.setAttribute("aria-label", this.title);
+      button.innerHTML = '<i class="fa fa-stop-circle" aria-hidden="true"></i>';
+      button.onclick = event => { event.preventDefault(); event.stopPropagation(); this.onSkip(this.statementIndex); };
+      return button;
+    }
+    const icon = document.createElement("i");
+    const icons = { running: "fa-spinner fa-spin", success: "fa-check-circle", error: "fa-times-circle", skipped: "fa-minus-circle", queued: "fa-circle-o" };
+    icon.className = `fa ${icons[this.status] || "fa-circle-o"} cm-query-status-${this.status}`;
+    icon.title = this.title; icon.setAttribute("aria-label", this.title);
+    return icon;
   }
 }
 
-function statusGutter() {
+function statusGutter(onSkip) {
   return gutter({
     class: "cm-query-status-gutter",
     markers(view) {
       const ranges = [];
       for (const item of view.state.field(marksField)) {
         const line = view.state.doc.line(Math.max(1, Math.min(view.state.doc.lines, item.line)));
-        ranges.push(new StatusMarker(item.status, item.title).range(line.from));
+        ranges.push(new StatusMarker(item.status, item.title, item.statementIndex, onSkip).range(line.from));
       }
       return RangeSet.of(ranges.sort((left, right) => left.from - right.from));
     },
@@ -74,7 +84,7 @@ function create(options) {
     state: EditorState.create({
       doc: options.value || "",
       extensions: [
-        basicSetup, sql({ dialect: PostgreSQL }), marksField, statusGutter(), editorTheme,
+        basicSetup, sql({ dialect: PostgreSQL }), marksField, statusGutter(options.onSkipStatement), editorTheme,
         completionCompartment.of(autocompletion({ override: [context => completionSource(context, completionValues)], activateOnTyping: true })),
         keymap.of([{ key: "Ctrl-Enter", preventDefault: true, run: () => { options.onRun?.(); return true; } }, indentWithTab, ...completionKeymap]),
         EditorView.updateListener.of(update => { if (update.docChanged) options.onChange?.(update.state.doc.toString()); })

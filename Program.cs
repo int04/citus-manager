@@ -90,6 +90,7 @@ builder.Services.AddSingleton<IControlPlaneLeaseProvider, ControlPlaneLeaseProvi
 builder.Services.AddScoped<IClusterService, ClusterService>();
 builder.Services.Configure<DatabaseExplorerOptions>(builder.Configuration.GetSection("DatabaseExplorer"));
 builder.Services.AddScoped<IDatabaseExplorerService, DatabaseExplorerService>();
+builder.Services.AddSingleton<IQueryConsoleExecutionRegistry, QueryConsoleExecutionRegistry>();
 builder.Services.AddScoped<IDatabaseQueryConsoleService, DatabaseQueryConsoleService>();
 builder.Services.AddScoped<IDatabaseWorkspaceService, DatabaseWorkspaceService>();
 builder.Services.AddScoped<IDatabaseRowInspectionService, DatabaseRowInspectionService>();

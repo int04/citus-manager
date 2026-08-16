@@ -49,6 +49,7 @@ public sealed class DatabaseControllerAuthorizationTests
     [Theory]
     [InlineData(nameof(DatabaseController.AnalyzeConsoleSql))]
     [InlineData(nameof(DatabaseController.ExecuteConsoleSql))]
+    [InlineData(nameof(DatabaseController.SkipConsoleStatement))]
     [InlineData(nameof(DatabaseController.QueryConsoleResult))]
     [InlineData(nameof(DatabaseController.CountConsoleResult))]
     [InlineData(nameof(DatabaseController.ReadConsoleResultCell))]

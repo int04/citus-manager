@@ -15,6 +15,7 @@ namespace CitusManager.Controllers;
 public sealed class DatabaseController(
     IDatabaseExplorerService explorer,
     IDatabaseQueryConsoleService queryConsole,
+    IQueryConsoleExecutionRegistry consoleExecutions,
     IDatabaseWorkspaceService workspaces,
     IDatabaseRowInspectionService rowInspector,
     IDatabaseObjectService objects,
@@ -451,6 +452,24 @@ public sealed class DatabaseController(
             await Response.Body.WriteAsync("\n"u8.ToArray(), CancellationToken.None);
         }
         return new EmptyResult();
+    }
+
+    [HttpPost("Console/Execute/Skip"), ValidateAntiForgeryToken]
+    public IActionResult SkipConsoleStatement(
+        Guid clusterId, [FromBody] SkipConsoleStatementRequest request)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        if (request.ExecutionId == Guid.Empty)
+            return DatabaseMutationProblem(400, "Execution không hợp lệ", "Execution ID bị thiếu.");
+        return consoleExecutions.Skip(request.ExecutionId, ActorId(), clusterId, request.StatementIndex) switch
+        {
+            SkipConsoleStatementResult.Skipped or SkipConsoleStatementResult.AlreadySkipped =>
+                Ok(new { status = "skipped", statementIndex = request.StatementIndex }),
+            SkipConsoleStatementResult.AlreadyStarted =>
+                DatabaseMutationProblem(409, "Statement đã bắt đầu", "Chỉ statement đang chờ mới có thể bỏ qua."),
+            _ => DatabaseMutationProblem(404, "Không tìm thấy execution", "Execution đã kết thúc hoặc không còn hoạt động.")
+        };
     }
 
     [HttpPost("Console/Results/Query"), ValidateAntiForgeryToken]

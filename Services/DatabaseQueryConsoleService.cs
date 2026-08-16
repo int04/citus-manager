@@ -28,6 +28,7 @@ public interface IDatabaseQueryConsoleService
 public sealed class DatabaseQueryConsoleService(
     ControlDbContext db,
     ICitusConnectionFactory connections,
+    IQueryConsoleExecutionRegistry executionRegistry,
     IOptions<DatabaseExplorerOptions> configuredOptions) : IDatabaseQueryConsoleService
 {
     private readonly DatabaseExplorerOptions options = configuredOptions.Value;
@@ -107,6 +108,8 @@ public sealed class DatabaseQueryConsoleService(
         var selected = request.StatementIndexes is { Count: > 0 }
             ? request.StatementIndexes.Distinct().ToHashSet()
             : descriptors.Select(x => x.Index).ToHashSet();
+        if (request.ExecutionId == Guid.Empty)
+            throw new ArgumentException("Execution ID không hợp lệ.");
         var confirmed = (request.ConfirmedStatementIndexes ?? []).ToHashSet();
         var destructive = (request.DestructiveConfirmedStatementIndexes ?? []).ToHashSet();
         foreach (var item in descriptors.Where(x => selected.Contains(x.Index)))
@@ -119,71 +122,85 @@ public sealed class DatabaseQueryConsoleService(
                 throw new ArgumentException($"Statement {item.Index + 1} cần xác nhận destructive action.");
         }
 
-        await using var connection = await OpenAsync(target, ct);
-        await ConfigureSessionAsync(connection, target, request.Scope, ct);
-        yield return new("connected", DateTimeOffset.UtcNow, Message: target.Label, QueryHash: queryHash);
-        foreach (var descriptor in descriptors.Where(x => selected.Contains(x.Index)))
+        executionRegistry.Register(request.ExecutionId, actorId, clusterId, selected);
+        try
         {
-            var sql = request.Sql.Substring(descriptor.Start, descriptor.Length);
-            var watch = Stopwatch.StartNew();
-            yield return new("statementStarted", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
-                QueryHash: descriptor.SqlHash);
-            ConsoleExecutionEvent? resultEvent = null;
-            ConsoleExecutionEvent terminalEvent;
-            var failed = false;
-            try
+            await using var connection = await OpenAsync(target, ct);
+            await ConfigureSessionAsync(connection, target, request.Scope, ct);
+            yield return new("connected", DateTimeOffset.UtcNow, Message: target.Label, QueryHash: queryHash);
+            foreach (var descriptor in descriptors.Where(x => selected.Contains(x.Index)))
             {
-                await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = options.CommandTimeoutSeconds };
-                await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
-                var executionMilliseconds = (long)watch.Elapsed.TotalMilliseconds;
-                var columns = new List<ResultColumnResponse>();
-                var rows = new List<IReadOnlyList<CellValueResponse>>();
-                var truncated = false;
-                if (reader.FieldCount > 0)
+                if (!executionRegistry.TryStart(request.ExecutionId, descriptor.Index))
                 {
-                    columns.AddRange(ReadColumns(reader));
-                    while (await reader.ReadAsync(ct))
-                    {
-                        if (rows.Count >= options.DefaultPageSize) { truncated = true; break; }
-                        rows.Add(ReadRow(reader));
-                    }
+                    yield return new("statementSkipped", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
+                        "Đã bỏ qua", QueryHash: descriptor.SqlHash);
+                    continue;
                 }
-                var affected = reader.RecordsAffected;
-                watch.Stop();
-                var fetchingMilliseconds = Math.Max(0, (long)watch.Elapsed.TotalMilliseconds - executionMilliseconds);
-                await AuditAsync(actorId, clusterId, target, descriptor, true, watch.Elapsed, affected, null);
-                if (columns.Count > 0)
-                    resultEvent = new("resultPage", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
-                        $"{rows.Count} rows retrieved", (long)watch.Elapsed.TotalMilliseconds, affected,
-                        columns, rows, truncated, QueryHash: descriptor.SqlHash,
-                        ExecutionMilliseconds: executionMilliseconds, FetchingMilliseconds: fetchingMilliseconds);
-                terminalEvent = new("statementSucceeded", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
-                    affected >= 0 ? $"{affected} rows affected" : "Thành công", (long)watch.Elapsed.TotalMilliseconds,
-                    affected, QueryHash: descriptor.SqlHash);
-            }
-            catch (PostgresException exception)
-            {
-                watch.Stop();
-                await AuditAsync(actorId, clusterId, target, descriptor, false, watch.Elapsed, null, exception.SqlState);
-                terminalEvent = new("statementFailed", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
-                    SafePostgresMessage(exception), (long)watch.Elapsed.TotalMilliseconds, SqlState: exception.SqlState,
+                var sql = request.Sql.Substring(descriptor.Start, descriptor.Length);
+                var watch = Stopwatch.StartNew();
+                yield return new("statementStarted", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
                     QueryHash: descriptor.SqlHash);
-                failed = true;
+                ConsoleExecutionEvent? resultEvent = null;
+                ConsoleExecutionEvent terminalEvent;
+                var failed = false;
+                try
+                {
+                    await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = options.CommandTimeoutSeconds };
+                    await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
+                    var executionMilliseconds = (long)watch.Elapsed.TotalMilliseconds;
+                    var columns = new List<ResultColumnResponse>();
+                    var rows = new List<IReadOnlyList<CellValueResponse>>();
+                    var truncated = false;
+                    if (reader.FieldCount > 0)
+                    {
+                        columns.AddRange(ReadColumns(reader));
+                        while (await reader.ReadAsync(ct))
+                        {
+                            if (rows.Count >= options.DefaultPageSize) { truncated = true; break; }
+                            rows.Add(ReadRow(reader));
+                        }
+                    }
+                    var affected = reader.RecordsAffected;
+                    watch.Stop();
+                    var fetchingMilliseconds = Math.Max(0, (long)watch.Elapsed.TotalMilliseconds - executionMilliseconds);
+                    await AuditAsync(actorId, clusterId, target, descriptor, true, watch.Elapsed, affected, null);
+                    if (columns.Count > 0)
+                        resultEvent = new("resultPage", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
+                            $"{rows.Count} rows retrieved", (long)watch.Elapsed.TotalMilliseconds, affected,
+                            columns, rows, truncated, QueryHash: descriptor.SqlHash,
+                            ExecutionMilliseconds: executionMilliseconds, FetchingMilliseconds: fetchingMilliseconds);
+                    terminalEvent = new("statementSucceeded", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
+                        affected >= 0 ? $"{affected} rows affected" : "Thành công", (long)watch.Elapsed.TotalMilliseconds,
+                        affected, QueryHash: descriptor.SqlHash);
+                }
+                catch (PostgresException exception)
+                {
+                    watch.Stop();
+                    await AuditAsync(actorId, clusterId, target, descriptor, false, watch.Elapsed, null, exception.SqlState);
+                    terminalEvent = new("statementFailed", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
+                        SafePostgresMessage(exception), (long)watch.Elapsed.TotalMilliseconds, SqlState: exception.SqlState,
+                        QueryHash: descriptor.SqlHash);
+                    failed = true;
+                }
+                catch (NpgsqlException)
+                {
+                    watch.Stop();
+                    await AuditAsync(actorId, clusterId, target, descriptor, false, watch.Elapsed, null, null);
+                    terminalEvent = new("statementFailed", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
+                        "Mất kết nối hoặc database từ chối statement.", (long)watch.Elapsed.TotalMilliseconds,
+                        QueryHash: descriptor.SqlHash);
+                    failed = true;
+                }
+                if (resultEvent is not null) yield return resultEvent;
+                yield return terminalEvent;
+                if (failed) yield break;
             }
-            catch (NpgsqlException)
-            {
-                watch.Stop();
-                await AuditAsync(actorId, clusterId, target, descriptor, false, watch.Elapsed, null, null);
-                terminalEvent = new("statementFailed", DateTimeOffset.UtcNow, descriptor.Index, descriptor.Command,
-                    "Mất kết nối hoặc database từ chối statement.", (long)watch.Elapsed.TotalMilliseconds,
-                    QueryHash: descriptor.SqlHash);
-                failed = true;
-            }
-            if (resultEvent is not null) yield return resultEvent;
-            yield return terminalEvent;
-            if (failed) yield break;
+            yield return new("completed", DateTimeOffset.UtcNow, Message: "Hoàn tất", QueryHash: queryHash);
         }
-        yield return new("completed", DateTimeOffset.UtcNow, Message: "Hoàn tất", QueryHash: queryHash);
+        finally
+        {
+            executionRegistry.Complete(request.ExecutionId);
+        }
     }
 
     public async Task<QueryConsoleResultResponse> QueryResultAsync(
