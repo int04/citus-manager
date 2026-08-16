@@ -125,6 +125,65 @@
     mobileNavigation.addEventListener("change", () => setNavigationOpen(false));
     setNavigationOpen(false);
 
+    const workbench = document.querySelector(".database-workbench");
+    const navigationSplitter = document.getElementById("database-navigation-splitter");
+    const navigationStorageKey = `citus-manager-database-navigation-width:${databaseExplorer.data("cluster-id") || "default"}`;
+    if (workbench && navigationSplitter) {
+      const limits = () => ({
+        minimum: 220,
+        maximum: Math.max(220, Math.min(640, workbench.clientWidth - 360))
+      });
+      const setNavigationWidth = (requested, persist = false) => {
+        const { minimum, maximum } = limits();
+        const width = Math.round(Math.min(maximum, Math.max(minimum, requested)));
+        workbench.style.setProperty("--database-nav-width", `${width}px`);
+        navigationSplitter.setAttribute("aria-valuemin", String(minimum));
+        navigationSplitter.setAttribute("aria-valuemax", String(maximum));
+        navigationSplitter.setAttribute("aria-valuenow", String(width));
+        if (persist) localStorage.setItem(navigationStorageKey, String(width));
+        return width;
+      };
+      const savedNavigationWidth = Number(localStorage.getItem(navigationStorageKey));
+      setNavigationWidth(Number.isFinite(savedNavigationWidth) && savedNavigationWidth > 0 ? savedNavigationWidth : 280);
+      let resizingNavigation = false;
+      navigationSplitter.addEventListener("pointerdown", event => {
+        if (mobileNavigation.matches || event.button !== 0) return;
+        resizingNavigation = true;
+        navigationSplitter.classList.add("is-dragging");
+        document.body.classList.add("is-resizing-database-navigation");
+        navigationSplitter.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      });
+      navigationSplitter.addEventListener("pointermove", event => {
+        if (!resizingNavigation) return;
+        setNavigationWidth(event.clientX - workbench.getBoundingClientRect().left);
+      });
+      const stopNavigationResize = event => {
+        if (!resizingNavigation) return;
+        resizingNavigation = false;
+        navigationSplitter.classList.remove("is-dragging");
+        document.body.classList.remove("is-resizing-database-navigation");
+        if (navigationSplitter.hasPointerCapture(event.pointerId)) navigationSplitter.releasePointerCapture(event.pointerId);
+        setNavigationWidth(parseFloat(getComputedStyle(workbench).getPropertyValue("--database-nav-width")), true);
+      };
+      navigationSplitter.addEventListener("pointerup", stopNavigationResize);
+      navigationSplitter.addEventListener("pointercancel", stopNavigationResize);
+      navigationSplitter.addEventListener("dblclick", () => setNavigationWidth(280, true));
+      navigationSplitter.addEventListener("keydown", event => {
+        const current = parseFloat(getComputedStyle(workbench).getPropertyValue("--database-nav-width")) || 280;
+        const { minimum, maximum } = limits();
+        const next = event.key === "ArrowLeft" ? current - 16
+          : event.key === "ArrowRight" ? current + 16
+            : event.key === "Home" ? minimum : event.key === "End" ? maximum : null;
+        if (next === null) return;
+        setNavigationWidth(next, true);
+        event.preventDefault();
+      });
+      window.addEventListener("resize", () => {
+        if (!mobileNavigation.matches) setNavigationWidth(parseFloat(getComputedStyle(workbench).getPropertyValue("--database-nav-width")) || 280);
+      });
+    }
+
     const problemText = xhr => {
       const body = xhr.responseJSON;
       if (body?.errors) return Object.values(body.errors).flat().join(" ");
