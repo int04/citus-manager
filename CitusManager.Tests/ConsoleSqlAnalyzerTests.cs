@@ -56,4 +56,37 @@ public sealed class ConsoleSqlAnalyzerTests
     [InlineData("select (\n  select max(id)\n  from public.users\n) as max_id")]
     public void Does_not_split_one_multiline_select(string sql) =>
         Assert.Single(ConsoleSqlAnalyzer.Analyze(sql));
+
+    [Theory]
+    [InlineData("select * from public.users", "tenant", "public", "users")]
+    [InlineData("select id from users where id > 0", "tenant", "tenant", "users")]
+    public void Detects_single_table_result_origin(string sql, string activeSchema, string schema, string table)
+    {
+        var origin = DatabaseQueryConsoleService.TryReadResultOrigin(sql, activeSchema);
+
+        Assert.NotNull(origin);
+        Assert.Equal(schema, origin!.Schema);
+        Assert.Equal(table, origin.ObjectName);
+    }
+
+    [Theory]
+    [InlineData("select * from public.users u join public.roles r on r.id=u.role_id")]
+    [InlineData("with x as (select * from public.users) select * from x")]
+    [InlineData("select 1")]
+    public void Does_not_claim_origin_for_non_single_table_result(string sql) =>
+        Assert.Null(DatabaseQueryConsoleService.TryReadResultOrigin(sql, "public"));
+
+    [Theory]
+    [InlineData("select * from admin_jobs")]
+    [InlineData("SELECT jobs.* FROM citus_demo.admin_jobs AS jobs WHERE id > 0")]
+    [InlineData("select \"jobs\".* from \"citus_demo\".\"admin_jobs\" as \"jobs\"")]
+    public void Detects_direct_star_projection(string sql) =>
+        Assert.True(DatabaseQueryConsoleService.IsDirectStarProjection(sql));
+
+    [Theory]
+    [InlineData("select id, status from admin_jobs")]
+    [InlineData("select count(*) from admin_jobs")]
+    [InlineData("select * + 1 from admin_jobs")]
+    public void Does_not_treat_expression_projection_as_direct_star(string sql) =>
+        Assert.False(DatabaseQueryConsoleService.IsDirectStarProjection(sql));
 }

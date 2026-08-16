@@ -220,15 +220,38 @@ public sealed class DatabaseQueryConsoleService(
         await using var command = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = options.CommandTimeoutSeconds };
         command.Parameters.AddWithValue(pageSize + 1);
         command.Parameters.AddWithValue((long)(page - 1) * pageSize);
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
-        var columns = ReadColumns(reader);
+        var parsedOrigin = TryReadResultOrigin(request.Sql, request.Scope?.Schema);
+        IReadOnlyList<ResultColumnResponse> columns;
+        IReadOnlyList<string> editableColumns = [];
         var rows = new List<IReadOnlyList<CellValueResponse>>();
-        while (rows.Count <= pageSize && await reader.ReadAsync(ct)) rows.Add(ReadRow(reader));
+        await using (var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct))
+        {
+            columns = ReadColumns(reader);
+            if (parsedOrigin is not null)
+            {
+                editableColumns = reader.GetColumnSchema()
+                    .Where(column => string.Equals(column.BaseSchemaName, parsedOrigin.Schema, StringComparison.Ordinal) &&
+                                     string.Equals(column.BaseTableName, parsedOrigin.ObjectName, StringComparison.Ordinal) &&
+                                     !string.IsNullOrWhiteSpace(column.BaseColumnName) &&
+                                     string.Equals(column.ColumnName, column.BaseColumnName, StringComparison.Ordinal))
+                    .Select(column => column.BaseColumnName!).Distinct(StringComparer.Ordinal).ToList();
+                // Some PostgreSQL/Npgsql combinations do not expose BaseColumnName for a
+                // subquery replay. AST already proves a single RangeVar; a direct star
+                // projection therefore maps every returned column to that relation.
+                if (editableColumns.Count == 0 && IsDirectStarProjection(request.Sql))
+                    editableColumns = columns.Select(column => column.Name).Distinct(StringComparer.Ordinal).ToList();
+            }
+            while (rows.Count <= pageSize && await reader.ReadAsync(ct)) rows.Add(ReadRow(reader));
+        }
         var hasNext = rows.Count > pageSize;
         if (hasNext) rows.RemoveAt(rows.Count - 1);
+        var origin = parsedOrigin is null ? null : parsedOrigin with { EditableColumns = editableColumns };
+        var identities = origin is null || request.NodeId is not null
+            ? null
+            : await ReadResultIdentitiesAsync(connection, transaction, origin, columns, rows, ct);
         await transaction.CommitAsync(ct);
         watch.Stop();
-        return new(columns, rows, page, pageSize, page > 1, hasNext, watch.Elapsed);
+        return new(columns, rows, page, pageSize, page > 1, hasNext, watch.Elapsed, origin, identities);
     }
 
     public async Task<QueryConsoleResultCountResponse> CountResultAsync(
@@ -269,12 +292,16 @@ public sealed class DatabaseQueryConsoleService(
         await using var command = new NpgsqlCommand(BuildReplaySql(replay, includeOrder: true) + " LIMIT 1 OFFSET $1", connection, transaction)
             { CommandTimeout = options.CommandTimeoutSeconds };
         command.Parameters.AddWithValue(request.RowOffset);
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
-        if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("Result row not found.");
-        if (request.ColumnIndex >= reader.FieldCount) throw new ArgumentException("Column index không hợp lệ.");
-        var cell = FormatCell(reader, request.ColumnIndex);
+        DatabaseCellResponse cell;
+        await using (var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct))
+        {
+            if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("Result row not found.");
+            if (request.ColumnIndex >= reader.FieldCount) throw new ArgumentException("Column index không hợp lệ.");
+            var formatted = FormatCell(reader, request.ColumnIndex);
+            cell = new(formatted.Value, formatted.IsNull, formatted.IsTruncated);
+        }
         await transaction.CommitAsync(ct);
-        return new(cell.Value, cell.IsNull, cell.IsTruncated);
+        return cell;
     }
 
     public async Task ExportResultAsync(Guid clusterId, QueryConsoleResultRequest request, Stream output, CancellationToken ct)
@@ -287,12 +314,14 @@ public sealed class DatabaseQueryConsoleService(
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
             await readOnly.ExecuteNonQueryAsync(ct);
         await using var command = new NpgsqlCommand(BuildReplaySql(request, includeOrder: true), connection, transaction) { CommandTimeout = options.CommandTimeoutSeconds };
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
-        await using var writer = new StreamWriter(output, new UTF8Encoding(true), leaveOpen: true);
-        await writer.WriteLineAsync(string.Join(',', Enumerable.Range(0, reader.FieldCount).Select(i => Csv(reader.GetName(i)))));
-        while (await reader.ReadAsync(ct))
-            await writer.WriteLineAsync(string.Join(',', ReadRow(reader).Select(x => Csv(x.IsNull ? string.Empty : x.Value ?? string.Empty))));
-        await writer.FlushAsync(ct);
+        await using (var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct))
+        await using (var writer = new StreamWriter(output, new UTF8Encoding(true), leaveOpen: true))
+        {
+            await writer.WriteLineAsync(string.Join(',', Enumerable.Range(0, reader.FieldCount).Select(i => Csv(reader.GetName(i)))));
+            while (await reader.ReadAsync(ct))
+                await writer.WriteLineAsync(string.Join(',', ReadRow(reader).Select(x => Csv(x.IsNull ? string.Empty : x.Value ?? string.Empty))));
+            await writer.FlushAsync(ct);
+        }
         await transaction.CommitAsync(ct);
     }
 
@@ -394,6 +423,106 @@ public sealed class DatabaseQueryConsoleService(
         _ => "PostgreSQL từ chối statement."
     };
     private static string TrimTerminator(string sql) => sql.Trim().TrimEnd(';');
+    private static string QuoteIdentifier(string value) => $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+    private static string Qualified(string schema, string name) => $"{QuoteIdentifier(schema)}.{QuoteIdentifier(name)}";
+
+    internal static ConsoleResultOrigin? TryReadResultOrigin(string sql, string? activeSchema)
+    {
+        var parsed = Parser.Parse(TrimTerminator(sql), new ParserOptions());
+        if (!parsed.IsSuccess || parsed.Value is null || parsed.Value.Stmts.Count != 1) return null;
+        var select = parsed.Value.Stmts[0].Stmt.SelectStmt;
+        if (select is null || select.WithClause is not null || select.IntoClause is not null ||
+            select.LockingClause.Count > 0 || select.FromClause.Count != 1) return null;
+        var relation = select.FromClause[0].RangeVar;
+        if (relation is null || string.IsNullOrWhiteSpace(relation.Relname)) return null;
+        return new(string.IsNullOrWhiteSpace(relation.Schemaname) ? activeSchema ?? "public" : relation.Schemaname,
+            relation.Relname);
+    }
+
+    internal static bool IsDirectStarProjection(string sql) => Regex.IsMatch(TrimTerminator(sql),
+        "^\\s*SELECT\\s+(?:(?:\"(?:[^\"]|\"\")*\"|[A-Za-z_][A-Za-z0-9_$]*)\\s*\\.\\s*)?\\*\\s+FROM\\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private async Task<IReadOnlyList<DatabaseRowIdentity?>> ReadResultIdentitiesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, ConsoleResultOrigin origin,
+        IReadOnlyList<ResultColumnResponse> columns, IReadOnlyList<IReadOnlyList<CellValueResponse>> rows,
+        CancellationToken ct)
+    {
+        if (rows.Count == 0) return [];
+        const string primaryKeySql = """
+            SELECT a.attname
+            FROM pg_index i
+            JOIN pg_class c ON c.oid=i.indrelid
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            JOIN unnest(i.indkey) WITH ORDINALITY key(attnum,ord) ON true
+            JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=key.attnum
+            WHERE n.nspname=$1 AND c.relname=$2 AND i.indisprimary
+            ORDER BY key.ord
+            """;
+        var primaryKey = new List<string>();
+        await using (var keyCommand = new NpgsqlCommand(primaryKeySql, connection, transaction)
+            { CommandTimeout = options.CommandTimeoutSeconds })
+        {
+            keyCommand.Parameters.AddWithValue(origin.Schema);
+            keyCommand.Parameters.AddWithValue(origin.ObjectName);
+            await using var keyReader = await keyCommand.ExecuteReaderAsync(ct);
+            while (await keyReader.ReadAsync(ct)) primaryKey.Add(keyReader.GetString(0));
+        }
+        if (primaryKey.Count == 0) return Enumerable.Repeat<DatabaseRowIdentity?>(null, rows.Count).ToList();
+        if (origin.EditableColumns is null || primaryKey.Any(key => !origin.EditableColumns.Contains(key, StringComparer.Ordinal)))
+            return Enumerable.Repeat<DatabaseRowIdentity?>(null, rows.Count).ToList();
+        var ordinals = primaryKey.Select(key => columns.Select((column, index) => (column, index))
+            .FirstOrDefault(item => string.Equals(item.column.Name, key, StringComparison.Ordinal)).index).ToList();
+        if (ordinals.Any(index => index < 0) || primaryKey.Any(key => columns.All(column => !string.Equals(column.Name, key, StringComparison.Ordinal))))
+            return Enumerable.Repeat<DatabaseRowIdentity?>(null, rows.Count).ToList();
+
+        var rowKeys = new List<IReadOnlyDictionary<string, string?>?>(rows.Count);
+        foreach (var row in rows)
+        {
+            var keys = new Dictionary<string, string?>(StringComparer.Ordinal);
+            for (var index = 0; index < primaryKey.Count; index++)
+            {
+                var cell = row[ordinals[index]];
+                if (cell.IsNull || cell.IsTruncated) { keys.Clear(); break; }
+                keys[primaryKey[index]] = cell.Value;
+            }
+            rowKeys.Add(keys.Count == primaryKey.Count ? keys : null);
+        }
+        var usable = rowKeys.Select((keys, index) => (keys, index)).Where(item => item.keys is not null).ToList();
+        if (usable.Count == 0) return Enumerable.Repeat<DatabaseRowIdentity?>(null, rows.Count).ToList();
+
+        var predicates = new List<string>(usable.Count);
+        await using var fingerprintCommand = new NpgsqlCommand { Connection = connection, Transaction = transaction,
+            CommandTimeout = options.CommandTimeoutSeconds };
+        foreach (var (keys, rowIndex) in usable)
+        {
+            var clauses = new List<string>(primaryKey.Count);
+            foreach (var key in primaryKey)
+            {
+                var parameter = $"p{fingerprintCommand.Parameters.Count}";
+                clauses.Add($"cm.{QuoteIdentifier(key)}::text = @{parameter}");
+                fingerprintCommand.Parameters.AddWithValue(parameter, keys![key]!);
+            }
+            predicates.Add($"({string.Join(" AND ", clauses)})");
+        }
+        var keyProjection = string.Join(", ", primaryKey.Select(key => $"cm.{QuoteIdentifier(key)}::text"));
+        fingerprintCommand.CommandText = $"SELECT {keyProjection}, md5(to_jsonb(cm)::text) FROM {Qualified(origin.Schema, origin.ObjectName)} AS cm WHERE {string.Join(" OR ", predicates)}";
+        var fingerprints = new Dictionary<string, string>(StringComparer.Ordinal);
+        await using (var fingerprintReader = await fingerprintCommand.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct))
+        {
+            while (await fingerprintReader.ReadAsync(ct))
+            {
+                var values = Enumerable.Range(0, primaryKey.Count).Select(fingerprintReader.GetString).ToList();
+                fingerprints[IdentityLookupKey(values)] = fingerprintReader.GetString(primaryKey.Count);
+            }
+        }
+        return rowKeys.Select(keys => keys is not null && fingerprints.TryGetValue(IdentityLookupKey(primaryKey.Select(key => keys[key] ?? string.Empty)), out var fingerprint)
+            ? new DatabaseRowIdentity(keys, fingerprint) : null).ToList();
+    }
+
+    private static string IdentityLookupKey(IEnumerable<string> values) =>
+        string.Join("|", values.Select(value => $"{value.Length}:{value}"));
+
     private static string BuildReplaySql(QueryConsoleResultRequest request, bool includeOrder)
     {
         var sql = $"SELECT * FROM ({TrimTerminator(request.Sql)}) AS __cm_console";

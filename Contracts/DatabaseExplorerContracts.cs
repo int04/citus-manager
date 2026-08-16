@@ -512,7 +512,13 @@ public sealed record QueryConsoleResultRequest
 public sealed record QueryConsoleResultResponse(
     IReadOnlyList<ResultColumnResponse> Columns,
     IReadOnlyList<IReadOnlyList<CellValueResponse>> Rows,
-    int Page, int PageSize, bool HasPrevious, bool HasNext, TimeSpan Duration);
+    int Page, int PageSize, bool HasPrevious, bool HasNext, TimeSpan Duration,
+    ConsoleResultOrigin? Origin = null,
+    IReadOnlyList<DatabaseRowIdentity?>? Identities = null);
+
+/// <summary>Single base relation provenance detected for a replayable console result.</summary>
+public sealed record ConsoleResultOrigin(
+    string Schema, string ObjectName, IReadOnlyList<string>? EditableColumns = null);
 
 /// <summary>Exact count for a replayable SELECT result.</summary>
 public sealed record QueryConsoleResultCountResponse(long Count, TimeSpan Duration);

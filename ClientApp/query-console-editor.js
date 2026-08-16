@@ -57,6 +57,23 @@ function completionSource(context, values) {
   return { from: word ? word.from : context.pos, options: values.map(item => typeof item === "string" ? { label: item, type: "keyword" } : item), validFor: /^[\w$.]*$/ };
 }
 
+function completionIcon(completion) {
+  const icons = {
+    keyword: "fa-code", namespace: "fa-folder-open", class: "fa-table",
+    property: "fa-columns", function: "fa-bolt", type: "fa-cube"
+  };
+  const icon = document.createElement("i");
+  icon.className = `fa ${icons[completion.type] || "fa-circle-o"} cm-query-completion-icon is-${completion.type || "other"}`;
+  icon.setAttribute("aria-hidden", "true");
+  return icon;
+}
+
+const completionExtension = values => autocompletion({
+  override: [context => completionSource(context, values)],
+  activateOnTyping: true,
+  addToOptions: [{ render: completionIcon, position: 20 }]
+});
+
 const editorTheme = EditorView.theme({
   "&": { height: "100%", fontSize: "14px", backgroundColor: "transparent" },
   ".cm-scroller": { fontFamily: "var(--font-mono, 'Cascadia Code', Consolas, monospace)", lineHeight: "1.65", overflow: "auto" },
@@ -70,6 +87,13 @@ const editorTheme = EditorView.theme({
   ".cm-content ::selection": { backgroundColor: "var(--qc-editor-selection-native) !important", color: "var(--qc-editor-selection-text) !important" },
   ".cm-tooltip-autocomplete": { border: "1px solid var(--qc-border-strong)", backgroundColor: "var(--qc-popup)", color: "var(--qc-text)" },
   ".cm-tooltip-autocomplete > ul > li[aria-selected]": { backgroundColor: "var(--qc-selection-strong)", color: "white" },
+  ".cm-completionIcon": { display: "none" },
+  ".cm-query-completion-icon": { width: "16px", marginRight: "7px", textAlign: "center", color: "var(--qc-muted)" },
+  ".cm-query-completion-icon.is-class": { color: "#22b8a7" },
+  ".cm-query-completion-icon.is-property": { color: "#e87979" },
+  ".cm-query-completion-icon.is-namespace": { color: "#eab308" },
+  ".cm-query-completion-icon.is-function": { color: "#a78bfa" },
+  ".cm-query-completion-icon.is-keyword": { color: "#60a5fa" },
   ".cm-query-status-running": { color: "#38bdf8" },
   ".cm-query-status-success": { color: "#22c55e" },
   ".cm-query-status-error": { color: "#ef4444" },
@@ -85,7 +109,7 @@ function create(options) {
       doc: options.value || "",
       extensions: [
         basicSetup, sql({ dialect: PostgreSQL }), marksField, statusGutter(options.onSkipStatement), editorTheme,
-        completionCompartment.of(autocompletion({ override: [context => completionSource(context, completionValues)], activateOnTyping: true })),
+        completionCompartment.of(completionExtension(completionValues)),
         keymap.of([{ key: "Ctrl-Enter", preventDefault: true, run: () => { options.onRun?.(); return true; } }, indentWithTab, ...completionKeymap]),
         EditorView.updateListener.of(update => { if (update.docChanged) options.onChange?.(update.state.doc.toString()); })
       ]
@@ -96,7 +120,7 @@ function create(options) {
     getValue: () => view.state.doc.toString(),
     setValue(value) { view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value || "" } }); },
     getSelection() { const range = view.state.selection.main; return { from: range.from, to: range.to, empty: range.empty, cursor: range.head }; },
-    setCompletions(values) { completionValues = values || []; view.dispatch({ effects: completionCompartment.reconfigure(autocompletion({ override: [context => completionSource(context, completionValues)] })) }); },
+    setCompletions(values) { completionValues = values || []; view.dispatch({ effects: completionCompartment.reconfigure(completionExtension(completionValues)) }); },
     setStatuses(items) { view.dispatch({ effects: setMarks.of(items || []) }); },
     focus: () => view.focus(),
     destroy: () => view.destroy()

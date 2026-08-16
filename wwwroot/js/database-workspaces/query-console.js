@@ -12,7 +12,7 @@ function stamp(value = Date.now()) { return new Intl.DateTimeFormat("sv-SE", { d
 function scopeLabel(scope, database = "Database") { return [database, scope.schema, scope.objectName].filter(Boolean).join("."); }
 
 export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, updateFooter, showError }) {
-  const grid = createConsoleResultGrid({ explorer, token });
+  const grid = createConsoleResultGrid({ explorer, token, showError });
 
   async function api(url, body, signal) {
     const response = await fetch(url, { method: "POST", headers: jsonHeaders(token), body: JSON.stringify(body), signal });
@@ -61,7 +61,7 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
     output.classList.toggle("hidden", workspace.activeResult != null); data.classList.toggle("hidden", workspace.activeResult == null);
     output.innerHTML = workspace.output.map(line => `<div class="console-output-line ${line.kind || ""}"><time>[${html(stamp(line.time))}]</time> <span>${html(line.text)}</span></div>`).join("");
     output.scrollTop = output.scrollHeight;
-    if (workspace.activeResult != null) grid.render(data, workspace.results[workspace.activeResult]);
+    if (workspace.activeResult != null) grid.render(data, workspace.results[workspace.activeResult], () => updateFooter(workspace));
     tabs.querySelector("[data-output-tab]").onclick = () => { workspace.activeResult = null; renderResults(workspace, root); };
     tabs.querySelectorAll("[data-result-tab]").forEach(button => button.onclick = () => { workspace.activeResult = Number(button.dataset.resultTab); renderResults(workspace, root); });
   }
@@ -82,22 +82,22 @@ export function createQueryConsoleRenderer({ stage, explorer, token, nodeId, upd
   }
 
   function metadataCompletions(metadata) {
-    const values = SQL_KEYWORDS.map(label => ({ label, type: "keyword" }));
-    const activeSchema = metadata.scope.schema || "public";
-    metadata.schemas.forEach(schema => values.push({ label: sqlIdentifier(schema), apply: sqlIdentifier(schema), detail: "schema", type: "namespace" }));
+    const values = SQL_KEYWORDS.map(label => ({ label, type: "keyword", boost: 30 }));
+    const activeSchema = metadata.scope.schema || null;
+    metadata.schemas.forEach(schema => values.push({ label: sqlIdentifier(schema), apply: sqlIdentifier(schema), detail: "schema", type: "namespace", boost: schema === activeSchema ? 90 : 5 }));
     metadata.relations.forEach(relation => {
-      const sameSchema = relation.schema === activeSchema;
+      const sameSchema = activeSchema != null && relation.schema === activeSchema;
       const relationName = sameSchema ? sqlIdentifier(relation.name) : qualifiedIdentifier(relation.schema, relation.name);
-      values.push({ label: relationName, apply: relationName, detail: `${relation.kind} · ${relation.schema}`, type: "class", boost: sameSchema ? 30 : 0 });
+      values.push({ label: relationName, apply: relationName, detail: `${relation.kind} · ${relation.schema}`, type: "class", boost: sameSchema ? 80 : 10 });
       relation.columns.forEach(column => {
         const isActiveObject = sameSchema && relation.name === metadata.scope.objectName;
         const columnName = isActiveObject ? sqlIdentifier(column) : sameSchema ? qualifiedIdentifier(relation.name, column) : qualifiedIdentifier(relation.schema, relation.name, column);
-        values.push({ label: columnName, apply: columnName, detail: `${relation.schema}.${relation.name}`, type: "property", boost: isActiveObject ? 50 : 0 });
+        values.push({ label: columnName, apply: columnName, detail: `${relation.schema}.${relation.name}`, type: "property", boost: isActiveObject ? 110 : sameSchema ? 70 : 0 });
       });
     });
-    metadata.functions.forEach(label => values.push({ label, type: "function", apply: `${label}()` }));
-    metadata.dataTypes.forEach(label => values.push({ label, type: "type" }));
-    metadata.joinSuggestions.forEach(label => values.push({ label, type: "keyword", detail: "foreign key JOIN" }));
+    metadata.joinSuggestions.forEach(label => values.push({ label, type: "keyword", detail: "foreign key JOIN", boost: 100 }));
+    metadata.functions.forEach(label => values.push({ label, type: "function", apply: `${label}()`, boost: 20 }));
+    metadata.dataTypes.forEach(label => values.push({ label, type: "type", boost: 15 }));
     return values;
   }
 
