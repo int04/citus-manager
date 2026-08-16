@@ -1,4 +1,5 @@
 import { html, problem } from "./shared.js";
+import { createQueryConsoleRenderer } from "./query-console.js";
 
 function pieSlices(values) {
   const positive = values.map(value => Math.max(0, value));
@@ -15,7 +16,8 @@ function pieSlices(values) {
   }).join("");
 }
 
-export function createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId, updateFooter }) {
+export function createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId, updateFooter, showError }) {
+  const queryConsole = createQueryConsoleRenderer({ stage, explorer, token, nodeId, updateFooter, showError });
   function renderChartWorkspace(workspace) {
     const values = workspace.rows.map(row => Number(row.cells[workspace.numeric].value)).filter(Number.isFinite).slice(0, 50);
     const max = Math.max(...values.map(Math.abs), 1);
@@ -51,7 +53,7 @@ export function createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId
     });
   }
 
-  function renderSqlWorkspace(workspace) {
+  function renderLegacySqlWorkspace(workspace) {
     stage.innerHTML = `<div class="database-console-workspace"><div class="database-grid-toolbar"><button data-run-sql>Run</button><button data-stop-sql disabled>Stop</button><span>${nodeId ? "Worker · read-only" : "Coordinator · mutation requires confirmation"}</span></div><textarea data-console-editor spellcheck="false" placeholder="SELECT * FROM public.table LIMIT 100;">${html(workspace.sql)}</textarea><div data-console-result></div></div>`;
     const editor = stage.querySelector("[data-console-editor]"), run = stage.querySelector("[data-run-sql]"), stop = stage.querySelector("[data-stop-sql]"), result = stage.querySelector("[data-console-result]");
     editor.oninput = () => { workspace.sql = editor.value; };
@@ -80,5 +82,5 @@ export function createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId
     updateFooter(workspace);
   }
 
-  return { renderChartWorkspace, renderSqlWorkspace };
+  return { renderChartWorkspace, renderSqlWorkspace: queryConsole.renderSqlWorkspace };
 }

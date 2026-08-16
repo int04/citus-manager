@@ -1,5 +1,7 @@
 using System.Data;
 using System.Security.Claims;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using CitusManager.Contracts;
 using CitusManager.Models;
 using CitusManager.Services;
@@ -12,11 +14,16 @@ namespace CitusManager.Controllers;
 [Authorize, Route("Clusters/{clusterId:guid}/Database")]
 public sealed class DatabaseController(
     IDatabaseExplorerService explorer,
+    IDatabaseQueryConsoleService queryConsole,
     IDatabaseWorkspaceService workspaces,
     IDatabaseRowInspectionService rowInspector,
     IDatabaseObjectService objects,
     IOperationService operations) : Controller
 {
+    private static readonly JsonSerializerOptions StreamJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
     [HttpGet("Workspaces/Metadata")]
     public async Task<IActionResult> WorkspaceMetadata(Guid clusterId, int? nodeId, string schema, string name, CancellationToken cancellationToken)
     {
@@ -383,7 +390,118 @@ public sealed class DatabaseController(
         }
     }
 
-    [HttpPost("ExecuteSql"), Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
+    [HttpGet("Console/Metadata")]
+    public async Task<IActionResult> ConsoleMetadata(
+        Guid clusterId, string kind = "database", string? schema = null, string? name = null,
+        int? nodeId = null, CancellationToken cancellationToken = default)
+    {
+        NoStore();
+        try { return Ok(await queryConsole.GetMetadataAsync(clusterId, new(kind, schema, name, nodeId), cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Console context không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy target", "Refresh cây database rồi thử lại."); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không tải được gợi ý SQL", "PostgreSQL từ chối catalog query."); }
+    }
+
+    [HttpPost("Console/Analyze"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> AnalyzeConsoleSql(
+        Guid clusterId, [FromBody] AnalyzeConsoleSqlRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await queryConsole.AnalyzeAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "SQL không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy target", "Refresh cây database rồi thử lại."); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không phân tích được SQL", "Database từ chối yêu cầu."); }
+    }
+
+    [HttpPost("Console/Execute"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> ExecuteConsoleSql(
+        Guid clusterId, [FromBody] ExecuteConsoleSqlRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try
+        {
+            await queryConsole.AnalyzeAsync(clusterId,
+                new AnalyzeConsoleSqlRequest { Sql = request.Sql, NodeId = request.NodeId }, cancellationToken);
+        }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "SQL không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy target", "Refresh cây database rồi thử lại."); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không thể chuẩn bị Query Console", "Database từ chối yêu cầu."); }
+        Response.ContentType = "application/x-ndjson; charset=utf-8";
+        Response.Headers.CacheControl = "no-store";
+        try
+        {
+            await foreach (var item in queryConsole.ExecuteAsync(clusterId, request, ActorId(), cancellationToken))
+            {
+                await JsonSerializer.SerializeAsync(Response.Body, item, StreamJsonOptions, cancellationToken);
+                await Response.Body.WriteAsync("\n"u8.ToArray(), cancellationToken);
+                await Response.Body.FlushAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return new EmptyResult(); }
+        catch (Exception exception)
+        {
+            if (!Response.HasStarted && exception is ArgumentException argument)
+                return DatabaseMutationProblem(400, "Không thể chạy SQL", argument.Message);
+            if (!Response.HasStarted) throw;
+            var item = new ConsoleExecutionEvent("statementFailed", DateTimeOffset.UtcNow,
+                Message: exception is ArgumentException ? exception.Message : "Không thể tiếp tục thực thi SQL.");
+            await JsonSerializer.SerializeAsync(Response.Body, item, StreamJsonOptions, CancellationToken.None);
+            await Response.Body.WriteAsync("\n"u8.ToArray(), CancellationToken.None);
+        }
+        return new EmptyResult();
+    }
+
+    [HttpPost("Console/Results/Query"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> QueryConsoleResult(
+        Guid clusterId, [FromBody] QueryConsoleResultRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await queryConsole.QueryResultAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Result query không hợp lệ", exception.Message); }
+        catch (PostgresException exception) { return DatabaseMutationProblem(422, "Không tải được result", "PostgreSQL từ chối query.", exception.SqlState); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không tải được result", "Database từ chối yêu cầu."); }
+    }
+
+    [HttpPost("Console/Results/Count"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> CountConsoleResult(
+        Guid clusterId, [FromBody] QueryConsoleResultRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await queryConsole.CountResultAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Không thể count result", exception.Message); }
+        catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or NpgsqlException)
+        { return SafeDatabaseProblem("Không thể count result", exception); }
+    }
+
+    [HttpPost("Console/Results/Cell"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> ReadConsoleResultCell(
+        Guid clusterId, [FromBody] ReadQueryConsoleResultCellRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        if (!ModelState.IsValid) return BadRequest(new ValidationProblemDetails(ModelState));
+        try { return Ok(await queryConsole.ReadResultCellAsync(clusterId, request, cancellationToken)); }
+        catch (ArgumentException exception) { return DatabaseMutationProblem(400, "Cell request không hợp lệ", exception.Message); }
+        catch (KeyNotFoundException) { return DatabaseMutationProblem(404, "Không tìm thấy cell", "Result đã thay đổi khi chạy lại SELECT."); }
+        catch (PostgresException exception) { return DatabaseMutationProblem(422, "Không đọc được cell", "PostgreSQL từ chối query.", exception.SqlState); }
+        catch (NpgsqlException) { return DatabaseMutationProblem(422, "Không đọc được cell", "Database từ chối yêu cầu."); }
+    }
+
+    [HttpPost("Console/Results/Csv/Export"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> ExportConsoleResult(
+        Guid clusterId, [FromBody] QueryConsoleResultRequest request, CancellationToken cancellationToken)
+    {
+        NoStore();
+        Response.ContentType = "text/csv; charset=utf-8";
+        Response.Headers.ContentDisposition = "attachment; filename=console-result.csv";
+        await queryConsole.ExportResultAsync(clusterId, request, Response.Body, cancellationToken);
+        return new EmptyResult();
+    }
+
+    [HttpPost("ExecuteSql"), ValidateAntiForgeryToken]
     public async Task<IActionResult> ExecuteSql(
         Guid clusterId, ExecuteSqlRequest request, CancellationToken cancellationToken)
     {

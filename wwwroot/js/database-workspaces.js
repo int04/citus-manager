@@ -62,14 +62,14 @@ import { createRowLocationLoader, rowLocationPresentation } from "./database-wor
   const { openRowInspector } = createRowInspector({ explorer, token, showError });
   const { loadRowLocations, invalidateRowLocations } = createRowLocationLoader({ explorer, jsonApi, nodeId, render: ws => { if (activeKey === ws.key) renderDataWorkspace(ws); }, reportError });
   const { exportCsv, previewCsvImport } = createCsvActions({ stage, explorer, token, showError, loadRows });
-  const { renderChartWorkspace, renderSqlWorkspace } = createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId, updateFooter });
+  const { renderChartWorkspace, renderSqlWorkspace } = createSpecialWorkspaceRenderers({ stage, explorer, token, nodeId, updateFooter, showError });
   const keyOf = (schema, name, type = "data") => `${nodeId || "coordinator"}:${schema}.${name}:${type}`;
   const icon = type => type === "sql" ? "⌘" : type === "structure" ? "▦" : type === "ddl" ? "DDL" : type === "chart" ? "⌁" : "▤";
 
   function persist() {
-    const safe = [...workspaces.values()].filter(x => !x.dirty).map(x => ({ key: x.key, type: x.type, schema: x.schema, name: x.name, displayName: x.displayName,
+    const safe = [...workspaces.values()].filter(x => !x.dirty || x.type === "sql").map(x => ({ key: x.key, type: x.type, schema: x.schema, name: x.name, displayName: x.displayName,
       page: x.page, pageSize: x.pageSize, where: x.where, orderBy: x.orderBy, widths: x.widths, rowHeights: x.rowHeights, rowNumberWidth: x.rowNumberWidth,
-      hidden: x.hidden, columnOrder: x.columnOrder }));
+      hidden: x.hidden, columnOrder: x.columnOrder, scope: x.scope, editorPercent: x.editorPercent, historyPercent: x.historyPercent }));
     sessionStorage.setItem(storageKey, JSON.stringify({ activeKey, workspaces: safe }));
   }
   function ensureCapacity() {
@@ -123,7 +123,7 @@ import { createRowLocationLoader, rowLocationPresentation } from "./database-wor
     const dirtyCount = targets.filter(key => workspaces.get(key).dirty).length;
     if (dirtyCount && !force && !window.confirm(`${dirtyCount} workspace có thay đổi chưa lưu. Đóng và bỏ thay đổi?`)) return;
     const activeIndex = orderedKeys.indexOf(activeKey), activeWasClosed = targets.includes(activeKey);
-    targets.forEach(key => { const ws = workspaces.get(key); clearInterval(ws.autoTimer); ws.queryAbort?.abort(); ws.countAbort?.abort(); ws.sqlAbort?.abort(); workspaces.delete(key); });
+    targets.forEach(key => { const ws = workspaces.get(key); clearInterval(ws.autoTimer); ws.queryAbort?.abort(); ws.countAbort?.abort(); ws.sqlAbort?.abort(); ws.editor?.destroy?.(); workspaces.delete(key); });
     if (activeWasClosed) { const remaining = [...workspaces.keys()]; activeKey = remaining[Math.min(Math.max(activeIndex, 0), remaining.length - 1)] || null; }
     if (activeKey && activeWasClosed) activate(activeKey);
     else if (activeKey) { renderTabs(activeKey); persist(); }
@@ -137,7 +137,7 @@ import { createRowLocationLoader, rowLocationPresentation } from "./database-wor
     if (source.type === "data") Object.assign(duplicate, { rows: [], metadata: null, loaded: false, pending: new Map(), deleted: new Set(), inserted: [], selected: new Set(), autoRefresh: 0 });
     else if (source.type === "structure" || source.type === "ddl") Object.assign(duplicate, { loaded: false, html: null, ddl: null });
     else if (source.type === "chart") Object.assign(duplicate, { rows: [...source.rows], columns: [...source.columns], loaded: true });
-    else duplicate.loaded = true;
+    else Object.assign(duplicate, { loaded: true, editor: null, sqlAbort: null, output: [...(source.output || [])], results: [] });
     workspaces.set(duplicateKey, duplicate); activate(duplicateKey);
   }
   function reorderWorkspace(sourceKey, targetKey, after) {
@@ -176,9 +176,11 @@ import { createRowLocationLoader, rowLocationPresentation } from "./database-wor
     catch (error) { showError(error.message); stage.innerHTML = `<div class="database-workspace-error">${html(error.message)}</div>`; }
     persist();
   }
-  function openQuery() {
+  function openQuery(scope = {}) {
     if (!ensureCapacity()) return; const id = ++consoleSequence, key = `sql:${Date.now()}:${id}`;
-    workspaces.set(key, { key, type: "sql", schema: "", name: `console ${id} [${nodeId ? "worker" : "coordinator"}]`, sql: "", dirty: false, used: Date.now() }); activate(key);
+    const normalizedScope = { kind: scope.kind || "database", schema: scope.schema || null, objectName: scope.name || scope.objectName || null, nodeId: nodeId ? Number(nodeId) : null };
+    const context = [normalizedScope.schema, normalizedScope.objectName].filter(Boolean).join(".");
+    workspaces.set(key, { key, type: "sql", schema: normalizedScope.schema || "", name: `console ${id} · ${context || (nodeId ? "worker" : "database")}`, sql: "", scope: normalizedScope, dirty: false, loaded: true, used: Date.now() }); activate(key);
   }
   function showWorkspaceLoading() { stage.innerHTML = '<div class="database-loading"><div><div class="database-spinner"></div><p>Đang mở workspace…</p></div></div>'; }
   function setGridLoading(ws, loading, message = "Đang tải dữ liệu…") {

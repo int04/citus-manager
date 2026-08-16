@@ -34,7 +34,6 @@ public sealed class DatabaseControllerAuthorizationTests
     [InlineData(nameof(DatabaseController.Rename), "Operator")]
     [InlineData(nameof(DatabaseController.RefreshMaterializedView), "Operator")]
     [InlineData(nameof(DatabaseController.PlanTableConversion), "Operator")]
-    [InlineData(nameof(DatabaseController.ExecuteSql), "Operator")]
     [InlineData(nameof(DatabaseController.Drop), "Admin")]
     [InlineData(nameof(DatabaseController.Truncate), "Admin")]
     [InlineData(nameof(DatabaseController.RestartSequence), "Admin")]
@@ -45,5 +44,19 @@ public sealed class DatabaseControllerAuthorizationTests
         var authorization = Assert.Single(method.GetCustomAttributes(typeof(AuthorizeAttribute), true)
             .Cast<AuthorizeAttribute>());
         Assert.Equal(policy, authorization.Policy);
+    }
+
+    [Theory]
+    [InlineData(nameof(DatabaseController.AnalyzeConsoleSql))]
+    [InlineData(nameof(DatabaseController.ExecuteConsoleSql))]
+    [InlineData(nameof(DatabaseController.QueryConsoleResult))]
+    [InlineData(nameof(DatabaseController.CountConsoleResult))]
+    [InlineData(nameof(DatabaseController.ReadConsoleResultCell))]
+    public void Query_console_is_authenticated_viewer_accessible_and_antiforgery_protected(string action)
+    {
+        var method = typeof(DatabaseController).GetMethod(action);
+        Assert.NotNull(method);
+        Assert.Empty(method!.GetCustomAttributes(typeof(AuthorizeAttribute), true));
+        Assert.NotEmpty(method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.ValidateAntiForgeryTokenAttribute), true));
     }
 }

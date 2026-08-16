@@ -173,7 +173,8 @@
     menuTrigger = node;
     document.querySelectorAll("[data-context-node].is-context-target").forEach(x => x.classList.remove("is-context-target"));
     node.classList.add("is-context-target");
-    menu.replaceChildren(renderMenu(menuItems(currentTarget())));
+    const definitions = menuItems(currentTarget()).filter(definition => definition.action !== "query");
+    menu.replaceChildren(renderMenu([item("New Query Console", "query", { shortcut: "Ctrl+Shift+Q" }), separator(), ...definitions]));
     positionMenu(x, y);
     const first = menu.querySelector("[role=menuitem]:not(:disabled)");
     if (first) { first.tabIndex = 0; first.focus(); }
@@ -1538,7 +1539,7 @@
     const target = currentTarget();
     try {
       if (action === "refresh") { await refreshTree(); showToast("Đã refresh cây database."); return; }
-      if (action === "query") { window.databaseWorkspaces?.openQuery(); return; }
+      if (action === "query") { window.databaseWorkspaces?.openQuery({ kind: target.kind, schema: target.schema, name: target.name }); return; }
       if (action === "browse" || action === "structure") {
         if (action === "browse") window.databaseWorkspaces?.openObject(target.schema, target.name, "data");
         else window.databaseWorkspaces?.openStructure(target.schema, target.name);

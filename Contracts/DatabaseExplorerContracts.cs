@@ -429,6 +429,98 @@ public sealed record SqlExecutionResponse(
     TimeSpan Duration,
     string QueryHash);
 
+/// <summary>Scope inherited by a query console from the database tree.</summary>
+public sealed record QueryConsoleScope(
+    string Kind, string? Schema, string? ObjectName, int? NodeId);
+
+/// <summary>One catalog relation offered by SQL autocomplete.</summary>
+public sealed record QueryConsoleRelationResponse(
+    string Schema, string Name, string Kind, IReadOnlyList<string> Columns);
+
+/// <summary>Catalog metadata used by the SQL editor autocomplete provider.</summary>
+public sealed record QueryConsoleMetadataResponse(
+    string Database, string TargetLabel, bool IsReadOnly, QueryConsoleScope Scope,
+    IReadOnlyList<string> Schemas, IReadOnlyList<QueryConsoleRelationResponse> Relations,
+    IReadOnlyList<string> Functions, IReadOnlyList<string> DataTypes,
+    IReadOnlyList<string> JoinSuggestions);
+
+public enum ConsoleRiskLevel
+{
+    ReadOnly,
+    Write,
+    Destructive
+}
+
+/// <summary>Server-derived statement range and execution risk.</summary>
+public sealed record ConsoleStatementDescriptor(
+    int Index, int Start, int Length, int StartLine, int EndLine, string Command,
+    ConsoleRiskLevel Risk, bool RequiresConfirmation, bool IsResultSet, string SqlHash);
+
+/// <summary>Payload for parsing and classifying SQL without executing it.</summary>
+public sealed record AnalyzeConsoleSqlRequest
+{
+    [Required, MinLength(1), MaxLength(1_000_000)] public required string Sql { get; init; }
+    public int? NodeId { get; init; }
+}
+
+/// <summary>AST analysis result for the current editor contents.</summary>
+public sealed record AnalyzeConsoleSqlResponse(
+    string QueryHash, bool IsReadOnlyTarget, IReadOnlyList<ConsoleStatementDescriptor> Statements);
+
+/// <summary>Payload for sequential SQL console execution.</summary>
+public sealed record ExecuteConsoleSqlRequest
+{
+    [Required, MinLength(1), MaxLength(1_000_000)] public required string Sql { get; init; }
+    public int? NodeId { get; init; }
+    [MaxLength(100)] public IReadOnlyList<int>? StatementIndexes { get; init; }
+    [MaxLength(100)] public IReadOnlyList<int>? ConfirmedStatementIndexes { get; init; }
+    [MaxLength(100)] public IReadOnlyList<int>? DestructiveConfirmedStatementIndexes { get; init; }
+    [MaxLength(64)] public string? AnalysisHash { get; init; }
+    public QueryConsoleScope? Scope { get; init; }
+}
+
+/// <summary>One event in the NDJSON SQL execution stream.</summary>
+public sealed record ConsoleExecutionEvent(
+    string Type, DateTimeOffset Timestamp, int? StatementIndex = null, string? Command = null,
+    string? Message = null, long? DurationMilliseconds = null, int? RecordsAffected = null,
+    IReadOnlyList<ResultColumnResponse>? Columns = null,
+    IReadOnlyList<IReadOnlyList<CellValueResponse>>? Rows = null,
+    bool? IsTruncated = null, string? SqlState = null, string? QueryHash = null,
+    long? ExecutionMilliseconds = null, long? FetchingMilliseconds = null);
+
+/// <summary>Stateless page request for one previously executed SELECT.</summary>
+public sealed record QueryConsoleResultRequest
+{
+    [Required, MinLength(1), MaxLength(1_000_000)] public required string Sql { get; init; }
+    public int? NodeId { get; init; }
+    public QueryConsoleScope? Scope { get; init; }
+    [Range(1, 1_000_000)] public int Page { get; init; } = 1;
+    [Range(1, 500)] public int PageSize { get; init; } = 20;
+    [MaxLength(8000)] public string? Where { get; init; }
+    [MaxLength(4000)] public string? OrderBy { get; init; }
+}
+
+/// <summary>One replayed query-result page.</summary>
+public sealed record QueryConsoleResultResponse(
+    IReadOnlyList<ResultColumnResponse> Columns,
+    IReadOnlyList<IReadOnlyList<CellValueResponse>> Rows,
+    int Page, int PageSize, bool HasPrevious, bool HasNext, TimeSpan Duration);
+
+/// <summary>Exact count for a replayable SELECT result.</summary>
+public sealed record QueryConsoleResultCountResponse(long Count, TimeSpan Duration);
+
+/// <summary>Reads one canonical full cell from a replayable SELECT.</summary>
+public sealed record ReadQueryConsoleResultCellRequest
+{
+    [Required, MinLength(1), MaxLength(1_000_000)] public required string Sql { get; init; }
+    public int? NodeId { get; init; }
+    public QueryConsoleScope? Scope { get; init; }
+    [Range(0, long.MaxValue)] public long RowOffset { get; init; }
+    [Range(0, 10_000)] public int ColumnIndex { get; init; }
+    [MaxLength(8000)] public string? Where { get; init; }
+    [MaxLength(4000)] public string? OrderBy { get; init; }
+}
+
 /// <summary>Catalog metadata used by one data workspace.</summary>
 public sealed record DatabaseWorkspaceMetadataResponse(
     string Schema, string ObjectName, DatabaseObjectKind ObjectKind, DatabaseTableMode TableMode,

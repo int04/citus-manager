@@ -3,12 +3,23 @@
     ViewData["Title"] = $"Database · {Model.Cluster.Name}";
 }
 
+@section Styles {
+    <link rel="stylesheet" href="~/css/query-console.css" asp-append-version="true" />
+}
+
 <div class="database-page pma-explorer" data-database-explorer
      data-cluster-id="@Model.Cluster.Id"
      data-workspace-user="@User.Identity?.Name"
      data-browse-url="@Url.Action("Browse", "Database", new { clusterId = Model.Cluster.Id })"
      data-structure-url="@Url.Action("Structure", "Database", new { clusterId = Model.Cluster.Id })"
      data-sql-url="@Url.Action("ExecuteSql", "Database", new { clusterId = Model.Cluster.Id })"
+     data-console-metadata-url="@Url.Action("ConsoleMetadata", "Database", new { clusterId = Model.Cluster.Id })"
+     data-console-analyze-url="@Url.Action("AnalyzeConsoleSql", "Database", new { clusterId = Model.Cluster.Id })"
+     data-console-execute-url="@Url.Action("ExecuteConsoleSql", "Database", new { clusterId = Model.Cluster.Id })"
+     data-console-result-query-url="@Url.Action("QueryConsoleResult", "Database", new { clusterId = Model.Cluster.Id })"
+     data-console-result-count-url="@Url.Action("CountConsoleResult", "Database", new { clusterId = Model.Cluster.Id })"
+     data-console-result-cell-url="@Url.Action("ReadConsoleResultCell", "Database", new { clusterId = Model.Cluster.Id })"
+     data-console-result-export-url="@Url.Action("ExportConsoleResult", "Database", new { clusterId = Model.Cluster.Id })"
      data-tree-url="@Url.Action("Tree", "Database", new { clusterId = Model.Cluster.Id })"
      data-tree-children-url="@Url.Action("TreeChildren", "Database", new { clusterId = Model.Cluster.Id })"
      data-workspace-metadata-url="@Url.Action("WorkspaceMetadata", "Database", new { clusterId = Model.Cluster.Id })"
@@ -149,6 +160,7 @@
 </div>
 
 @section Scripts {
+    <script src="~/js/vendor/query-console-editor.js" asp-append-version="true"></script>
     <script type="module" src="~/js/database-workspaces.js" asp-append-version="true"></script>
     <script src="~/js/database-explorer-actions.js" asp-append-version="true"></script>
 }

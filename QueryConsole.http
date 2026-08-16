@@ -1,0 +1,50 @@
+@baseUrl = https://localhost:42498
+@clusterId = 00000000-0000-0000-0000-000000000000
+@antiforgery = replace-from-page
+
+### Autocomplete metadata
+GET {{baseUrl}}/Clusters/{{clusterId}}/Database/Console/Metadata?kind=table&schema=public&name=users
+
+### Analyze SQL
+POST {{baseUrl}}/Clusters/{{clusterId}}/Database/Console/Analyze
+Content-Type: application/json
+RequestVerificationToken: {{antiforgery}}
+
+{
+  "sql": "select * from public.users;",
+  "nodeId": null
+}
+
+### Execute as NDJSON stream
+POST {{baseUrl}}/Clusters/{{clusterId}}/Database/Console/Execute
+Content-Type: application/json
+RequestVerificationToken: {{antiforgery}}
+
+{
+  "sql": "select * from public.users;",
+  "statementIndexes": [0],
+  "confirmedStatementIndexes": [],
+  "destructiveConfirmedStatementIndexes": []
+}
+
+### Replay one SELECT page
+POST {{baseUrl}}/Clusters/{{clusterId}}/Database/Console/Results/Query
+Content-Type: application/json
+RequestVerificationToken: {{antiforgery}}
+
+{
+  "sql": "select * from public.users",
+  "page": 1,
+  "pageSize": 20
+}
+
+### Read one full result cell
+POST {{baseUrl}}/Clusters/{{clusterId}}/Database/Console/Results/Cell
+Content-Type: application/json
+RequestVerificationToken: {{antiforgery}}
+
+{
+  "sql": "select * from public.users order by id",
+  "rowOffset": 0,
+  "columnIndex": 0
+}

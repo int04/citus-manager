@@ -12,6 +12,7 @@
     <title>@ViewData["Title"] · Citus Manager</title>
     <link rel="stylesheet" href="~/lib/font-awesome/css/font-awesome.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    @await RenderSectionAsync("Styles", required: false)
     @* Tailwind source is kept beside the markup for maintainability. Runtime compilation is disabled;
        regenerate wwwroot/css/site.css after changing this block. *@
     @*
