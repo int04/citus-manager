@@ -329,7 +329,11 @@
             .database-query-suggestions { @@apply absolute left-0 top-full z-50 max-h-60 w-full overflow-y-auto border border-[#8799a5] bg-white p-1 shadow-xl dark:border-white/15 dark:bg-[#171d23]; }
             .database-query-suggestions button { @@apply block min-h-7 w-full rounded-sm px-2 text-left font-mono text-[10px] hover:bg-sky-100 dark:hover:bg-sky-400/15; }
             .database-query-suggestions button.is-active { @@apply bg-sky-100 dark:bg-sky-400/15; }
-            .database-workspace-grid-scroll { @@apply min-h-0 flex-1 overflow-auto overscroll-contain; scrollbar-color: #8c9aa3 transparent; scrollbar-width: thin; }
+            .database-workspace-grid-shell { @@apply relative min-h-0 flex-1 overflow-hidden; }
+            .database-workspace-grid-scroll { @@apply h-full min-h-0 overflow-auto overscroll-contain; scrollbar-color: #8c9aa3 transparent; scrollbar-width: thin; }
+            .database-grid-loading { @@apply absolute inset-0 z-[35] grid place-items-center bg-white/75 text-center text-[11px] font-medium text-[#36576a] backdrop-blur-[1px] dark:bg-[#20262c]/75 dark:text-sky-200; }
+            .database-grid-loading > div { @@apply rounded-md border border-[#b8c4cb] bg-white/90 px-6 py-4 shadow-lg dark:border-white/15 dark:bg-[#171d23]/95; }
+            .database-grid-loading p { @@apply mt-2; }
             .database-workspace-grid { @@apply table-fixed border-separate border-spacing-0 font-mono text-[11px]; width: max-content; min-width: 100%; }
             .database-workspace-grid th, .database-workspace-grid td { @@apply relative h-9 max-h-24 overflow-hidden border-r border-b border-[#c6d0d6] px-2 text-left align-middle dark:border-white/[.08]; }
             .database-workspace-grid th, .database-workspace-grid td { user-select: none; -webkit-user-select: none; }
