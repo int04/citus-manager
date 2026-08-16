@@ -275,8 +275,20 @@
     handleAction(action);
   });
   document.addEventListener("mousedown", event => { if (!menu.classList.contains("hidden") && !menu.contains(event.target)) closeMenu(false); });
-  document.addEventListener("scroll", () => closeMenu(false), true);
-  window.addEventListener("resize", () => closeMenu(false));
+  document.addEventListener("pointerdown", event => {
+    document.querySelectorAll("[data-colocate-picker]").forEach(picker => {
+      if (picker.contains(event.target)) return;
+      picker.querySelector("[data-colocate-popover]")?.classList.add("hidden");
+      picker.querySelector(".dg-colocate-trigger")?.setAttribute("aria-expanded", "false");
+    });
+  });
+  const closeFloatingMenus = () => {
+    closeMenu(false);
+    document.querySelectorAll("[data-colocate-popover]").forEach(item => item.classList.add("hidden"));
+    document.querySelectorAll(".dg-colocate-trigger[aria-expanded=true]").forEach(item => item.setAttribute("aria-expanded", "false"));
+  };
+  document.addEventListener("scroll", closeFloatingMenus, true);
+  window.addEventListener("resize", closeFloatingMenus);
 
   function field(label, control, hint = "") {
     return `<label class="database-action-field"><span>${html(label)}</span>${control}${hint ? `<small>${html(hint)}</small>` : ""}</label>`;
@@ -287,6 +299,112 @@
   function schemaSelect(schemas, selected) {
     const values = schemas.length ? schemas : [selected || "public"];
     return `<select name="Schema">${values.map(x => `<option value="${html(x)}" ${x === selected ? "selected" : ""}>${html(x)}</option>`).join("")}</select>`;
+  }
+  function colocationPicker() {
+    return `<div class="dg-colocate-picker" data-colocate-picker>
+      <input type="hidden" name="ColocateWith" value="">
+      <button type="button" class="dg-colocate-trigger" aria-haspopup="listbox" aria-controls="database-colocate-options" aria-expanded="false">
+        <span data-colocate-label>${html(t("designer.colocateNone"))}</span><i class="fa fa-angle-down" aria-hidden="true"></i>
+      </button>
+      <div class="dg-colocate-popover hidden" data-colocate-popover>
+        <label class="dg-colocate-search"><i class="fa fa-search" aria-hidden="true"></i><input type="search" autocomplete="off" placeholder="${html(t("designer.colocateSearch"))}" aria-label="${html(t("designer.colocateSearch"))}"></label>
+        <div id="database-colocate-options" class="dg-colocate-options" role="listbox"></div>
+        <div class="dg-colocate-empty hidden">${html(t("designer.colocateNoResults"))}</div>
+      </div>
+    </div>`;
+  }
+  function colocationField(label) {
+    return `<div class="database-action-field"><span>${html(label)}</span>${colocationPicker()}</div>`;
+  }
+  function bindColocationPicker(targets, currentSchema, selected = "") {
+    const picker = fields.querySelector("[data-colocate-picker]");
+    if (!picker) return null;
+    const hidden = picker.querySelector("[name=ColocateWith]");
+    const trigger = picker.querySelector(".dg-colocate-trigger");
+    const label = picker.querySelector("[data-colocate-label]");
+    const popover = picker.querySelector("[data-colocate-popover]");
+    const search = picker.querySelector(".dg-colocate-search input");
+    const options = picker.querySelector(".dg-colocate-options");
+    const empty = picker.querySelector(".dg-colocate-empty");
+    const normalized = (targets || []).map(target => typeof target === "string"
+      ? { schema: target.includes(".") ? target.split(".")[0].replaceAll('"', "") : "public", name: target.split(".").at(-1).replaceAll('"', ""), qualifiedName: target }
+      : target);
+    const close = () => { popover.classList.add("hidden"); trigger.setAttribute("aria-expanded", "false"); };
+    const position = () => {
+      const rect = trigger.getBoundingClientRect(), gap = 5, margin = 10;
+      const width = Math.max(rect.width, 300), availableBelow = window.innerHeight - rect.bottom - margin;
+      const height = Math.min(320, Math.max(180, window.innerHeight - margin * 2));
+      popover.style.width = `${Math.min(width, window.innerWidth - margin * 2)}px`;
+      popover.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))}px`;
+      popover.style.top = `${availableBelow >= Math.min(height, 220) ? rect.bottom + gap : Math.max(margin, rect.top - height - gap)}px`;
+      popover.style.maxHeight = `${height}px`;
+    };
+    const choose = (value, display) => {
+      hidden.value = value; label.textContent = display; close();
+      hidden.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const render = () => {
+      const schema = currentSchema();
+      const ordered = [...normalized].sort((left, right) => {
+        const leftPriority = left.schema === schema ? 0 : 1, rightPriority = right.schema === schema ? 0 : 1;
+        return leftPriority - rightPriority || left.schema.localeCompare(right.schema) || left.name.localeCompare(right.name);
+      });
+      options.replaceChildren();
+      const none = document.createElement("button"); none.type = "button"; none.setAttribute("role", "option");
+      none.dataset.value = ""; none.dataset.search = "none"; none.innerHTML = `<i class="fa fa-ban" aria-hidden="true"></i><span>${html(t("designer.colocateNone"))}</span>`;
+      none.addEventListener("click", () => choose("", t("designer.colocateNone"))); options.appendChild(none);
+      [[true, t("designer.colocateCurrentSchema")], [false, t("designer.colocateOtherSchemas")]].forEach(([sameSchema, heading]) => {
+        const groupTargets = ordered.filter(target => (target.schema === schema) === sameSchema);
+        if (!groupTargets.length) return;
+        const group = document.createElement("section"); group.className = "dg-colocate-option-group";
+        const title = document.createElement("small"); title.textContent = heading; group.appendChild(title);
+        groupTargets.forEach(target => {
+          const display = sameSchema ? target.name : `${target.schema}.${target.name}`;
+          const option = document.createElement("button"); option.type = "button"; option.setAttribute("role", "option");
+          option.dataset.value = target.qualifiedName; option.dataset.search = `${target.schema}.${target.name} ${target.name}`.toLowerCase();
+          option.innerHTML = `<i class="fa fa-table" aria-hidden="true"></i><span>${html(display)}</span><small>${html(target.schema)}</small>`;
+          option.addEventListener("click", () => choose(target.qualifiedName, display)); group.appendChild(option);
+        });
+        options.appendChild(group);
+      });
+      const activeValue = hidden.value || selected;
+      const match = normalized.find(target => target.qualifiedName === activeValue || `${target.schema}.${target.name}` === activeValue || (target.schema === schema && target.name === activeValue));
+      if (match) { hidden.value = match.qualifiedName; label.textContent = match.schema === schema ? match.name : `${match.schema}.${match.name}`; }
+      else if (!hidden.value) label.textContent = t("designer.colocateNone");
+    };
+    const filter = () => {
+      const query = search.value.trim().toLowerCase(); let visible = 0;
+      options.querySelectorAll("[role=option]").forEach(option => {
+        const show = !query || option.dataset.search.includes(query); option.classList.toggle("hidden", !show); if (show) visible++;
+      });
+      options.querySelectorAll(".dg-colocate-option-group").forEach(group =>
+        group.classList.toggle("hidden", !group.querySelector("[role=option]:not(.hidden)")));
+      empty.classList.toggle("hidden", visible > 0);
+    };
+    trigger.addEventListener("click", () => {
+      if (trigger.disabled) return;
+      const opening = popover.classList.contains("hidden");
+      document.querySelectorAll("[data-colocate-popover]").forEach(item => item.classList.add("hidden"));
+      popover.classList.toggle("hidden", !opening); trigger.setAttribute("aria-expanded", String(opening));
+      if (opening) { position(); search.value = ""; filter(); requestAnimationFrame(() => search.focus()); }
+    });
+    search.addEventListener("input", filter);
+    search.addEventListener("keydown", event => {
+      const visible = [...options.querySelectorAll("[role=option]:not(.hidden)")];
+      if (event.key === "Escape") { event.preventDefault(); close(); trigger.focus(); }
+      else if (event.key === "ArrowDown" && visible.length) { event.preventDefault(); visible[0].focus(); }
+    });
+    options.addEventListener("keydown", event => {
+      const visible = [...options.querySelectorAll("[role=option]:not(.hidden)")], index = visible.indexOf(document.activeElement);
+      if (!["ArrowDown", "ArrowUp", "Escape"].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === "Escape") { close(); trigger.focus(); return; }
+      visible[(index + (event.key === "ArrowDown" ? 1 : -1) + visible.length) % visible.length]?.focus();
+    });
+    render();
+    picker.refreshForSchema = render;
+    picker.setDisabled = disabled => { hidden.disabled = disabled; trigger.disabled = disabled; if (disabled) close(); };
+    return picker;
   }
   function openModal({ title, eyebrow = "DATABASE ACTION", description = "", body, button = t("common.confirm"), danger = false, variant = "compact", onSubmit }) {
     modalTrigger = menuTrigger;
@@ -1366,7 +1484,7 @@
                   <label><span>Table mode</span><select name="Mode">${modeOptions}</select></label>
                   <div id="database-distribution-options" class="dg-table-citus-options hidden">
                     <header><strong>Distributed placement</strong><small>Citus options</small></header>
-                    <div>${field("Distribution column", '<select name="DistributionColumn"></select>')}${field("Colocate with", `<select name="ColocateWith"><option value="">none</option>${metadata.distributedTables.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}</select>`)}${field("Shard count", input("ShardCount", "", "number", "min=1 max=4096 placeholder='server default'"))}</div>
+                    <div>${field("Distribution column", '<select name="DistributionColumn"></select>')}${colocationField("Colocate with")}${field("Shard count", input("ShardCount", "", "number", "min=1 max=4096 placeholder='server default'"))}</div>
                   </div>
                   <label><span>Partition Expression</span><select name="PartitionStrategy"><option value="None">None</option><option value="Range">RANGE</option><option value="List">LIST</option><option value="Hash">HASH</option></select></label>
                   <label id="database-partition-key-row" class="is-disabled"><span>Partition Key</span><select name="PartitionKey" disabled></select></label>
@@ -1548,6 +1666,8 @@
     fields.dataset.designerMode = definition ? "modify" : "create";
     designerMetadata = metadata;
     bindDesignerSections(metadata);
+    const colocatePicker = bindColocationPicker(metadata.distributedTables, () => form.elements.Schema.value, definition?.colocateWith || "");
+    form.elements.Schema.addEventListener("change", () => colocatePicker?.refreshForSchema());
     if (definition) {
       const selectValue = (control, value) => {
         if (!control || value == null) return;
@@ -1583,10 +1703,6 @@
     if (definition) {
       form.elements.PartitionKey.value = definition.partitionKey || "";
       form.elements.DistributionColumn.value = definition.distributionColumn || "";
-      const colocate = definition.colocateWith || "";
-      if (colocate && ![...form.elements.ColocateWith.options].some(option => option.value === colocate))
-        form.elements.ColocateWith.add(new Option(colocate, colocate));
-      form.elements.ColocateWith.value = colocate;
       form.elements.ShardCount.value = definition.shardCount ?? "";
       [form.elements.Schema, form.elements.Name, form.elements.Persistence, form.elements.Mode,
         form.elements.PartitionStrategy, form.elements.PartitionKey, form.elements.AccessMethod,
@@ -1595,6 +1711,7 @@
         control.addEventListener("keydown", event => { if (event.key !== "Tab") event.preventDefault(); });
         control.addEventListener("mousedown", event => event.preventDefault());
       });
+      colocatePicker?.setDisabled(true);
     }
     bindSqlPreviewSplitter();
     const group = editState?.selection?.group || "table", childName = editState?.selection?.childName || "";
@@ -1704,7 +1821,7 @@
           description: t("designer.convertHelp"),
           body: field("Target mode", `<select name="TargetMode"><option value="Distributed">Distributed</option><option value="Reference">Reference</option></select>`) +
             field("Distribution column", input("DistributionColumn", "", "text", "required maxlength=63")) +
-            field("Colocate with", `<select name="ColocateWith"><option value="">none</option>${metadata.distributedTables.map(x => `<option value="${html(x)}">${html(x)}</option>`).join("")}</select>`) +
+            colocationField("Colocate with") +
             field("Shard count", input("ShardCount", "", "number", "min=1 max=4096 placeholder='server default'")) +
             `<label class="database-action-check database-impact-check"><input name="Acknowledged" type="checkbox" required/> ${t("designer.convertAcknowledgement")}</label>` +
             field(t("designer.typeToConfirm", qualified), input("TypedConfirmation", "", "text", "required autocomplete=off")), button: t("designer.createConversionPlan"),
@@ -1718,10 +1835,12 @@
               ExternalCapacityAndBackupChecksAcknowledged: form.elements.Acknowledged.checked,
               TypedConfirmation: form.elements.TypedConfirmation.value }));
           } });
+        const colocatePicker = bindColocationPicker(metadata.distributedTables, () => target.schema || "public");
         const mode = form.elements.TargetMode;
         mode.addEventListener("change", () => {
           const reference = mode.value === "Reference";
           [form.elements.DistributionColumn, form.elements.ColocateWith, form.elements.ShardCount].forEach(x => x.disabled = reference);
+          colocatePicker?.setDisabled(reference);
           form.elements.DistributionColumn.required = !reference;
         });
       }

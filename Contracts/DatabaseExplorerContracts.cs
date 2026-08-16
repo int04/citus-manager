@@ -83,6 +83,9 @@ public sealed record DatabaseTypeResponse(string Name, string DisplayName);
 /// <summary>One PostgreSQL operator class available to an index access method.</summary>
 public sealed record DatabaseOperatorClassResponse(string AccessMethod, string Name);
 
+/// <summary>One root distributed table eligible as a Citus colocation target.</summary>
+public sealed record DatabaseColocationTargetResponse(string Schema, string Name, string QualifiedName);
+
 /// <summary>One catalog table eligible as a foreign-key target.</summary>
 public sealed record DatabaseForeignKeyTargetResponse(string Schema, string Name, IReadOnlyList<string> Columns);
 
@@ -90,7 +93,7 @@ public sealed record DatabaseForeignKeyTargetResponse(string Schema, string Name
 public sealed record DatabaseActionMetadataResponse(
     IReadOnlyList<string> Schemas,
     IReadOnlyList<DatabaseTypeResponse> ColumnTypes,
-    IReadOnlyList<string> DistributedTables,
+    IReadOnlyList<DatabaseColocationTargetResponse> DistributedTables,
     IReadOnlyList<string> TableAccessMethods,
     IReadOnlyList<string> IndexAccessMethods,
     IReadOnlyList<string> Collations,

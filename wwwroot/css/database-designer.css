@@ -255,3 +255,160 @@
 .database-tree-partition-icon {
   color: #dc8d68;
 }
+
+/* Searchable Citus colocation picker. The popover is fixed so modal scroll areas cannot clip it. */
+.dg-colocate-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.dg-colocate-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  color: #e0e6ea;
+  background: #20272e;
+  border: 1px solid #46515a;
+  border-radius: 3px;
+  text-align: left;
+}
+
+.dg-colocate-trigger:hover,
+.dg-colocate-trigger[aria-expanded="true"] {
+  background: #252f38;
+  border-color: #5d788a;
+}
+
+.dg-colocate-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.dg-colocate-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dg-colocate-trigger > .fa {
+  flex: 0 0 auto;
+  color: #79b8dd;
+}
+
+.dg-colocate-popover {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+  overflow: hidden;
+  color: #dce3e8;
+  background: #171e26;
+  border: 1px solid #40505d;
+  border-radius: 5px;
+  box-shadow: 0 18px 52px rgb(0 0 0 / 58%);
+}
+
+.dg-colocate-popover.hidden {
+  display: none;
+}
+
+.dg-colocate-search {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  background: #141a21;
+  border-bottom: 1px solid #34414c;
+}
+
+.dg-colocate-search > .fa {
+  flex: 0 0 auto;
+  color: #71899a;
+}
+
+.dg-colocate-search > input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 8px;
+  color: #e6ebee;
+  background: #202932;
+  border: 1px solid #455561;
+  border-radius: 3px;
+  outline: none;
+}
+
+.dg-colocate-search > input:focus {
+  border-color: #55a8d6;
+  box-shadow: 0 0 0 2px rgb(85 168 214 / 16%);
+}
+
+.dg-colocate-options {
+  flex: 1;
+  min-height: 0;
+  padding: 5px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #506474 #151c23;
+}
+
+.dg-colocate-option-group > small {
+  display: block;
+  padding: 7px 8px 4px;
+  color: #8294a0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dg-colocate-options [role="option"] {
+  display: grid;
+  width: 100%;
+  min-height: 32px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: #d9e0e5;
+  border-radius: 3px;
+  text-align: left;
+}
+
+.dg-colocate-options [role="option"]:hover,
+.dg-colocate-options [role="option"]:focus-visible {
+  color: #fff;
+  background: #294b63;
+  outline: none;
+}
+
+.dg-colocate-options [role="option"] > .fa {
+  color: #69b7c4;
+  text-align: center;
+}
+
+.dg-colocate-options [role="option"] > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dg-colocate-options [role="option"] > small {
+  color: #7f919d;
+  font-size: 9px;
+}
+
+.dg-colocate-empty {
+  padding: 22px 14px;
+  color: #84949f;
+  text-align: center;
+  font-size: 10px;
+}

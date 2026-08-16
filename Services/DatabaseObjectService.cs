@@ -198,16 +198,27 @@ public sealed class DatabaseObjectService(
         var roles = await ReadStringListAsync(connection,
             "SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname", cancellationToken);
 
-        var distributed = new List<string>();
+        var distributed = new List<DatabaseColocationTargetResponse>();
         var hasCitus = await HasCitusAsync(connection, cancellationToken);
         if (hasCitus)
         {
             await using var command = new NpgsqlCommand("""
-                SELECT logicalrelid::regclass::text FROM pg_dist_partition
-                WHERE partmethod <> 'n' ORDER BY logicalrelid::regclass::text
+                SELECT n.nspname, c.relname,
+                       quote_ident(n.nspname) || '.' || quote_ident(c.relname)
+                FROM pg_dist_partition placement
+                JOIN pg_class c ON c.oid = placement.logicalrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE placement.partmethod <> 'n'
+                  AND c.relkind IN ('r', 'p')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM pg_inherits inheritance
+                      WHERE inheritance.inhrelid = c.oid
+                  )
+                ORDER BY n.nspname, c.relname
                 """, connection);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken)) distributed.Add(reader.GetString(0));
+            while (await reader.ReadAsync(cancellationToken))
+                distributed.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
         }
 
         var (reference, distributedCapability) = await ReadCreateCapabilitiesAsync(connection, cancellationToken);
@@ -819,9 +830,13 @@ public sealed class DatabaseObjectService(
                 SELECT p.partmethod::text,
                        CASE WHEN p.partmethod='n' THEN NULL ELSE column_to_column_name(p.logicalrelid,p.partkey) END,
                        (SELECT count(*)::int FROM pg_dist_shard s WHERE s.logicalrelid=p.logicalrelid),
-                       (SELECT other.logicalrelid::regclass::text FROM pg_dist_partition other
+                       (SELECT quote_ident(other_ns.nspname)||'.'||quote_ident(other_class.relname)
+                        FROM pg_dist_partition other
+                        JOIN pg_class other_class ON other_class.oid=other.logicalrelid
+                        JOIN pg_namespace other_ns ON other_ns.oid=other_class.relnamespace
                         WHERE other.colocationid=p.colocationid AND other.logicalrelid<>p.logicalrelid
-                        ORDER BY other.logicalrelid LIMIT 1)
+                          AND NOT EXISTS (SELECT 1 FROM pg_inherits inheritance WHERE inheritance.inhrelid=other.logicalrelid)
+                        ORDER BY other_ns.nspname,other_class.relname LIMIT 1)
                 FROM pg_dist_partition p WHERE p.logicalrelid=$1
                 """, connection, transaction);
             command.Parameters.AddWithValue(NpgsqlDbType.Oid, oid);
