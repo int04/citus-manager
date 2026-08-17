@@ -23,6 +23,14 @@
   let longPressTimer = null;
   let longPressPoint = null;
   let suppressNextClick = false;
+  let treeSelectionAnchor = null;
+  const heldTreeKeys = new Set();
+  const treeContent = document.getElementById("database-tree-content");
+  treeContent.setAttribute("role", "tree");
+  treeContent.setAttribute("aria-multiselectable", "true");
+  treeContent.querySelectorAll("[data-context-node]").forEach(node => {
+    node.setAttribute("role", "treeitem"); node.setAttribute("aria-selected", "false");
+  });
 
   const html = value => String(value ?? "").replace(/[&<>'"]/g, char => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -32,17 +40,77 @@
     schema: "Schema", table: "Table", partitionedtable: "PartitionedTable", foreigntable: "ForeignTable",
     view: "View", materializedview: "MaterializedView", sequence: "Sequence"
   })[kind] || "Table";
-  const currentTarget = () => ({
-    kind: contextNode?.dataset.nodeKind,
-    schema: contextNode?.dataset.schema || "",
-    name: contextNode?.dataset.table || contextNode?.dataset.name || "",
-    tableMode: contextNode?.dataset.tableMode || "notApplicable",
-    canOperate: bool(contextNode?.dataset.canOperate),
-    canAdmin: bool(contextNode?.dataset.canAdmin),
-    coordinator: bool(contextNode?.dataset.isCoordinator),
-    treeGroup: contextNode?.dataset.treeGroup || "",
-    childName: contextNode?.dataset.childName || ""
+  const targetFromNode = node => ({
+    kind: node?.dataset.nodeKind,
+    schema: node?.dataset.schema || "",
+    name: node?.dataset.table || node?.dataset.name || "",
+    tableMode: node?.dataset.tableMode || "notApplicable",
+    canOperate: bool(node?.dataset.canOperate),
+    canAdmin: bool(node?.dataset.canAdmin),
+    coordinator: bool(node?.dataset.isCoordinator),
+    treeGroup: node?.dataset.treeGroup || "",
+    childName: node?.dataset.childName || ""
   });
+  const currentTarget = () => targetFromNode(contextNode);
+  function treeNodeKey(node) {
+    const target = targetFromNode(node);
+    const parent = node.closest("[data-database-object-node]")?.dataset.objectKey || "";
+    if (target.kind === "database") return "database";
+    if (target.kind === "schema") return `schema:${target.schema}`;
+    if (target.kind?.endsWith("-category")) return `category:${target.schema}:${target.kind}`;
+    if (target.kind === "table-section") return `section:${parent}:${target.treeGroup}`;
+    if (target.kind === "table-child") return `child:${parent}:${target.treeGroup}:${target.childName}`;
+    return `object:${target.schema}:${target.name}:${target.kind}`;
+  }
+  function treeNodeGroup(node) {
+    const target = targetFromNode(node);
+    const parent = node.closest("[data-database-object-node]")?.dataset.objectKey || "";
+    if (target.kind === "database") return "database";
+    if (target.kind === "schema") return "schemas";
+    if (target.kind?.endsWith("-category")) return `categories:${target.schema}`;
+    if (target.kind === "table-section") return `sections:${parent}`;
+    if (target.kind === "table-child") return `children:${parent}:${target.treeGroup}`;
+    if (node.classList.contains("database-partition-object")) return `partitions:${parent}`;
+    return `objects:${target.schema}:${node.closest("[data-object-kind]")?.querySelector(".database-object-kind-label")?.dataset.nodeKind || target.kind}`;
+  }
+  const heldTreeNodes = () => [...treeContent.querySelectorAll("[data-context-node].is-held")];
+  function paintHeldTreeNodes(current = null) {
+    treeContent.querySelectorAll("[data-context-node]").forEach(node => {
+      const selected = heldTreeKeys.has(treeNodeKey(node));
+      node.setAttribute("role", "treeitem");
+      node.classList.toggle("is-held", selected);
+      node.classList.toggle("is-held-current", selected && node === current);
+      node.setAttribute("aria-selected", String(selected));
+    });
+  }
+  function treeRangeNodes(anchor, node) {
+    if (!anchor?.isConnected || treeNodeGroup(anchor) !== treeNodeGroup(node)) return [node];
+    const group = treeNodeGroup(node);
+    const candidates = [...treeContent.querySelectorAll("[data-context-node]")]
+      .filter(item => treeNodeGroup(item) === group && !item.classList.contains("hidden") && !item.closest(".hidden"));
+    const start = candidates.indexOf(anchor), end = candidates.indexOf(node);
+    return start < 0 || end < 0 ? [node] : candidates.slice(Math.min(start, end), Math.max(start, end) + 1);
+  }
+  function selectTreeNode(node, event = {}) {
+    const key = treeNodeKey(node);
+    if (event.shiftKey) {
+      const range = treeRangeNodes(treeSelectionAnchor, node);
+      heldTreeKeys.clear();
+      range.forEach(item => heldTreeKeys.add(treeNodeKey(item)));
+      if (!treeSelectionAnchor?.isConnected || treeNodeGroup(treeSelectionAnchor) !== treeNodeGroup(node)) treeSelectionAnchor = node;
+    } else if (event.ctrlKey || event.metaKey) {
+      if (heldTreeKeys.has(key)) heldTreeKeys.delete(key); else heldTreeKeys.add(key);
+      treeSelectionAnchor = node;
+    } else {
+      heldTreeKeys.clear(); heldTreeKeys.add(key); treeSelectionAnchor = node;
+    }
+    const current = heldTreeKeys.has(key) ? node : [...treeContent.querySelectorAll("[data-context-node]")]
+      .filter(item => heldTreeKeys.has(treeNodeKey(item))).at(-1);
+    paintHeldTreeNodes(current);
+  }
+  function clearTreeSelection() {
+    heldTreeKeys.clear(); treeSelectionAnchor = null; paintHeldTreeNodes();
+  }
   const getMetadata = () => metadataPromise ||= $.getJSON($explorer.data("metadata-url"));
   const problemText = xhr => {
     const body = xhr.responseJSON;
@@ -61,6 +129,7 @@
   };
 
   const icon = (action, dangerous, hasChildren) => {
+    const normalizedAction = action.replace(/^selection-/, "");
     const icons = {
       "query": ["blue", '<path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/>'],
       "refresh": ["cyan", '<path d="M20 11a8 8 0 1 0-2.3 5.7L20 14"/><path d="M20 4v7h-7"/>'],
@@ -84,7 +153,7 @@
       "create-view": ["purple", '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/><path d="M19 3v5M16.5 5.5h5"/>'],
       "create-sequence": ["amber", '<path d="M4 6h4M4 12h7M4 18h10"/><path d="M19 3v6M16 6h6"/>']
     };
-    const selected = icons[action] || (dangerous ? icons.drop : null) || (hasChildren
+    const selected = icons[normalizedAction] || (dangerous ? icons.drop : null) || (hasChildren
       ? ["green", '<path d="M12 5v14M5 12h14"/>']
       : ["muted", '<circle cx="12" cy="12" r="8"/>']);
     return `<svg class="dg-icon-${selected[0]}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">${selected[1]}</svg>`;
@@ -148,6 +217,29 @@
     }
   }
 
+  function treeSelectionState() {
+    const nodes = heldTreeNodes();
+    const records = nodes.map(node => {
+      const source = targetFromNode(node);
+      const parentObject = ["table-section", "table-child"].includes(source.kind)
+        ? node.closest("[data-database-object-node]")?.querySelector(":scope > .database-object-row [data-database-object]")
+        : null;
+      return { node, source, target: parentObject ? targetFromNode(parentObject) : source };
+    });
+    const uniqueTargets = [...new Map(records.map(record => [`${record.target.schema}.${record.target.name}:${record.target.kind}`, record])).values()];
+    const sameGroup = nodes.length > 0 && new Set(nodes.map(treeNodeGroup)).size === 1;
+    const browsableKinds = new Set(["table", "partitionedtable", "foreigntable", "view", "materializedview"]);
+    const informationKinds = new Set(["table", "partitionedtable"]);
+    const destructiveKinds = new Set(["table", "partitionedtable", "foreigntable", "view", "materializedview", "sequence"]);
+    const directObjects = records.every(record => record.node.matches("[data-database-object]"));
+    return {
+      nodes, records, uniqueTargets, sameGroup,
+      canBrowse: uniqueTargets.length > 0 && uniqueTargets.every(record => browsableKinds.has(record.target.kind)),
+      canInformation: uniqueTargets.length > 0 && uniqueTargets.every(record => informationKinds.has(record.target.kind)),
+      canDrop: sameGroup && directObjects && records.every(record => destructiveKinds.has(record.source.kind) && record.source.canAdmin && record.source.coordinator),
+      canTruncate: sameGroup && directObjects && records.every(record => ["table", "partitionedtable"].includes(record.source.kind) && record.source.canAdmin && record.source.coordinator)
+    };
+  }
   function renderMenu(items, root = true) {
     const container = document.createElement("div");
     container.className = root ? "database-context-list" : "database-context-submenu";
@@ -197,8 +289,21 @@
     menuTrigger = node;
     document.querySelectorAll("[data-context-node].is-context-target").forEach(x => x.classList.remove("is-context-target"));
     node.classList.add("is-context-target");
-    const definitions = menuItems(currentTarget()).filter(definition => definition.action !== "query");
-    menu.replaceChildren(renderMenu([item("New Query Console", "query", { shortcut: "Ctrl+Shift+Q" }), separator(), ...definitions]));
+    const selection = treeSelectionState();
+    let definitions;
+    if (selection.nodes.length > 1) {
+      definitions = [
+        ...(selection.canBrowse ? [item(t("menu.browse"), "selection-browse")] : []),
+        ...(selection.canInformation ? [item(t("maintenance.tableInfo"), "selection-information")] : []),
+        item(t("common.refresh"), "selection-refresh"),
+        ...(selection.canTruncate ? [separator(), item(t("menu.truncate"), "selection-truncate", { dangerous: true })] : []),
+        ...(selection.canDrop ? [item(t("menu.drop"), "selection-drop", { dangerous: true })] : [])
+      ];
+    } else {
+      const nodeDefinitions = menuItems(currentTarget()).filter(definition => definition.action !== "query");
+      definitions = [item("New Query Console", "query", { shortcut: "Ctrl+Shift+Q" }), separator(), ...nodeDefinitions];
+    }
+    menu.replaceChildren(renderMenu(definitions));
     positionMenu(x, y);
     const first = menu.querySelector("[role=menuitem]:not(:disabled)");
     if (first) { first.tabIndex = 0; first.focus(); }
@@ -213,27 +318,60 @@
     const node = event.target.closest("[data-context-node]");
     if (!node) return;
     event.preventDefault();
+    if (!heldTreeKeys.has(treeNodeKey(node))) selectTreeNode(node);
     openMenu(node, event.clientX, event.clientY);
   });
   document.getElementById("database-tree-content")?.addEventListener("keydown", event => {
     const node = event.target.closest("[data-context-node]");
-    if (!node || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
-    event.preventDefault();
-    const rect = node.getBoundingClientRect();
-    openMenu(node, rect.left + Math.min(rect.width, 36), rect.bottom);
+    if (!node) return;
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault();
+      if (!heldTreeKeys.has(treeNodeKey(node))) selectTreeNode(node);
+      const rect = node.getBoundingClientRect();
+      openMenu(node, rect.left + Math.min(rect.width, 36), rect.bottom);
+    } else if (event.key === " " && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault(); selectTreeNode(node, event);
+    } else if (event.key === "Enter") {
+      event.preventDefault(); node.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    }
   });
   document.getElementById("database-tree-content")?.addEventListener("pointerdown", event => {
     if (event.pointerType === "mouse") return;
     const node = event.target.closest("[data-context-node]");
     if (!node) return;
     longPressPoint = { x: event.clientX, y: event.clientY };
-    longPressTimer = setTimeout(() => { suppressNextClick = true; openMenu(node, event.clientX, event.clientY); }, 550);
+    longPressTimer = setTimeout(() => {
+      suppressNextClick = true;
+      if (!heldTreeKeys.has(treeNodeKey(node))) selectTreeNode(node);
+      openMenu(node, event.clientX, event.clientY);
+    }, 550);
   });
   document.getElementById("database-tree-content")?.addEventListener("click", event => {
     if (!suppressNextClick) return;
     suppressNextClick = false;
     event.preventDefault(); event.stopImmediatePropagation();
   }, true);
+  treeContent.addEventListener("click", event => {
+    const node = event.target.closest("[data-context-node]");
+    if (!node || !treeContent.contains(node)) return;
+    if (event.target.closest(".pma-tree-caret, .database-tree-caret")) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      node.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+      return;
+    }
+    event.preventDefault(); event.stopImmediatePropagation();
+    selectTreeNode(node, event);
+  }, true);
+  treeContent.addEventListener("dblclick", event => {
+    const node = event.target.closest("[data-context-node]");
+    if (!node?.matches("[data-database-object]")) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!heldTreeKeys.has(treeNodeKey(node))) selectTreeNode(node);
+    document.dispatchEvent(new CustomEvent("database:open-tree-object", { detail: { node } }));
+  }, true);
+  treeContent.addEventListener("database:tree-group-loaded", () => {
+    paintHeldTreeNodes();
+  });
   document.addEventListener("pointermove", event => {
     if (!longPressTimer || !longPressPoint) return;
     if (Math.hypot(event.clientX - longPressPoint.x, event.clientY - longPressPoint.y) > 8) {
@@ -284,7 +422,9 @@
     if (!button || button.disabled) return;
     const action = button.dataset.action;
     closeMenu(false);
-    handleAction(action);
+    if (action.startsWith("selection-"))
+      handleTreeSelectionAction(action.slice(10)).catch(failure => showToast(problemText(failure)));
+    else handleAction(action);
   });
   document.addEventListener("mousedown", event => { if (!menu.classList.contains("hidden") && !menu.contains(event.target)) closeMenu(false); });
   document.addEventListener("pointerdown", event => {
@@ -604,6 +744,7 @@
     if (response.redirectUrl) window.location.assign(response.redirectUrl);
   };
   async function refreshTree(selectSchema, selectName) {
+    const heldKeysSnapshot = [...heldTreeKeys];
     const expanded = [...document.querySelectorAll("[data-schema-group]")]
       .filter(x => x.querySelector(".database-schema-toggle")?.getAttribute("aria-expanded") === "true")
       .map(x => x.dataset.schemaName);
@@ -622,6 +763,7 @@
       nodeId: $explorer.data("node-id") || null, showSystem: bool($explorer.data("show-system"))
     });
     document.getElementById("database-tree-content").innerHTML = tree;
+    heldTreeKeys.clear(); heldKeysSnapshot.forEach(key => heldTreeKeys.add(key));
     document.querySelectorAll("[data-schema-group]").forEach(group => {
       const restoreExpanded = expanded.includes(group.dataset.schemaName);
       group.querySelector(".database-schema-toggle")?.setAttribute("aria-expanded", String(restoreExpanded));
@@ -633,7 +775,8 @@
       const objectChildren = node.querySelector(":scope > .database-object-children");
       const restoreGroups = () => node.querySelectorAll(".database-tree-group-toggle").forEach(group => {
         const key = `${node.dataset.objectKey}|${group.dataset.treeGroup}`;
-        if (expandedGroups.includes(key) && group.getAttribute("aria-expanded") !== "true") group.click();
+        if (expandedGroups.includes(key) && group.getAttribute("aria-expanded") !== "true")
+          group.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
       });
       if (objectChildren?.dataset.loaded === "true") restoreGroups();
       else objectChildren?.addEventListener("database:tree-group-loaded", restoreGroups, { once: true });
@@ -655,13 +798,15 @@
             .find(x => x.dataset.schema === schema && x.dataset.table === name)?.classList.add("is-active");
           if (container?.dataset.loaded === "true") restorePartition();
           else container?.addEventListener("database:tree-group-loaded", restorePartition, { once: true });
-          if (partitions?.getAttribute("aria-expanded") !== "true") partitions?.click();
+          if (partitions?.getAttribute("aria-expanded") !== "true")
+            partitions?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
         };
         if (objectChildren?.dataset.loaded === "true") openAndRestorePartition();
         else objectChildren?.addEventListener("database:tree-group-loaded", openAndRestorePartition, { once: true });
         if (objectToggle?.getAttribute("aria-expanded") !== "true") objectToggle?.click();
       }
     }
+    paintHeldTreeNodes();
     $("#database-object-search").trigger("input");
   }
 
@@ -2143,6 +2288,95 @@
     modalTrigger = trigger;
     const state = await $.getJSON($explorer.data("table-definition-url"), { schema: target.schema, name: target.name });
     await openCreate("table", target, { ...state, selection: { group: target.treeGroup || "table", childName: target.childName || "" } });
+  }
+
+  async function openBatchTreeAction(action, state) {
+    const targets = state.records.map(record => record.source);
+    const confirmation = `${action.toUpperCase()} ${targets.length}`;
+    let dependencyCounts = new Map();
+    if (action === "drop") {
+      const dependencies = [];
+      for (const target of targets) {
+        const result = await $.getJSON($explorer.data("dependencies-url"), {
+          kind: kindName(target.kind), schema: target.schema, name: target.name
+        });
+        dependencies.push([`${target.schema}.${target.name}`, result.count || 0]);
+      }
+      dependencyCounts = new Map(dependencies);
+    }
+    const objectList = `<div class="database-tree-batch-list">${targets.map(target => {
+      const qualified = `${target.schema}.${target.name}`;
+      const dependency = action === "drop" ? `<small>${html(t("treeSelection.dependencies", dependencyCounts.get(qualified) || 0))}</small>` : "";
+      return `<div><i class="fa ${action === "drop" ? "fa-trash" : "fa-eraser"}" aria-hidden="true"></i><span><strong>${html(qualified)}</strong>${dependency}</span></div>`;
+    }).join("")}</div>`;
+    const options = action === "drop"
+      ? '<label class="database-action-check"><input name="Cascade" type="checkbox"/> CASCADE dependencies</label>'
+      : '<label class="database-action-check"><input name="RestartIdentity" type="checkbox"/> Restart identity</label><label class="database-action-check"><input name="Cascade" type="checkbox"/> CASCADE</label>';
+    openModal({
+      title: t(action === "drop" ? "treeSelection.dropTitle" : "treeSelection.truncateTitle", targets.length),
+      eyebrow: "DESTRUCTIVE · BATCH",
+      description: t("treeSelection.batchWarning"),
+      body: objectList + field(t("designer.typeToConfirm", confirmation), input("TypedConfirmation", "", "text", `required autocomplete=off data-confirm='${html(confirmation)}'`)) + options,
+      button: t(action === "drop" ? "treeSelection.dropButton" : "treeSelection.truncateButton", targets.length), danger: true,
+      onSubmit: async () => {
+        if (form.elements.TypedConfirmation.value !== confirmation)
+          throw { responseJSON: { detail: t("action.exactConfirmation", confirmation) } };
+        let completed = 0;
+        try {
+          for (const target of targets) {
+            submit.textContent = t("treeSelection.progress", completed + 1, targets.length);
+            const qualified = `${target.schema}.${target.name}`;
+            if (action === "drop") {
+              await post($explorer.data("drop-url"), {
+                Kind: kindName(target.kind), Schema: target.schema, Name: target.name,
+                Cascade: form.elements.Cascade.checked, TypedConfirmation: qualified
+              });
+            } else {
+              await post($explorer.data("truncate-url"), {
+                Schema: target.schema, Name: target.name, RestartIdentity: form.elements.RestartIdentity.checked,
+                Cascade: form.elements.Cascade.checked, TypedConfirmation: qualified
+              });
+            }
+            completed++;
+          }
+        } catch (failure) {
+          await refreshTree();
+          throw { responseJSON: { detail: t("treeSelection.partialFailure", completed, targets.length, problemText(failure)) } };
+        }
+        closeModal(); clearTreeSelection();
+        showToast(t("treeSelection.completed", completed));
+        await refreshTree();
+      }
+    });
+  }
+
+  async function handleTreeSelectionAction(action) {
+    const state = treeSelectionState();
+    if (!state.nodes.length) return;
+    if (action === "clear") { clearTreeSelection(); return; }
+    if (action === "browse" && state.canBrowse) {
+      for (const record of state.uniqueTargets)
+        await window.databaseWorkspaces?.openObject(record.target.schema, record.target.name, "data");
+      return;
+    }
+    if (action === "information" && state.canInformation) {
+      for (const record of state.uniqueTargets)
+        await window.databaseWorkspaces?.openInformation(record.target.schema, record.target.name);
+      return;
+    }
+    if (action === "refresh") {
+      for (const record of state.uniqueTargets) {
+        if (["table", "partitionedtable", "foreigntable", "view", "materializedview"].includes(record.target.kind))
+          await window.databaseWorkspaces?.openObject(record.target.schema, record.target.name, "data");
+        else if (record.target.kind === "sequence") await window.databaseWorkspaces?.openDdl(record.target.schema, record.target.name);
+      }
+      await refreshTree(); showToast(t("action.treeRefreshed")); return;
+    }
+    if ((action === "drop" && state.canDrop) || (action === "truncate" && state.canTruncate)) {
+      if (state.nodes.length === 1) {
+        contextNode = state.nodes[0]; menuTrigger = contextNode; await handleAction(action);
+      } else await openBatchTreeAction(action, state);
+    }
   }
 
   async function handleAction(action) {

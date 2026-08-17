@@ -56,4 +56,13 @@
   <data name="designer.deleteWarning" xml:space="preserve"><value>The selected objects will be removed from this table definition when you save. This action can affect constraints and indexes.</value></data>
   <data name="designer.moreObjects" xml:space="preserve"><value>and {0} more…</value></data>
   <data name="designer.unnamedObject" xml:space="preserve"><value>Unnamed object</value></data>
+  <data name="treeSelection.dependencies" xml:space="preserve"><value>{0} detected dependencies</value></data>
+  <data name="treeSelection.dropTitle" xml:space="preserve"><value>Drop {0} objects</value></data>
+  <data name="treeSelection.truncateTitle" xml:space="preserve"><value>Truncate {0} tables</value></data>
+  <data name="treeSelection.batchWarning" xml:space="preserve"><value>Objects are processed one at a time and the batch stops on the first error. Completed objects cannot be rolled back as one transaction.</value></data>
+  <data name="treeSelection.dropButton" xml:space="preserve"><value>Drop {0} objects</value></data>
+  <data name="treeSelection.truncateButton" xml:space="preserve"><value>Truncate {0} tables</value></data>
+  <data name="treeSelection.progress" xml:space="preserve"><value>Processing {0}/{1}…</value></data>
+  <data name="treeSelection.partialFailure" xml:space="preserve"><value>{0}/{1} objects completed before the batch stopped. {2}</value></data>
+  <data name="treeSelection.completed" xml:space="preserve"><value>{0} objects completed.</value></data>
 </root>

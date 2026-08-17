@@ -56,4 +56,13 @@
   <data name="designer.deleteWarning" xml:space="preserve"><value>Các đối tượng đã chọn sẽ bị xóa khỏi định nghĩa table khi bạn lưu. Thao tác này có thể ảnh hưởng đến constraint và index.</value></data>
   <data name="designer.moreObjects" xml:space="preserve"><value>và {0} đối tượng khác…</value></data>
   <data name="designer.unnamedObject" xml:space="preserve"><value>Đối tượng chưa đặt tên</value></data>
+  <data name="treeSelection.dependencies" xml:space="preserve"><value>Phát hiện {0} dependency</value></data>
+  <data name="treeSelection.dropTitle" xml:space="preserve"><value>Drop {0} đối tượng</value></data>
+  <data name="treeSelection.truncateTitle" xml:space="preserve"><value>Truncate {0} table</value></data>
+  <data name="treeSelection.batchWarning" xml:space="preserve"><value>Các đối tượng được xử lý lần lượt và batch dừng tại lỗi đầu tiên. Những đối tượng đã hoàn tất không thể rollback trong một transaction chung.</value></data>
+  <data name="treeSelection.dropButton" xml:space="preserve"><value>Drop {0} đối tượng</value></data>
+  <data name="treeSelection.truncateButton" xml:space="preserve"><value>Truncate {0} table</value></data>
+  <data name="treeSelection.progress" xml:space="preserve"><value>Đang xử lý {0}/{1}…</value></data>
+  <data name="treeSelection.partialFailure" xml:space="preserve"><value>Đã hoàn tất {0}/{1} đối tượng trước khi batch dừng. {2}</value></data>
+  <data name="treeSelection.completed" xml:space="preserve"><value>Đã hoàn tất {0} đối tượng.</value></data>
 </root>

@@ -1275,3 +1275,75 @@
   border-color: #34414c;
   background: #171d24;
 }
+
+/* Database navigation uses desktop-style held selection; active workspace remains the stronger state. */
+#database-tree-content [data-context-node] {
+  user-select: none;
+}
+
+#database-tree-content [data-context-node].is-held:not(.is-active):not(.is-context-target) {
+  color: #25475b;
+  background: #dbeaf3;
+  box-shadow: inset 0 0 0 1px #bdd4e2;
+}
+
+#database-tree-content [data-context-node].is-held-current:not(.is-active):not(.is-context-target) {
+  box-shadow: inset 3px 0 0 #4d91ba, inset 0 0 0 1px #a9c8da;
+}
+
+[data-theme="dark"] #database-tree-content [data-context-node].is-held:not(.is-active):not(.is-context-target) {
+  color: #c7dce9;
+  background: #263846;
+  box-shadow: inset 0 0 0 1px #365064;
+}
+
+[data-theme="dark"] #database-tree-content [data-context-node].is-held-current:not(.is-active):not(.is-context-target) {
+  box-shadow: inset 3px 0 0 #5ba8d3, inset 0 0 0 1px #45677d;
+}
+
+.database-tree-batch-list {
+  display: grid;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid #4d5861;
+  border-radius: 6px;
+  background: #20262b;
+}
+
+.database-tree-batch-list > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-bottom: 1px solid #3c454d;
+}
+
+.database-tree-batch-list > div:last-child {
+  border-bottom: 0;
+}
+
+.database-tree-batch-list > div > i {
+  color: #ec817b;
+}
+
+.database-tree-batch-list span,
+.database-tree-batch-list strong,
+.database-tree-batch-list small {
+  display: block;
+  min-width: 0;
+}
+
+.database-tree-batch-list strong {
+  overflow: hidden;
+  color: #edf1f3;
+  font-family: "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-tree-batch-list small {
+  margin-top: 2px;
+  color: #aeb8c0;
+  font-size: 10px;
+}

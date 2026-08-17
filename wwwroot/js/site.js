@@ -299,7 +299,7 @@
       if (!this.disabled) loadBrowse(Number($(this).data("database-page")));
     });
     $("#database-page-size").on("change", () => { if (selectedTable && activeTab === "data") loadBrowse(1); });
-    $("#database-tree-content").on("click", ".database-schema-toggle", function () {
+    $("#database-tree-content").on("dblclick", ".database-schema-toggle", function () {
       const expanded = $(this).attr("aria-expanded") === "true";
       $(this).attr("aria-expanded", String(!expanded)).next().toggleClass("hidden", expanded);
     });
@@ -365,7 +365,7 @@
         button.className = `database-tree-group-row database-tree-group-toggle${group === "partitions" ? " is-partitions" : ""}`;
         button.setAttribute("aria-expanded", "false"); button.dataset.treeGroup = group;
         applyTableDesignerContext(button, parentObject, group);
-        const caret = document.createElement("span"); caret.textContent = "›";
+        const caret = document.createElement("span"); caret.className = "database-tree-caret"; caret.textContent = "›";
         const icon = document.createElement("span"); icon.className = `database-tree-folder-icon is-${group}`;
         icon.innerHTML = `<i class="fa ${treeGroupIcon(group)}" aria-hidden="true"></i>`;
         const label = document.createElement("strong"); label.textContent = treeGroupLabel(group);
@@ -396,7 +396,7 @@
           content.appendChild(name);
           if (item.detail) { const detail = document.createElement("small"); detail.textContent = item.detail; content.appendChild(detail); leaf.title = `${item.name} · ${item.detail}`; }
           leaf.append(icon, content);
-          leaf.addEventListener("click", event => {
+          leaf.addEventListener("dblclick", event => {
             event.stopPropagation();
             document.dispatchEvent(new CustomEvent("database:edit-table-child", { detail: {
               schema: parentObject.dataset.schema, table: parentObject.dataset.table, group, childName: item.name, trigger: leaf
@@ -419,7 +419,7 @@
         content.append(name, detail); button.appendChild(content); container.appendChild(button);
       });
     };
-    $("#database-tree-content").on("click", ".database-tree-group-toggle", async function (event) {
+    $("#database-tree-content").on("dblclick", ".database-tree-group-toggle", async function (event) {
       event.stopPropagation();
       const expanded = $(this).attr("aria-expanded") === "true";
       const container = this.nextElementSibling;
