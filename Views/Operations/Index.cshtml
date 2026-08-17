@@ -7,6 +7,9 @@
     var running = Model.Count(x => x.Status is OperationStatus.Approved or OperationStatus.Running or OperationStatus.Cancelling or OperationStatus.RetryScheduled);
     var attention = Model.Count(x => x.Status is OperationStatus.Failed or OperationStatus.RecoveryRequired);
 }
+@section Styles {
+    <link rel="stylesheet" href="~/css/clusters.css" asp-append-version="true" />
+}
 <div class="page-heading">
     <div><p class="eyebrow">DURABLE WORKFLOWS</p><h1>@T["Title"]</h1><p>@T["Description"]</p></div>
     <a class="btn btn-secondary" asp-action="Index"><svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7L20 14"/><path d="M20 4v7h-7"/></svg>@T["Common.Refresh"]</a>
