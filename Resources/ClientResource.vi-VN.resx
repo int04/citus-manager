@@ -47,6 +47,8 @@
   <data name="designer.confirmDeleteObjects" xml:space="preserve"><value>Xóa {0} {1} khỏi định nghĩa bảng này?</value></data>
   <data name="designer.deleteMany" xml:space="preserve"><value>Xóa {0} {1}</value></data>
   <data name="designer.duplicate" xml:space="preserve"><value>Nhân bản</value></data>
+  <data name="designer.createPrimaryKey" xml:space="preserve"><value>Tạo khóa chính</value></data>
+  <data name="designer.createIndex" xml:space="preserve"><value>Tạo chỉ mục</value></data>
   <data name="designer.objectActions" xml:space="preserve"><value>Thao tác đối tượng bảng</value></data>
   <data name="designer.moveUp" xml:space="preserve"><value>Di chuyển lên</value></data>
   <data name="designer.moveDown" xml:space="preserve"><value>Di chuyển xuống</value></data>

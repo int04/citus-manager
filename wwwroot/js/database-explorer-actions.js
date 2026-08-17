@@ -1004,6 +1004,25 @@
     if (duplicate) designerSelectionAnchors.set(section, duplicate);
     refreshDesignerToolbar();
   }
+  function selectedColumnNames() {
+    return selectedDesignerRows("columns")
+      .map(row => columnRowData(row).name.trim())
+      .filter(Boolean);
+  }
+  function hasDesignerPrimaryKey() {
+    return tableColumnRows().some(row => columnRowData(row).primaryKey) ||
+      !!document.querySelector(".dg-key-row[data-key-kind='Primary']");
+  }
+  function addPrimaryKeyForSelectedColumns() {
+    const columns = selectedColumnNames();
+    if (!columns.length || hasDesignerPrimaryKey()) return;
+    addKeyRow({ kind: "Primary", columns });
+  }
+  function addIndexForSelectedColumns() {
+    const columns = selectedColumnNames();
+    if (!columns.length) return;
+    addIndexRow({ columns: columns.map(name => ({ name, order: "None", collation: "", operatorClass: "" })) });
+  }
   function addDesignerObject(section) {
     if (section === "columns") addColumnRow(designerMetadata);
     if (section === "keys") addKeyRow();
@@ -1027,6 +1046,11 @@
       const protectedColumn = section === "columns" && selected.some(isDesignerRoutingColumn);
       addItem(selected.length > 1 ? t("designer.deleteMany", selected.length, t(config.labelKey)) : t("common.delete"), "delete", protectedColumn || (section === "columns" && tableColumnRows().length - selected.length < 1));
       if (selected.length === 1) addItem(t("designer.duplicate"), "duplicate");
+      if (section === "columns") {
+        const selectedColumns = selectedColumnNames();
+        addItem(t("designer.createPrimaryKey"), "create-primary-key", !selectedColumns.length || hasDesignerPrimaryKey());
+        addItem(t("designer.createIndex"), "create-index", !selectedColumns.length);
+      }
     }
     const anchor = row?.getBoundingClientRect(), clientX = Number.isFinite(event.clientX) && event.clientX > 0 ? event.clientX : anchor?.left || 8;
     const clientY = Number.isFinite(event.clientY) && event.clientY > 0 ? event.clientY : anchor?.bottom || 8;
@@ -1035,6 +1059,8 @@
       if (action === "add") addDesignerObject(section);
       if (action === "delete") removeDesignerRows(section, selectedDesignerRows(section));
       if (action === "duplicate") duplicateDesignerRow(section, selectedDesignerRows(section)[0]);
+      if (action === "create-primary-key") addPrimaryKeyForSelectedColumns();
+      if (action === "create-index") addIndexForSelectedColumns();
       closeDesignerContextMenu();
     });
     contextMenu.addEventListener("keydown", menuEvent => {
@@ -1442,6 +1468,7 @@
     wireDesignerObjectRow(row, "keys", selectKeyRow);
     document.getElementById("database-key-list").appendChild(row);
     selectKeyRow(row); refreshKeyCount(); updateTableSqlPreview();
+    requestAnimationFrame(() => row.scrollIntoView({ block: "nearest", inline: "nearest" }));
     document.getElementById("database-key-column-name").focus();
   }
   function removeActiveKey() {
@@ -1649,7 +1676,9 @@
     row.dataset.indexIncludeColumns = JSON.stringify(initial.includeColumns || []); row.dataset.indexCondition = initial.condition || ""; row.dataset.indexTablespace = initial.tablespace || "";
     if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns.map(column => column.name)), row);
     renderIndexSummary(row); wireDesignerObjectRow(row, "indexes", selectIndexRow); document.getElementById("database-index-list").appendChild(row);
-    selectIndexRow(row); refreshIndexCount(); updateAutoObjectNames(); updateTableSqlPreview(); document.getElementById("database-index-column-name").focus();
+    selectIndexRow(row); refreshIndexCount(); updateAutoObjectNames(); updateTableSqlPreview();
+    requestAnimationFrame(() => row.scrollIntoView({ block: "nearest", inline: "nearest" }));
+    document.getElementById("database-index-column-name").focus();
   }
   function removeActiveIndex() {
     const row = activeIndexRow(); if (!row) return; const next = row.nextElementSibling || row.previousElementSibling; row.remove();

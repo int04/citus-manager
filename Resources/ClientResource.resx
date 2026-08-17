@@ -47,6 +47,8 @@
   <data name="designer.confirmDeleteObjects" xml:space="preserve"><value>Remove {0} {1} from this table definition?</value></data>
   <data name="designer.deleteMany" xml:space="preserve"><value>Delete {0} {1}</value></data>
   <data name="designer.duplicate" xml:space="preserve"><value>Duplicate</value></data>
+  <data name="designer.createPrimaryKey" xml:space="preserve"><value>Create primary key</value></data>
+  <data name="designer.createIndex" xml:space="preserve"><value>Create index</value></data>
   <data name="designer.objectActions" xml:space="preserve"><value>Table object actions</value></data>
   <data name="designer.moveUp" xml:space="preserve"><value>Move up</value></data>
   <data name="designer.moveDown" xml:space="preserve"><value>Move down</value></data>
