@@ -43,9 +43,19 @@
     @if (canOperate)
     {
         <div class="heading-actions">
-            <button class="btn btn-primary" type="button" id="backup-now" data-url="/api/clusters/@backupPage.Cluster.Id/backup-runs">
-                <i class="fa fa-play" aria-hidden="true"></i><span>@T["Action.BackupNow"]</span>
-            </button>
+            @if (policy.IsConfigured)
+            {
+                <button class="btn btn-primary" type="button" id="backup-now" data-url="/api/clusters/@backupPage.Cluster.Id/backup-runs">
+                    <i class="fa fa-play" aria-hidden="true"></i><span>@T["Action.BackupNow"]</span>
+                </button>
+            }
+            else
+            {
+                <button class="btn btn-primary backup-now--configuration-required" type="button" id="backup-now"
+                        data-configuration-required="true" data-dialog-open="backup-policy-dialog" aria-disabled="true">
+                    <i class="fa fa-cog" aria-hidden="true"></i><span>@T["Action.ConfigureBackupFirst"]</span>
+                </button>
+            }
         </div>
     }
 </div>

@@ -138,7 +138,7 @@
   });
 
   const backupNow = document.getElementById("backup-now");
-  backupNow?.addEventListener("click", async () => {
+  if (backupNow?.dataset.configurationRequired !== "true") backupNow?.addEventListener("click", async () => {
     setBusy(backupNow, true, message("queueing"));
     try { await request(backupNow.dataset.url, "POST"); window.location.reload(); }
     catch (error) { showFeedback(error.message, true); setBusy(backupNow, false); }
