@@ -22,6 +22,7 @@ public sealed class ApiExceptionHandler(
             InvalidOperationException => (StatusCodes.Status409Conflict, text["Rejected.Title"].Value, text["Rejected.Detail"].Value),
             DbUpdateException => (StatusCodes.Status409Conflict, text["Conflict.Title"].Value, text["Conflict.Detail"].Value),
             NpgsqlException => (StatusCodes.Status503ServiceUnavailable, text["Database.Title"].Value, text["Database.Detail"].Value),
+            IOException => (StatusCodes.Status409Conflict, text["Storage.Title"].Value, text["Storage.Detail"].Value),
             _ => (StatusCodes.Status500InternalServerError, text["Unexpected.Title"].Value, text["Unexpected.Detail"].Value)
         };
 

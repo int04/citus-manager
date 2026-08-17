@@ -231,12 +231,15 @@ public sealed class BackupService(
         {
             try
             {
-                var version = JsonSerializer.Deserialize<StorageProfileVersion>(
-                    secrets.Unprotect(copy.ProtectedStorageSnapshot), JsonOptions)
-                    ?? throw new InvalidOperationException("Storage snapshot is invalid.");
-                var provider = storageFactory.Create(version);
-                try { await DeleteArtifactAsync(provider, manifest, copy.ObjectPrefix, cancellationToken); }
-                finally { if (provider is IDisposable disposable) disposable.Dispose(); }
+                if (copy.ManifestCommitted || copy.UploadedObjects > 0)
+                {
+                    var version = JsonSerializer.Deserialize<StorageProfileVersion>(
+                        secrets.Unprotect(copy.ProtectedStorageSnapshot), JsonOptions)
+                        ?? throw new InvalidOperationException("Storage snapshot is invalid.");
+                    var provider = storageFactory.Create(version);
+                    try { await DeleteArtifactAsync(provider, manifest, copy.ObjectPrefix, cancellationToken); }
+                    finally { if (provider is IDisposable disposable) disposable.Dispose(); }
+                }
                 copy.Status = BackupCopyStatus.Deleted;
                 copy.ManifestCommitted = false;
                 copy.CompletedAt = DateTimeOffset.UtcNow;
