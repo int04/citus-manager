@@ -5,7 +5,7 @@
 @{ ViewData["Title"] = Model.Cluster.Name; var inventory = Model.Inventory; }
 <div class="page-heading">
     <div><p class="eyebrow">@Model.Cluster.Host:@Model.Cluster.Port / @Model.Cluster.Database</p><h1>@Model.Cluster.Name</h1><p>Citus @Model.Cluster.CitusVersion · TLS @Model.Cluster.SslMode</p></div>
-    <div class="heading-actions"><a class="btn btn-primary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">@T["Cluster.Data"]</a><a class="btn btn-secondary" asp-controller="Activity" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Activity</a><a class="btn btn-secondary" asp-controller="Metrics" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Metrics</a><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Cluster.Id">@T["Cluster.Refresh"]</a></div>
+    <div class="heading-actions"><a class="btn btn-primary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">@T["Cluster.Data"]</a><a class="btn btn-secondary" asp-controller="Backups" asp-action="Cluster" asp-route-clusterId="@Model.Cluster.Id"><i class="fa fa-database" aria-hidden="true"></i> @T["Cluster.Backup"]</a><a class="btn btn-secondary" asp-controller="Activity" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Activity</a><a class="btn btn-secondary" asp-controller="Metrics" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Metrics</a><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Cluster.Id">@T["Cluster.Refresh"]</a></div>
 </div>
 @if (Model.SafeError is not null) { <div class="notice danger" role="alert">@Model.SafeError</div> }
 @if (inventory is not null)

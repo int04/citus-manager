@@ -69,23 +69,48 @@ public sealed class OperationService(
         Guid? clusterId, CancellationToken cancellationToken)
     {
         var query = db.Operations.AsNoTracking().Include(x => x.Steps).AsQueryable();
+        var backupQuery = db.BackupRuns.AsNoTracking().Include(x => x.Steps)
+            .Include(x => x.DestinationCopies).ThenInclude(x => x.StorageProfile).AsQueryable();
+        var restoreQuery = db.RestoreRuns.AsNoTracking().Include(x => x.Steps).AsQueryable();
         if (clusterId.HasValue) query = query.Where(x => x.ClusterId == clusterId);
-        return (await query.OrderByDescending(x => x.RequestedAt).Take(200).ToListAsync(cancellationToken))
-            .Select(Map).ToList();
+        if (clusterId.HasValue)
+        {
+            backupQuery = backupQuery.Where(x => x.ClusterId == clusterId);
+            restoreQuery = restoreQuery.Where(x => x.SourceClusterId == clusterId || x.TargetClusterId == clusterId);
+        }
+        var operations = (await query.OrderByDescending(x => x.RequestedAt).Take(200).ToListAsync(cancellationToken)).Select(Map);
+        var backups = (await backupQuery.OrderByDescending(x => x.CreatedAt).Take(200).ToListAsync(cancellationToken)).Select(MapBackup);
+        var restores = (await restoreQuery.OrderByDescending(x => x.CreatedAt).Take(200).ToListAsync(cancellationToken)).Select(MapRestore);
+        return operations.Concat(backups).Concat(restores).OrderByDescending(x => x.RequestedAt).Take(200).ToList();
     }
 
     public async Task<OperationResponse?> GetAsync(Guid id, CancellationToken cancellationToken)
     {
         var operation = await db.Operations.AsNoTracking().Include(x => x.Steps)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
-        return operation is null ? null : Map(operation);
+        if (operation is not null) return Map(operation);
+        var backup = await db.BackupRuns.AsNoTracking().Include(x => x.Steps)
+            .Include(x => x.DestinationCopies).ThenInclude(x => x.StorageProfile)
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (backup is not null) return MapBackup(backup);
+        var restore = await db.RestoreRuns.AsNoTracking().Include(x => x.Steps)
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        return restore is null ? null : MapRestore(restore);
     }
 
     public async Task<OperationProgressResponse?> GetProgressAsync(Guid id, CancellationToken cancellationToken)
     {
         var operation = await db.Operations.AsNoTracking().Include(x => x.Steps)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
-        if (operation is null) return null;
+        if (operation is null)
+        {
+            var backup = await db.BackupRuns.AsNoTracking().Include(x => x.Steps)
+                .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+            if (backup is not null) return MapBackupProgress(backup);
+            var restore = await db.RestoreRuns.AsNoTracking().Include(x => x.Steps)
+                .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+            return restore is null ? null : MapRestoreProgress(restore);
+        }
         int? current = null, total = null;
         long? processed = null, totalBytes = null, exactRows = null, exactBytes = null;
         string? warning = null, resultSchema = null, resultTable = null;
@@ -457,12 +482,89 @@ public sealed class OperationService(
         x.SafeError, x.RequestedBy, x.ApprovedBy, x.RequestedAt, x.StartedAt, x.CompletedAt,
         x.Steps.OrderBy(s => s.Sequence).Select(s => new OperationStepResponse(
             s.Sequence, s.Name, s.Status, s.Detail, s.StartedAt, s.CompletedAt)).ToList());
+
+    internal static OperationResponse MapBackup(BackupRun x) => new(
+        x.Id, x.ClusterId, OperationKind.Backup, OperationRisk.Read, MapStatus(x.Status),
+        JsonSerializer.Serialize(new { backupRunId = x.Id, x.Trigger, x.Attempt, x.RetryAt, x.PolicyId }),
+        JsonSerializer.Serialize(new
+        {
+            x.CurrentPhase, x.ProcessedBytes, x.EstimatedSourceBytes, x.ArchiveBytes, x.ObjectCount,
+            x.ProcessExitCode, x.DiagnosticTail,
+            destinations = x.DestinationCopies.Select(copy => new
+            {
+                copy.StorageProfileId, name = copy.StorageProfile?.Name, copy.Status, copy.UploadedBytes,
+                copy.UploadedObjects, copy.ManifestCommitted, copy.AttemptCount, copy.SafeError
+            })
+        }),
+        x.SafeError, x.RequestedBy ?? Guid.Empty, x.RequestedBy, x.CreatedAt, x.StartedAt, x.CompletedAt,
+        x.Steps.OrderBy(step => step.Sequence).Select(step => new OperationStepResponse(
+            step.Sequence, step.Name, step.Status, StepDetail(step.SafeError, step.DetailJson),
+            step.StartedAt ?? x.CreatedAt, step.CompletedAt)).ToList());
+
+    internal static OperationResponse MapRestore(RestoreRun x) => new(
+        x.Id, x.SourceClusterId, OperationKind.Restore, OperationRisk.Destructive, MapStatus(x.Status),
+        JsonSerializer.Serialize(new
+        {
+            restoreRunId = x.Id, x.BackupRunId, x.SourceClusterId, x.TargetClusterId,
+            x.IsSameTarget, x.MaintenanceAcknowledged, x.ParallelJobs
+        }),
+        JsonSerializer.Serialize(new { x.CurrentPhase, x.ProcessedBytes, x.DiagnosticTail }),
+        x.SafeError, x.RequestedBy, x.RequestedBy, x.CreatedAt, x.StartedAt, x.CompletedAt,
+        x.Steps.OrderBy(step => step.Sequence).Select(step => new OperationStepResponse(
+            step.Sequence, step.Name, step.Status, StepDetail(step.SafeError, step.DetailJson),
+            step.StartedAt ?? x.CreatedAt, step.CompletedAt)).ToList());
+
+    private static OperationProgressResponse MapBackupProgress(BackupRun x) => new(
+        x.Id, OperationKind.Backup, OperationRisk.Read, MapStatus(x.Status), x.CurrentPhase ?? x.Status.ToString(),
+        x.ObjectCount, null, x.ProcessedBytes, x.EstimatedSourceBytes,
+        Elapsed(x.StartedAt, x.CompletedAt), x.Status is BackupRunStatus.Queued or BackupRunStatus.Running or BackupRunStatus.RetryScheduled,
+        x.RetryAt is null ? null : $"Retry scheduled for {x.RetryAt:u}", x.SafeError,
+        MapBackup(x).Steps, ExactBytes: x.ArchiveBytes == 0 ? null : x.ArchiveBytes);
+
+    private static OperationProgressResponse MapRestoreProgress(RestoreRun x) => new(
+        x.Id, OperationKind.Restore, OperationRisk.Destructive, MapStatus(x.Status), x.CurrentPhase ?? x.Status.ToString(),
+        null, null, x.ProcessedBytes, x.BackupRun?.ArchiveBytes,
+        Elapsed(x.StartedAt, x.CompletedAt), x.Status is RestoreRunStatus.Queued or RestoreRunStatus.Running,
+        null, x.SafeError, MapRestore(x).Steps);
+
+    private static OperationStatus MapStatus(BackupRunStatus status) => status switch
+    {
+        BackupRunStatus.Queued => OperationStatus.Approved,
+        BackupRunStatus.Running => OperationStatus.Running,
+        BackupRunStatus.RetryScheduled => OperationStatus.RetryScheduled,
+        BackupRunStatus.Succeeded => OperationStatus.Succeeded,
+        BackupRunStatus.PartialSucceeded => OperationStatus.PartialSucceeded,
+        BackupRunStatus.Failed => OperationStatus.Failed,
+        BackupRunStatus.Cancelling => OperationStatus.Cancelling,
+        BackupRunStatus.Cancelled => OperationStatus.Cancelled,
+        _ => OperationStatus.Failed
+    };
+
+    private static OperationStatus MapStatus(RestoreRunStatus status) => status switch
+    {
+        RestoreRunStatus.Queued => OperationStatus.Approved,
+        RestoreRunStatus.Running => OperationStatus.Running,
+        RestoreRunStatus.Succeeded => OperationStatus.Succeeded,
+        RestoreRunStatus.Failed => OperationStatus.Failed,
+        RestoreRunStatus.RecoveryRequired => OperationStatus.RecoveryRequired,
+        RestoreRunStatus.Cancelling => OperationStatus.Cancelling,
+        RestoreRunStatus.Cancelled => OperationStatus.Cancelled,
+        _ => OperationStatus.Failed
+    };
+
+    private static string? StepDetail(string? safeError, string? detail) =>
+        !string.IsNullOrWhiteSpace(safeError) ? safeError : detail;
+
+    private static TimeSpan? Elapsed(DateTimeOffset? startedAt, DateTimeOffset? completedAt) =>
+        startedAt is null ? null : (completedAt ?? DateTimeOffset.UtcNow) - startedAt.Value;
 }
 
 internal static class OperationSafety
 {
     internal static void ValidateRequest(CreateOperationRequest request)
     {
+        if (request.Kind is OperationKind.Backup or OperationKind.Restore)
+            throw new ArgumentException("Backup and restore operations must be created from the backup workflow.");
         if (request.Kind == OperationKind.ConvertTable)
             throw new ArgumentException("Use the dedicated table-conversion endpoint.");
         if (request.Kind is OperationKind.AddWorker or OperationKind.DrainWorker or OperationKind.RemoveWorker)

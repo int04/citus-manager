@@ -3,6 +3,7 @@ using System;
 using CitusManager.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CitusManager.Data.Migrations
 {
     [DbContext(typeof(ControlDbContext))]
-    partial class ControlDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260817070946_AddCoordinatorBackup")]
+    partial class AddCoordinatorBackup
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1057,10 +1060,6 @@ namespace CitusManager.Data.Migrations
                     b.Property<DateTimeOffset?>("TargetCredentialsExpireAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("TargetIdentityHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<int>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("integer");
@@ -1072,8 +1071,6 @@ namespace CitusManager.Data.Migrations
                     b.HasIndex("BackupRunId", "CreatedAt");
 
                     b.HasIndex("TargetClusterId", "Status");
-
-                    b.HasIndex("TargetIdentityHash", "Status");
 
                     b.ToTable("RestoreRuns");
                 });

@@ -10,3 +10,4 @@ public sealed class UsersResource;
 public sealed class ValidationResource;
 public sealed class ProblemDetailsResource;
 public sealed class ClientResource;
+public sealed class BackupResource;

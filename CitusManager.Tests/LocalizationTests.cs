@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Globalization;
+using System.Resources;
 using System.Xml.Linq;
 using CitusManager.Localization;
 using Microsoft.AspNetCore.Http;
@@ -109,10 +111,23 @@ public sealed class LocalizationTests
 
         var problems = provider.GetRequiredService<IStringLocalizer<ProblemDetailsResource>>();
         var client = provider.GetRequiredService<IStringLocalizer<ClientResource>>();
+        var backup = provider.GetRequiredService<IStringLocalizer<BackupResource>>();
 
         Assert.False(problems["Unexpected.Title"].ResourceNotFound);
         Assert.Equal("Unexpected error", problems["Unexpected.Title"].Value);
         Assert.Contains(client.GetAllStrings(true), item => item.Name == "common.close");
+        Assert.False(backup["Page.Eyebrow"].ResourceNotFound);
+        Assert.Equal("Logical coordinator backup", backup["Page.Eyebrow"].Value);
+    }
+
+    [Fact]
+    public void Backup_resource_has_vietnamese_values()
+    {
+        var resources = new ResourceManager("CitusManager.Resources.BackupResource", typeof(BackupResource).Assembly);
+
+        Assert.Equal("Sao lưu logic qua coordinator", resources.GetString("Page.Eyebrow", new CultureInfo("vi-VN")));
+        Assert.Equal("Sao lưu ngay", resources.GetString("Action.BackupNow", new CultureInfo("vi-VN")));
+        Assert.Equal("Áp dụng", resources.GetString("Action.Apply", new CultureInfo("vi-VN")));
     }
 
     private static string[] ReadKeys(string path) => XDocument.Load(path)

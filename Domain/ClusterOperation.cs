@@ -12,7 +12,9 @@ public enum OperationKind
     MergeRangePartitions,
     InspectTable,
     RebuildIndex,
-    ChangeTableMode
+    ChangeTableMode,
+    Backup,
+    Restore
 }
 
 public enum OperationRisk
@@ -32,7 +34,9 @@ public enum OperationStatus
     Cancelled,
     Succeeded,
     Failed,
-    RecoveryRequired
+    RecoveryRequired,
+    RetryScheduled,
+    PartialSucceeded
 }
 
 public sealed class ClusterOperation

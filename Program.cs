@@ -9,6 +9,8 @@ using CitusManager.Middleware;
 using CitusManager.Localization;
 using CitusManager.Security;
 using CitusManager.Services;
+using CitusManager.Services.BackupArtifacts;
+using CitusManager.Services.BackupStorage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
@@ -128,6 +130,28 @@ builder.Services.AddHostedService<MonitoringWorker>();
 builder.Services.AddHttpClient("alerts", client => client.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddHttpClient("prometheus", client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddHostedService<AlertNotificationWorker>();
+builder.Services.Configure<PostgresToolOptions>(builder.Configuration.GetSection(PostgresToolOptions.SectionName));
+builder.Services.Configure<BackupExecutionOptions>(builder.Configuration.GetSection("Backup:Execution"));
+builder.Services.AddSingleton(builder.Configuration.GetSection("Backup:Storage").Get<BackupStorageOptions>() ?? new());
+builder.Services.AddScoped<IBackupSecretProtector, BackupSecretProtector>();
+builder.Services.AddScoped<IPostgresToolRunner, PostgresToolRunner>();
+builder.Services.AddScoped<ICitusBackupMetadataCollector, CitusBackupMetadataCollector>();
+builder.Services.AddScoped<IBackupArtifactWriter, BackupArtifactWriter>();
+builder.Services.AddScoped<IBackupArtifactReader, BackupArtifactReader>();
+builder.Services.AddScoped<IBackupStorageProviderFactory, BackupStorageProviderFactory>();
+builder.Services.AddScoped<INotificationSender, BackupNotificationSender>();
+builder.Services.AddScoped<IBackupService, BackupService>();
+builder.Services.AddScoped<IRestoreService, RestoreService>();
+builder.Services.AddScoped<IBackupProfileService, BackupProfileService>();
+builder.Services.AddScoped<IBackupRunExecutor, BackupRunExecutor>();
+builder.Services.AddScoped<IRestoreRunExecutor, RestoreRunExecutor>();
+builder.Services.AddHttpClient("backup-google-drive", client => client.Timeout = TimeSpan.FromMinutes(10));
+builder.Services.AddHttpClient("backup-notifications", client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddHostedService<BackupBootstrapService>();
+builder.Services.AddHostedService<BackupSchedulerWorker>();
+builder.Services.AddHostedService<BackupRunWorker>();
+builder.Services.AddHostedService<BackupDestinationRepairWorker>();
+builder.Services.AddHostedService<RestoreRunWorker>();
 
 var app = builder.Build();
 
@@ -161,6 +185,7 @@ app.MapClusterEndpoints();
 app.MapOperationEndpoints();
 app.MapAuditEndpoints();
 app.MapMonitoringEndpoints();
+app.MapBackupEndpoints();
 app.MapControllerRoute(
         name: "default",
         pattern: "{controller=Home}/{action=Index}/{id?}")

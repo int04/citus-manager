@@ -15,4 +15,4 @@ else
     }
     </tbody></table></div>
 }
-@functions { static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.Running or OperationStatus.Approved => "warning", _ => "neutral" }; }
+@functions { static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled => "warning", _ => "neutral" }; }

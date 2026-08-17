@@ -9,3 +9,5 @@ riderModule.iml
 /_ReSharper.Caches/
 node_modules/
 .build/
+backup-data/
+backup-spool/

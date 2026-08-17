@@ -4,7 +4,7 @@
 @inject IStringLocalizer<OperationsResource> T
 @{
     ViewData["Title"] = T["Title"];
-    var running = Model.Count(x => x.Status is OperationStatus.Approved or OperationStatus.Running or OperationStatus.Cancelling);
+    var running = Model.Count(x => x.Status is OperationStatus.Approved or OperationStatus.Running or OperationStatus.Cancelling or OperationStatus.RetryScheduled);
     var attention = Model.Count(x => x.Status is OperationStatus.Failed or OperationStatus.RecoveryRequired);
 }
 <div class="page-heading">
@@ -13,7 +13,7 @@
 </div>
 <section class="metric-grid" aria-label="@T["Summary"]">
     <article class="metric-card"><span>@T["Total"]</span><strong>@Model.Count</strong><small>@T["Latest"]</small></article>
-    <article class="metric-card"><span>@T["Active"]</span><strong>@running</strong><small>approved / running / cancelling</small></article>
+    <article class="metric-card"><span>@T["Active"]</span><strong>@running</strong><small>approved / running / retry / cancelling</small></article>
     <article class="metric-card"><span>@T["Awaiting"]</span><strong>@Model.Count(x => x.Status == OperationStatus.AwaitingApproval)</strong><small>@T["AnotherAdmin"]</small></article>
     <article class="metric-card @(attention > 0 ? "metric-danger" : null)"><span>@T["Attention"]</span><strong>@attention</strong><small>failed / recovery required</small></article>
 </section>
