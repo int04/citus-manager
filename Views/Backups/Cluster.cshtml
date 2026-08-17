@@ -166,6 +166,7 @@
                 @if (active && canOperate) { <button type="button" class="btn btn-secondary" data-backup-action="cancel" data-url="/api/backup-runs/@run.Id/cancel">@T["Action.Cancel"]</button> }
                 @if (restorable && canOperate) { <button type="button" class="btn btn-primary" data-backup-action="restore" data-backup-id="@run.Id">@T["Action.Apply"]</button> }
                 @if (isAdmin && restorable) { <button type="button" class="btn btn-ghost" data-backup-action="pin" data-url="/api/backup-runs/@run.Id/pin" data-pinned="@run.IsPinned.ToString().ToLowerInvariant()">@(run.IsPinned ? T["Action.Unpin"] : T["Action.Pin"])</button> }
+                @if (isAdmin && !active) { <button type="button" class="btn btn-danger" data-backup-action="delete" data-url="/api/backup-runs/@run.Id">@T["Action.Delete"]</button> }
                 <details class="backup-run-details"><summary>@T["Runs.Details"]</summary><ol>@foreach (var step in run.Steps.OrderBy(x => x.Sequence)) { <li><span>@T[$"Phase.{step.Phase}"]</span><small>@T[$"Status.{step.Status}"]@(string.IsNullOrWhiteSpace(step.Detail) ? "" : $" · {step.Detail}")</small></li> }</ol><p>@T["Runs.ApplicationConsistent"] <strong>@(run.ApplicationConsistent ? T["Common.Yes"] : T["Common.No"])</strong> · <a href="/api/backup-runs/@run.Id/manifest" target="_blank" rel="noopener">@T["Runs.Manifest"]</a></p></details>
             </div></td>
         </tr>
@@ -210,6 +211,7 @@
         ["requestFailed"] = T["Js.RequestFailed"], ["destination"] = T["Js.Destination"], ["confirmUnencrypted"] = T["Js.ConfirmUnencrypted"],
         ["saving"] = T["Js.Saving"], ["policySaved"] = T["Js.PolicySaved"], ["queueing"] = T["Js.Queueing"], ["testing"] = T["Js.Testing"],
         ["profileTestSucceeded"] = T["Js.ProfileTestSucceeded"], ["confirmCancel"] = T["Js.ConfirmCancel"], ["cancelling"] = T["Js.Cancelling"],
+        ["confirmDelete"] = T["Js.ConfirmDelete"], ["deleting"] = T["Js.Deleting"],
         ["confirmMaintenance"] = T["Js.ConfirmMaintenance"], ["typeExactly"] = T["Js.TypeExactly"], ["validating"] = T["Js.Validating"],
         ["rawEstimateUnavailable"] = T["Runs.RawUnavailable"], ["rawEstimate"] = T["Js.RawEstimate"], ["archivePending"] = T["Runs.ArchivePending"],
         ["archive"] = T["Js.Archive"], ["waitingByteStream"] = T["Runs.WaitingStream"], ["objects"] = T["Js.Objects"], ["retry"] = T["Js.Retry"],

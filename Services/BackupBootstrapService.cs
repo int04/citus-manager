@@ -20,13 +20,16 @@ public sealed class BackupBootstrapService(
             if (Directory.Exists(spoolRoot))
                 foreach (var partial in Directory.EnumerateFiles(spoolRoot, "citus-backup-*.part", SearchOption.TopDirectoryOnly))
                     try { File.Delete(partial); } catch (IOException) { }
-            if (!await db.StorageProfiles.AnyAsync(cancellationToken))
+            var defaultLocal = await db.StorageProfiles.Include(x => x.Versions)
+                .FirstOrDefaultAsync(x => x.Type == StorageType.Local && x.Name == "Local backup storage", cancellationToken);
+            if (defaultLocal is null)
             {
                 var profile = new StorageProfile { Name = "Local backup storage", Type = StorageType.Local };
                 profile.Versions.Add(new StorageProfileVersion
                     { StorageProfileId = profile.Id, Version = 1, Type = StorageType.Local, LocalSubdirectory = "coordinator" });
                 db.StorageProfiles.Add(profile);
             }
+            else if (!defaultLocal.IsEnabled) defaultLocal.IsEnabled = true;
             if (!await db.BackupTemplates.AnyAsync(cancellationToken))
                 db.BackupTemplates.Add(new BackupTemplate { Name = "Daily encrypted · 30 days", TimeZoneId = "Asia/Ho_Chi_Minh" });
             var interruptedBackups = await db.BackupRuns.Include(x => x.DestinationCopies)

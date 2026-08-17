@@ -77,6 +77,16 @@ public static class BackupEndpoints
                 return TypedResults.Ok(await service.SetPinnedAsync(id, request.Pinned, EndpointUser.Id(user), cancellationToken));
             }).RequireAuthorization("Admin").WithName("SetBackupPinned").WithSummary("Protect or release a backup from retention cleanup");
 
+        runs.MapDelete("", async Task<NoContent> (
+                Guid id, ClaimsPrincipal user, IBackupService service, IAntiforgery antiforgery,
+                HttpContext context, CancellationToken cancellationToken) =>
+            {
+                await antiforgery.ValidateRequestAsync(context);
+                await service.DeleteAsync(id, EndpointUser.Id(user), cancellationToken);
+                return TypedResults.NoContent();
+            }).RequireAuthorization("Admin").WithName("DeleteBackupRun")
+            .WithSummary("Delete every local/cloud artifact copy and then remove the backup record");
+
         runs.MapPost("/restores", async Task<Accepted<RestoreRunResponse>> (
                 Guid id, CreateRestoreRunRequest request, ClaimsPrincipal user, IRestoreService service,
                 IAntiforgery antiforgery, HttpContext context, CancellationToken cancellationToken) =>

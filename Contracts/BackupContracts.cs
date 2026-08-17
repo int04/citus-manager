@@ -102,6 +102,7 @@ namespace CitusManager.Services
         Task<BackupProgressResponse?> GetProgressAsync(Guid runId, CancellationToken cancellationToken);
         Task<BackupPolicyResponse> SavePolicyAsync(Guid clusterId, SaveBackupPolicyRequest request, Guid actorId, CancellationToken cancellationToken);
         Task<BackupRunResponse> SetPinnedAsync(Guid runId, bool pinned, Guid actorId, CancellationToken cancellationToken);
+        Task DeleteAsync(Guid runId, Guid actorId, CancellationToken cancellationToken);
     }
 
     public interface IRestoreService

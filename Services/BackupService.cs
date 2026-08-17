@@ -3,6 +3,8 @@ using CitusManager.Contracts;
 using CitusManager.Data;
 using CitusManager.Domain;
 using CitusManager.Security;
+using CitusManager.Services.BackupArtifacts;
+using CitusManager.Services.BackupStorage;
 using Microsoft.EntityFrameworkCore;
 
 namespace CitusManager.Services;
@@ -14,7 +16,10 @@ public sealed record BackupPolicySnapshot(
     IReadOnlyList<VersionedProfileReference> Notifications);
 public sealed record VersionedProfileReference(Guid Id, int Version, string Type, string Name);
 
-public sealed class BackupService(ControlDbContext db, IBackupSecretProtector secrets) : IBackupService
+public sealed class BackupService(
+    ControlDbContext db,
+    IBackupSecretProtector secrets,
+    IBackupStorageProviderFactory storageFactory) : IBackupService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -32,7 +37,13 @@ public sealed class BackupService(ControlDbContext db, IBackupSecretProtector se
         var restores = await db.RestoreRuns.AsNoTracking().Include(x => x.Steps)
             .Where(x => x.SourceClusterId == clusterId).OrderByDescending(x => x.CreatedAt).Take(100).ToListAsync(cancellationToken);
         var targets = await db.Clusters.AsNoTracking().Where(x => x.IsEnabled).OrderBy(x => x.Name).ToListAsync(cancellationToken);
-        return new(MapCluster(cluster), MapPolicy(policy),
+        var mappedPolicy = MapPolicy(policy);
+        if (mappedPolicy.StorageProfileIds.Count == 0)
+        {
+            var defaultLocal = storages.FirstOrDefault(IsDefaultLocal);
+            if (defaultLocal is not null) mappedPolicy = mappedPolicy with { StorageProfileIds = [defaultLocal.Id] };
+        }
+        return new(MapCluster(cluster), mappedPolicy,
             templates.Select(x => new BackupTemplateSummaryResponse(x.Id, x.Name, x.Version, ScheduleSummary(x))).ToList(),
             storages.Select(x => new BackupProfileSummaryResponse(x.Id, x.Name, x.Type.ToString(), x.CurrentVersion,
                 x.Type == StorageType.Local ? "Local encrypted artifact storage" : x.Type == StorageType.S3Compatible ? "S3-compatible / R2" : "Google Drive OAuth", StorageReady(x))).ToList(),
@@ -56,7 +67,12 @@ public sealed class BackupService(ControlDbContext db, IBackupSecretProtector se
             .Include(x => x.Notifications).ThenInclude(x => x.NotificationProfile)
             .SingleOrDefaultAsync(x => x.ClusterId == clusterId, cancellationToken)
             ?? throw new InvalidOperationException("Backup policy is not configured.");
-        if (policy.Storages.All(x => !x.IsEnabled)) throw new InvalidOperationException("At least one storage destination is required.");
+        if (policy.Storages.All(x => !x.IsEnabled || x.StorageProfile is not { IsEnabled: true }))
+        {
+            var defaultLocal = await FindDefaultLocalAsync(cancellationToken);
+            policy.Storages.Add(new ClusterBackupPolicyStorage
+                { Policy = policy, StorageProfileId = defaultLocal.Id, StorageProfile = defaultLocal });
+        }
         var active = await db.BackupRuns.AnyAsync(x => x.ClusterId == clusterId &&
             (x.Status == BackupRunStatus.Queued || x.Status == BackupRunStatus.Running || x.Status == BackupRunStatus.Cancelling), cancellationToken);
         var activeRestore = await db.RestoreRuns.AnyAsync(x => (x.SourceClusterId == clusterId || x.TargetClusterId == clusterId) &&
@@ -129,7 +145,7 @@ public sealed class BackupService(ControlDbContext db, IBackupSecretProtector se
         catch (TimeZoneNotFoundException) { throw new ArgumentException("Unknown IANA timezone.", nameof(request.TimeZone)); }
         var storageIds = request.StorageProfileIds.Distinct().ToList();
         var notificationIds = request.NotificationProfileIds.Distinct().ToList();
-        if (storageIds.Count == 0) throw new ArgumentException("At least one storage profile is required.");
+        if (storageIds.Count == 0) storageIds.Add((await FindDefaultLocalAsync(cancellationToken)).Id);
         if (await db.StorageProfiles.CountAsync(x => storageIds.Contains(x.Id) && x.IsEnabled, cancellationToken) != storageIds.Count)
             throw new ArgumentException("One or more storage profiles are unavailable.");
         if (await db.NotificationProfiles.CountAsync(x => notificationIds.Contains(x.Id) && x.IsEnabled, cancellationToken) != notificationIds.Count)
@@ -191,9 +207,83 @@ public sealed class BackupService(ControlDbContext db, IBackupSecretProtector se
         return MapRun(run);
     }
 
+    public async Task DeleteAsync(Guid runId, Guid actorId, CancellationToken cancellationToken)
+    {
+        var run = await db.BackupRuns.Include(x => x.DestinationCopies).Include(x => x.RestoreRuns)
+            .SingleOrDefaultAsync(x => x.Id == runId, cancellationToken)
+            ?? throw new KeyNotFoundException("Backup run not found.");
+        if (run.Status is BackupRunStatus.Queued or BackupRunStatus.Running or BackupRunStatus.RetryScheduled or BackupRunStatus.Cancelling)
+            throw new InvalidOperationException("An active backup cannot be deleted.");
+        if (run.RestoreRuns.Any(x => x.Status is RestoreRunStatus.Queued or RestoreRunStatus.Running or RestoreRunStatus.Cancelling))
+            throw new InvalidOperationException("Backup cannot be deleted while a restore is active.");
+
+        BackupArtifactManifest? manifest = null;
+        if (!string.IsNullOrWhiteSpace(run.ManifestJson))
+            manifest = JsonSerializer.Deserialize<BackupArtifactManifest>(run.ManifestJson, JsonOptions);
+        var failures = new List<string>();
+        foreach (var copy in run.DestinationCopies.Where(x => x.Status != BackupCopyStatus.Deleted))
+        {
+            try
+            {
+                var version = JsonSerializer.Deserialize<StorageProfileVersion>(
+                    secrets.Unprotect(copy.ProtectedStorageSnapshot), JsonOptions)
+                    ?? throw new InvalidOperationException("Storage snapshot is invalid.");
+                var provider = storageFactory.Create(version);
+                try { await DeleteArtifactAsync(provider, manifest, copy.ObjectPrefix, cancellationToken); }
+                finally { if (provider is IDisposable disposable) disposable.Dispose(); }
+                copy.Status = BackupCopyStatus.Deleted;
+                copy.ManifestCommitted = false;
+                copy.CompletedAt = DateTimeOffset.UtcNow;
+                copy.SafeError = null;
+            }
+            catch (Exception exception)
+            {
+                copy.Status = BackupCopyStatus.DeletePending;
+                copy.SafeError = Safe(exception);
+                failures.Add($"{copy.StorageProfileId}: {copy.SafeError}");
+            }
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        if (failures.Count > 0)
+            throw new IOException($"Could not delete backup from every destination: {string.Join("; ", failures)}");
+
+        db.RestoreRuns.RemoveRange(run.RestoreRuns);
+        db.BackupRuns.Remove(run);
+        db.AuditEvents.Add(ClusterService.Audit(actorId, "backup.delete", "backup-run", run.Id,
+            new { run.ClusterId, DestinationCount = run.DestinationCopies.Count }));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    internal static async Task DeleteArtifactAsync(
+        IBackupStorageProvider provider, BackupArtifactManifest? manifest, string? objectPrefix,
+        CancellationToken cancellationToken)
+    {
+        var prefix = objectPrefix;
+        if (string.IsNullOrWhiteSpace(prefix) && manifest?.Objects.FirstOrDefault() is { } first)
+            prefix = first.Key.Split("/objects/", StringSplitOptions.None)[0];
+        var manifestKey = string.IsNullOrWhiteSpace(prefix) ? null : $"{prefix}/manifest.v1.json";
+        if (!string.IsNullOrWhiteSpace(manifestKey)) await provider.DeleteAsync(manifestKey, cancellationToken);
+        if (manifest is not null)
+            foreach (var item in manifest.Objects.OrderBy(x => x.Index))
+                await provider.DeleteAsync(item.Key, cancellationToken);
+    }
+
     private async Task<BackupRun> LoadRunAsync(Guid id, CancellationToken ct) =>
         await db.BackupRuns.Include(x => x.Steps).Include(x => x.DestinationCopies).ThenInclude(x => x.StorageProfile)
             .SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Backup run not found.");
+
+    private async Task<StorageProfile> FindDefaultLocalAsync(CancellationToken cancellationToken) =>
+        await db.StorageProfiles.Include(x => x.Versions)
+            .FirstOrDefaultAsync(x => x.IsEnabled && x.Type == StorageType.Local && x.Name == "Local backup storage", cancellationToken)
+        ?? await db.StorageProfiles.Include(x => x.Versions)
+            .FirstOrDefaultAsync(x => x.IsEnabled && x.Type == StorageType.Local, cancellationToken)
+        ?? throw new InvalidOperationException("Default local backup storage is unavailable. Restart the application to initialize it.");
+
+    private static bool IsDefaultLocal(StorageProfile profile) =>
+        profile.IsEnabled && profile.Type == StorageType.Local && profile.Name == "Local backup storage";
+
+    private static string Safe(Exception exception) =>
+        exception.Message.Length <= 2000 ? exception.Message : exception.Message[..2000];
 
     internal static BackupRunResponse MapRun(BackupRun x) => new(x.Id, x.ClusterId, x.Trigger.ToString(), x.Status.ToString(),
         x.CurrentPhase ?? x.Status.ToString(), x.ProcessedBytes, x.EstimatedSourceBytes, x.ArchiveBytes == 0 ? null : x.ArchiveBytes,

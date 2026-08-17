@@ -173,10 +173,11 @@
       return;
     }
     if (action === "cancel" && !window.confirm(message("confirmCancel"))) return;
-    setBusy(button, true, action === "pin" ? message("saving") : message("cancelling"));
+    if (action === "delete" && !window.confirm(message("confirmDelete"))) return;
+    setBusy(button, true, action === "pin" ? message("saving") : action === "delete" ? message("deleting") : message("cancelling"));
     try {
       const body = action === "pin" ? { pinned: button.dataset.pinned !== "true" } : {};
-      await request(button.dataset.url, action === "pin" ? "PUT" : "POST", body);
+      await request(button.dataset.url, action === "pin" ? "PUT" : action === "delete" ? "DELETE" : "POST", body);
       window.location.reload();
     } catch (error) { showFeedback(error.message, true); setBusy(button, false); }
   });
