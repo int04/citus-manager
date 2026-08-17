@@ -38,4 +38,22 @@
   <data name="maintenance.modeCascadeFk" xml:space="preserve"><value>Citus will automatically cascade through {0} related table(s) and {1} foreign key(s).</value></data>
   <data name="maintenance.modeQueue" xml:space="preserve"><value>Create and queue conversion</value></data>
   <data name="designer.columnNeedsName" xml:space="preserve"><value>Column {0} needs a name.</value></data>
+  <data name="common.add" xml:space="preserve"><value>Add</value></data>
+  <data name="designer.columns" xml:space="preserve"><value>columns</value></data>
+  <data name="designer.keys" xml:space="preserve"><value>keys</value></data>
+  <data name="designer.foreignKeys" xml:space="preserve"><value>foreign keys</value></data>
+  <data name="designer.indexes" xml:space="preserve"><value>indexes</value></data>
+  <data name="designer.checks" xml:space="preserve"><value>checks</value></data>
+  <data name="designer.confirmDeleteObjects" xml:space="preserve"><value>Remove {0} {1} from this table definition?</value></data>
+  <data name="designer.deleteMany" xml:space="preserve"><value>Delete {0} {1}</value></data>
+  <data name="designer.duplicate" xml:space="preserve"><value>Duplicate</value></data>
+  <data name="designer.objectActions" xml:space="preserve"><value>Table object actions</value></data>
+  <data name="designer.moveUp" xml:space="preserve"><value>Move up</value></data>
+  <data name="designer.moveDown" xml:space="preserve"><value>Move down</value></data>
+  <data name="designer.cannotDeleteRoutingColumn" xml:space="preserve"><value>Partition and Citus distribution columns cannot be deleted here.</value></data>
+  <data name="designer.deleteEyebrow" xml:space="preserve"><value>TABLE DESIGNER</value></data>
+  <data name="designer.deleteTitle" xml:space="preserve"><value>Delete {0} {1}?</value></data>
+  <data name="designer.deleteWarning" xml:space="preserve"><value>The selected objects will be removed from this table definition when you save. This action can affect constraints and indexes.</value></data>
+  <data name="designer.moreObjects" xml:space="preserve"><value>and {0} more…</value></data>
+  <data name="designer.unnamedObject" xml:space="preserve"><value>Unnamed object</value></data>
 </root>

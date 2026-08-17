@@ -421,6 +421,8 @@
   }
   function openModal({ title, eyebrow = "DATABASE ACTION", description = "", body, button = t("common.confirm"), danger = false, variant = "compact", onSubmit }) {
     modalTrigger = menuTrigger;
+    closeDesignerContextMenu();
+    document.querySelector(".dg-designer-confirm-overlay")?.remove();
     designerEditorForm?.remove();
     designerEditorForm = null;
     document.getElementById("database-action-title").textContent = title;
@@ -447,6 +449,8 @@
     requestAnimationFrame(() => modal.querySelector("input:not([type=hidden]), select, textarea, button")?.focus());
   }
   function closeModal() {
+    closeDesignerContextMenu();
+    document.querySelector(".dg-designer-confirm-overlay")?.remove();
     modal.classList.add("hidden");
     document.body.classList.remove("database-modal-open");
     modalSubmit = null;
@@ -679,13 +683,263 @@
       [".dg-check-row", "database-check-editor", "database-check-empty", "database-remove-check"]
     ];
     groups.forEach(([selector, editorId, emptyId, removeId]) => {
-      document.querySelectorAll(selector).forEach(row => { const active = row === selected; row.classList.toggle("is-active", active); row.setAttribute("aria-selected", active ? "true" : "false"); });
+      document.querySelectorAll(selector).forEach(row => { const active = row === selected; row.classList.toggle("is-active", active); row.classList.remove("is-selected"); row.setAttribute("aria-selected", active ? "true" : "false"); });
       if (!selected?.matches(selector)) {
         document.getElementById(editorId)?.classList.add("hidden");
         document.getElementById(emptyId)?.classList.remove("hidden");
         const remove = document.getElementById(removeId); if (remove) remove.disabled = true;
       }
     });
+  }
+  const designerSectionConfig = {
+    columns: { selector: ".database-column-row", listId: "database-column-list", labelKey: "designer.columns" },
+    keys: { selector: ".dg-key-row", listId: "database-key-list", labelKey: "designer.keys" },
+    "foreign-keys": { selector: ".dg-foreign-key-row", listId: "database-foreign-key-list", labelKey: "designer.foreignKeys" },
+    indexes: { selector: ".dg-index-row", listId: "database-index-list", labelKey: "designer.indexes" },
+    checks: { selector: ".dg-check-row", listId: "database-check-list", labelKey: "designer.checks" }
+  };
+  const designerSelectionAnchors = new Map();
+  const activeDesignerSection = () => document.querySelector("[data-designer-section].is-active")?.dataset.designerSection || "table";
+  const selectedDesignerRows = section => {
+    const selector = designerSectionConfig[section]?.selector;
+    return selector ? [...document.querySelectorAll(selector)].filter(row => row.classList.contains("is-active") || row.classList.contains("is-selected")) : [];
+  };
+  function isDesignerRoutingColumn(row) {
+    if (!row?.matches(".database-column-row")) return false;
+    const name = row.dataset.columnName || "";
+    const partitionKey = document.querySelector("[name=PartitionKey]")?.value || "";
+    const distributionColumn = document.querySelector("[name=DistributionColumn]")?.value || "";
+    return name === partitionKey || name === distributionColumn;
+  }
+  function setDesignerRowSelected(row, selected, current = false) {
+    row.classList.toggle("is-selected", selected && !current);
+    row.classList.toggle("is-active", selected && current);
+    row.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+  function designerRowClick(event, section, row, selectRow) {
+    const config = designerSectionConfig[section], rows = [...document.querySelectorAll(config.selector)];
+    if (event.shiftKey) {
+      let anchor = designerSelectionAnchors.get(section);
+      if (!anchor?.isConnected || !rows.includes(anchor)) anchor = rows.find(item => item.classList.contains("is-active")) || row;
+      const anchorIndex = rows.indexOf(anchor), rowIndex = rows.indexOf(row);
+      selectRow(row);
+      rows.slice(Math.min(anchorIndex, rowIndex), Math.max(anchorIndex, rowIndex) + 1)
+        .forEach(item => setDesignerRowSelected(item, true, item === row));
+      designerSelectionAnchors.set(section, anchor);
+      refreshDesignerToolbar();
+      return;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      const selected = selectedDesignerRows(section), alreadySelected = selected.includes(row);
+      if (!alreadySelected) {
+        selectRow(row);
+        selected.filter(item => item.isConnected).forEach(item => setDesignerRowSelected(item, true));
+        setDesignerRowSelected(row, true, true);
+        designerSelectionAnchors.set(section, row);
+      } else if (selected.length === 1) {
+        clearDesignerObjectSelection();
+        designerSelectionAnchors.delete(section);
+      } else if (row.classList.contains("is-active")) {
+        const remaining = selected.filter(item => item !== row && item.isConnected), current = remaining.at(-1);
+        selectRow(current);
+        remaining.filter(item => item !== current).forEach(item => setDesignerRowSelected(item, true));
+        designerSelectionAnchors.set(section, current);
+      } else {
+        setDesignerRowSelected(row, false);
+        designerSelectionAnchors.set(section, selected.find(item => item.classList.contains("is-active")) || selected[0]);
+      }
+      refreshDesignerToolbar();
+      return;
+    }
+    selectRow(row);
+    designerSelectionAnchors.set(section, row);
+    refreshDesignerToolbar();
+  }
+  function refreshDesignerToolbar() {
+    const section = activeDesignerSection(), config = designerSectionConfig[section], selected = selectedDesignerRows(section);
+    const rows = config ? [...document.querySelectorAll(config.selector)] : [];
+    const indexes = selected.map(row => rows.indexOf(row));
+    const protectedColumn = section === "columns" && selected.some(isDesignerRoutingColumn);
+    const remove = document.getElementById("database-designer-remove");
+    const add = document.getElementById("database-designer-add");
+    const up = document.getElementById("database-designer-move-up"), down = document.getElementById("database-designer-move-down");
+    if (add) add.disabled = !config;
+    if (remove) {
+      remove.disabled = !selected.length || protectedColumn || (section === "columns" && rows.length - selected.length < 1);
+      remove.title = protectedColumn ? t("designer.cannotDeleteRoutingColumn") : t("common.delete");
+    }
+    if (up) up.disabled = !selected.length || Math.min(...indexes) <= 0;
+    if (down) down.disabled = !selected.length || Math.max(...indexes) >= rows.length - 1;
+  }
+  function refreshDesignerSection(section) {
+    if (section === "columns") { refreshColumnCount(); syncDistributionColumns(); refreshColumnControls(); }
+    if (section === "keys") { refreshKeyCount(); refreshKeyControls(); }
+    if (section === "foreign-keys") refreshForeignKeyCount();
+    if (section === "indexes") { refreshIndexCount(); updateAutoObjectNames(); }
+    if (section === "checks") refreshCheckCount();
+    updateTableSqlPreview(); refreshDesignerToolbar();
+  }
+  function designerRowLabel(row) {
+    return row?.dataset.columnName || row?.dataset.keyName || row?.dataset.foreignKeyName ||
+      row?.dataset.indexName || row?.dataset.checkName || t("designer.unnamedObject");
+  }
+  function confirmDesignerDelete(rows, label, returnFocus) {
+    closeDesignerContextMenu();
+    document.querySelector(".dg-designer-confirm-overlay")?.remove();
+    return new Promise(resolve => {
+      const overlay = document.createElement("div");
+      overlay.className = "dg-designer-confirm-overlay";
+      overlay.innerHTML = `<section class="dg-designer-confirm" role="alertdialog" aria-modal="true" aria-labelledby="dg-designer-confirm-title" aria-describedby="dg-designer-confirm-description">
+        <header><span class="dg-designer-confirm-icon" aria-hidden="true"><i class="fa fa-trash"></i></span><div><small>${html(t("designer.deleteEyebrow"))}</small><h3 id="dg-designer-confirm-title">${html(t("designer.deleteTitle", rows.length, label))}</h3></div></header>
+        <div class="dg-designer-confirm-body"><p id="dg-designer-confirm-description">${html(t("designer.deleteWarning"))}</p><ul>${rows.slice(0, 6).map(row => `<li>${html(designerRowLabel(row))}</li>`).join("")}${rows.length > 6 ? `<li>${html(t("designer.moreObjects", rows.length - 6))}</li>` : ""}</ul></div>
+        <footer><button type="button" class="btn dg-designer-confirm-cancel">${html(t("common.cancel"))}</button><button type="button" class="btn btn-danger dg-designer-confirm-delete"><i class="fa fa-trash" aria-hidden="true"></i> ${html(t("common.delete"))}</button></footer>
+      </section>`;
+      const finish = accepted => {
+        overlay.remove();
+        if (!accepted && returnFocus?.isConnected) returnFocus.focus();
+        resolve(accepted);
+      };
+      overlay.querySelector(".dg-designer-confirm-cancel").addEventListener("click", () => finish(false));
+      overlay.querySelector(".dg-designer-confirm-delete").addEventListener("click", () => finish(true));
+      overlay.addEventListener("mousedown", event => { if (event.target === overlay) finish(false); });
+      overlay.addEventListener("keydown", event => {
+        event.stopPropagation();
+        if (event.key === "Escape") { event.preventDefault(); finish(false); return; }
+        if (event.key !== "Tab") return;
+        const buttons = [...overlay.querySelectorAll("button:not(:disabled)")], first = buttons[0], last = buttons.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      });
+      modal.appendChild(overlay);
+      overlay.querySelector(".dg-designer-confirm-delete").focus();
+    });
+  }
+  async function removeDesignerRows(section, rows, requireConfirmation = true) {
+    const config = designerSectionConfig[section];
+    if (!config || !rows.length) return;
+    if (section === "columns" && (rows.some(isDesignerRoutingColumn) || tableColumnRows().length - rows.length < 1)) return;
+    const label = t(config.labelKey), returnFocus = rows.find(row => row.classList.contains("is-active")) || rows[0];
+    if (requireConfirmation && !await confirmDesignerDelete(rows, label, returnFocus)) return;
+    const allRows = [...document.querySelectorAll(config.selector)], firstIndex = Math.min(...rows.map(row => allRows.indexOf(row)));
+    rows.forEach(row => row.remove());
+    const remaining = [...document.querySelectorAll(config.selector)], next = remaining[Math.min(firstIndex, remaining.length - 1)];
+    if (next) { next.click(); next.focus(); designerSelectionAnchors.set(section, next); }
+    else { clearDesignerObjectSelection(); designerSelectionAnchors.delete(section); }
+    refreshDesignerSection(section);
+  }
+  function moveDesignerRows(section, direction) {
+    const config = designerSectionConfig[section], selected = selectedDesignerRows(section);
+    if (!config || !selected.length) return;
+    const selectedSet = new Set(selected), ordered = direction < 0 ? selected : [...selected].reverse();
+    ordered.forEach(row => {
+      const sibling = direction < 0 ? row.previousElementSibling : row.nextElementSibling;
+      if (!sibling || selectedSet.has(sibling) || !sibling.matches(config.selector)) return;
+      row.parentElement.insertBefore(row, direction < 0 ? sibling : sibling.nextElementSibling);
+    });
+    refreshDesignerSection(section);
+  }
+  function duplicateDesignerRow(section, row) {
+    if (!row) return;
+    const nameSelector = ["keys", "foreign-keys", "indexes"].includes(section)
+      ? ".dg-key-row, .dg-foreign-key-row, .dg-index-row"
+      : designerSectionConfig[section].selector;
+    const names = new Set([...document.querySelectorAll(nameSelector)].map(item =>
+      item.dataset.columnName || item.dataset.keyName || item.dataset.foreignKeyName || item.dataset.indexName || item.dataset.checkName));
+    const cloneName = name => {
+      const cloneSuffix = "_clone", base = `${truncatePgIdentifier(name || "object", 63 - cloneSuffix.length)}${cloneSuffix}`; let candidate = base, number = 2;
+      while (names.has(candidate)) { const suffix = `_${number++}`; candidate = `${truncatePgIdentifier(base, 63 - suffix.length)}${suffix}`; }
+      return candidate;
+    };
+    if (section === "columns") addColumnRow(designerMetadata, { ...columnRowData(row), originalName: "", name: cloneName(columnRowData(row).name) });
+    if (section === "keys") { const key = keyRowData(row); addKeyRow({ ...key, kind: key.kind === "Primary" ? "Unique" : key.kind, name: cloneName(key.name) }); }
+    if (section === "foreign-keys") addForeignKeyRow(designerMetadata, { ...foreignKeyRowData(row), name: cloneName(foreignKeyRowData(row).name) });
+    if (section === "indexes") addIndexRow({ ...indexRowData(row), name: cloneName(indexRowData(row).name) });
+    if (section === "checks") addCheckRow({ ...checkRowData(row), name: cloneName(checkRowData(row).name) });
+    const duplicate = document.querySelector(`${designerSectionConfig[section].selector}.is-active`);
+    if (duplicate) designerSelectionAnchors.set(section, duplicate);
+    refreshDesignerToolbar();
+  }
+  function addDesignerObject(section) {
+    if (section === "columns") addColumnRow(designerMetadata);
+    if (section === "keys") addKeyRow();
+    if (section === "foreign-keys") addForeignKeyRow(designerMetadata);
+    if (section === "indexes") addIndexRow();
+    if (section === "checks") addCheckRow();
+    const added = designerSectionConfig[section] ? document.querySelector(`${designerSectionConfig[section].selector}.is-active`) : null;
+    if (added) designerSelectionAnchors.set(section, added);
+    refreshDesignerToolbar();
+  }
+  function closeDesignerContextMenu() { document.getElementById("database-designer-context-menu")?.remove(); }
+  function showDesignerContextMenu(event, section, row = null) {
+    event.preventDefault(); event.stopPropagation(); closeDesignerContextMenu();
+    const returnFocus = row || event.currentTarget;
+    if (row && !selectedDesignerRows(section).includes(row)) row.click();
+    const selected = selectedDesignerRows(section), config = designerSectionConfig[section];
+    const contextMenu = document.createElement("div"); contextMenu.id = "database-designer-context-menu"; contextMenu.className = "dg-designer-context-menu"; contextMenu.setAttribute("role", "menu"); contextMenu.setAttribute("aria-label", t("designer.objectActions"));
+    const addItem = (label, action, disabled = false) => { const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.dataset.action = action; button.disabled = disabled; button.setAttribute("role", "menuitem"); contextMenu.appendChild(button); };
+    if (!row) addItem(t("common.add"), "add");
+    else {
+      const protectedColumn = section === "columns" && selected.some(isDesignerRoutingColumn);
+      addItem(selected.length > 1 ? t("designer.deleteMany", selected.length, t(config.labelKey)) : t("common.delete"), "delete", protectedColumn || (section === "columns" && tableColumnRows().length - selected.length < 1));
+      if (selected.length === 1) addItem(t("designer.duplicate"), "duplicate");
+    }
+    const anchor = row?.getBoundingClientRect(), clientX = Number.isFinite(event.clientX) && event.clientX > 0 ? event.clientX : anchor?.left || 8;
+    const clientY = Number.isFinite(event.clientY) && event.clientY > 0 ? event.clientY : anchor?.bottom || 8;
+    contextMenu.addEventListener("click", menuEvent => {
+      const action = menuEvent.target.closest("button")?.dataset.action; if (!action) return;
+      if (action === "add") addDesignerObject(section);
+      if (action === "delete") removeDesignerRows(section, selectedDesignerRows(section));
+      if (action === "duplicate") duplicateDesignerRow(section, selectedDesignerRows(section)[0]);
+      closeDesignerContextMenu();
+    });
+    contextMenu.addEventListener("keydown", menuEvent => {
+      if (menuEvent.key === "Escape") { menuEvent.preventDefault(); closeDesignerContextMenu(); returnFocus?.focus(); return; }
+      const buttons = [...contextMenu.querySelectorAll("button:not(:disabled)")];
+      if (menuEvent.key === "Home" || menuEvent.key === "End") { menuEvent.preventDefault(); buttons[menuEvent.key === "Home" ? 0 : buttons.length - 1]?.focus(); return; }
+      if (!["ArrowUp", "ArrowDown", "Tab"].includes(menuEvent.key)) return;
+      menuEvent.preventDefault(); const index = buttons.indexOf(document.activeElement), forward = menuEvent.key === "ArrowDown" || (menuEvent.key === "Tab" && !menuEvent.shiftKey);
+      buttons[(index + (forward ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+    });
+    document.body.appendChild(contextMenu);
+    const bounds = contextMenu.getBoundingClientRect();
+    contextMenu.style.left = `${Math.max(8, Math.min(clientX, window.innerWidth - bounds.width - 8))}px`;
+    contextMenu.style.top = `${Math.max(8, Math.min(clientY, window.innerHeight - bounds.height - 8))}px`;
+    contextMenu.querySelector("button:not(:disabled)")?.focus();
+  }
+  function wireDesignerObjectRow(row, section, selectRow) {
+    row.setAttribute("aria-selected", "false");
+    row.setAttribute("aria-haspopup", "menu");
+    let reorderStarted = false, startY = 0, suppressContextTimer = 0;
+    row.addEventListener("click", event => designerRowClick(event, section, row, selectRow));
+    row.addEventListener("contextmenu", event => {
+      if (reorderStarted || row.dataset.suppressContextMenu === "true") {
+        event.preventDefault(); event.stopPropagation(); reorderStarted = false; delete row.dataset.suppressContextMenu; clearTimeout(suppressContextTimer); return;
+      }
+      showDesignerContextMenu(event, section, row);
+    });
+    row.addEventListener("keydown", event => {
+      if (event.key === "Delete") { event.preventDefault(); removeDesignerRows(section, selectedDesignerRows(section).includes(row) ? selectedDesignerRows(section) : [row]); return; }
+      if (event.key === "F10" && event.shiftKey) { showDesignerContextMenu(event, section, row); return; }
+      if (event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); moveDesignerRows(section, event.key === "ArrowUp" ? -1 : 1); }
+      else if (["ArrowUp", "ArrowDown"].includes(event.key)) {
+        event.preventDefault(); const sibling = event.key === "ArrowUp" ? row.previousElementSibling : row.nextElementSibling;
+        if (sibling?.matches(designerSectionConfig[section].selector)) { designerRowClick(event, section, sibling, selectRow); sibling.focus(); }
+      }
+    });
+    row.addEventListener("pointerdown", event => { if (event.button !== 2) return; clearTimeout(suppressContextTimer); delete row.dataset.suppressContextMenu; startY = event.clientY; reorderStarted = false; row.setPointerCapture?.(event.pointerId); });
+    row.addEventListener("pointermove", event => {
+      if (!(event.buttons & 2) || Math.abs(event.clientY - startY) < 8) return;
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(designerSectionConfig[section].selector);
+      if (!target || target === row || target.parentElement !== row.parentElement) return;
+      reorderStarted = true; row.dataset.suppressContextMenu = "true"; closeDesignerContextMenu(); target.parentElement.insertBefore(row, event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2 ? target : target.nextElementSibling); refreshDesignerSection(section);
+    });
+    row.addEventListener("pointerup", event => {
+      if (row.hasPointerCapture?.(event.pointerId)) row.releasePointerCapture(event.pointerId);
+      if (!reorderStarted) return;
+      event.preventDefault(); event.stopPropagation(); row.dataset.suppressContextMenu = "true";
+      suppressContextTimer = setTimeout(() => { reorderStarted = false; delete row.dataset.suppressContextMenu; }, 500);
+    });
+    row.addEventListener("pointercancel", () => { reorderStarted = false; delete row.dataset.suppressContextMenu; clearTimeout(suppressContextTimer); });
   }
   function renderColumnSummary(row) {
     const column = columnRowData(row);
@@ -802,13 +1056,7 @@
     row.dataset.columnIdentityCache = initial.identityCache ?? (existing ? "" : "1");
     row.dataset.columnIdentityCycle = initial.identityCycle ? "true" : "false";
     renderColumnSummary(row);
-    row.addEventListener("click", () => selectColumnRow(row));
-    row.addEventListener("keydown", event => {
-      if (event.key === "Delete") { event.preventDefault(); selectColumnRow(row); removeActiveColumn(); return; }
-      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-      event.preventDefault(); const sibling = event.key === "ArrowUp" ? row.previousElementSibling : row.nextElementSibling;
-      if (sibling?.classList.contains("database-column-row")) { selectColumnRow(sibling); sibling.focus(); }
-    });
+    wireDesignerObjectRow(row, "columns", selectColumnRow);
     document.getElementById("database-column-list").appendChild(row);
     if (select) selectColumnRow(row);
     else {
@@ -852,14 +1100,6 @@
     const table = form.elements.Name?.value.trim() || "table";
     const parts = [table, ...columns.filter(Boolean)].map(value => value.replace(/[^\p{L}\p{N}_$]/gu, "_").replace(/_+/g, "_").replace(/^_|_$/g, "")).filter(Boolean);
     return truncatePgIdentifier(parts.join("_") || "table_object");
-  }
-  function wireObjectTreeKeyboard(row, className, selectRow, removeRow) {
-    row.addEventListener("keydown", event => {
-      if (event.key === "Delete") { event.preventDefault(); selectRow(row); removeRow(); return; }
-      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-      event.preventDefault(); const sibling = event.key === "ArrowUp" ? row.previousElementSibling : row.nextElementSibling;
-      if (sibling?.classList.contains(className)) { selectRow(sibling); sibling.focus(); }
-    });
   }
   function uniqueAutoObjectName(base, current) {
     const rows = [...document.querySelectorAll(".dg-key-row, .dg-index-row, .dg-foreign-key-row")].filter(row => row !== current);
@@ -1054,14 +1294,7 @@
     row.dataset.keyColumns = JSON.stringify(initial.columns || names.slice(0, 1));
     if (row.dataset.keyAutoName !== "false") row.dataset.keyName = uniqueAutoObjectName(autoObjectBase(JSON.parse(row.dataset.keyColumns)), row);
     renderKeySummary(row);
-    row.addEventListener("click", () => selectKeyRow(row));
-    row.addEventListener("keydown", event => {
-      if (event.key === "Delete") { event.preventDefault(); selectKeyRow(row); removeActiveKey(); return; }
-      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-      event.preventDefault();
-      const sibling = event.key === "ArrowUp" ? row.previousElementSibling : row.nextElementSibling;
-      if (sibling?.classList.contains("dg-key-row")) { selectKeyRow(sibling); sibling.focus(); }
-    });
+    wireDesignerObjectRow(row, "keys", selectKeyRow);
     document.getElementById("database-key-list").appendChild(row);
     selectKeyRow(row); refreshKeyCount(); updateTableSqlPreview();
     document.getElementById("database-key-column-name").focus();
@@ -1107,7 +1340,7 @@
     document.getElementById("database-fk-deferrable").checked = fk.deferrable; document.getElementById("database-fk-initially-deferred").checked = fk.initiallyDeferred;
     document.getElementById("database-fk-initially-deferred").disabled = !fk.deferrable;
     document.querySelector("[data-foreign-key-editor-title]").textContent = fk.name || "foreign_key"; renderForeignKeyMappings(row);
-    document.getElementById("database-remove-foreign-key").disabled = false;
+    const remove = document.getElementById("database-remove-foreign-key"); if (remove) remove.disabled = false;
   }
   function updateForeignKeyFromEditor() {
     const row = activeForeignKeyRow(); if (!row) return;
@@ -1154,14 +1387,14 @@
     row.dataset.foreignKeyDeferrable = initial.deferrable ? "true" : "false"; row.dataset.foreignKeyInitiallyDeferred = initial.initiallyDeferred ? "true" : "false";
     row.dataset.foreignKeyMappings = JSON.stringify(initial.mappings || tableColumnNames().slice(0, 1).map(local => ({ local, referenced: firstTarget?.columns?.[0] || "" })));
     if (row.dataset.foreignKeyAutoName !== "false") row.dataset.foreignKeyName = uniqueAutoObjectName(`${autoObjectBase(foreignKeyRowData(row).mappings.map(mapping => mapping.local))}_fk`, row);
-    renderForeignKeySummary(row); row.addEventListener("click", () => selectForeignKeyRow(row)); wireObjectTreeKeyboard(row, "dg-foreign-key-row", selectForeignKeyRow, removeActiveForeignKey); document.getElementById("database-foreign-key-list").appendChild(row);
+    renderForeignKeySummary(row); wireDesignerObjectRow(row, "foreign-keys", selectForeignKeyRow); document.getElementById("database-foreign-key-list").appendChild(row);
     selectForeignKeyRow(row); refreshForeignKeyCount(); updateTableSqlPreview(); document.getElementById("database-foreign-key-name").focus();
   }
   function removeActiveForeignKey() {
     const row = activeForeignKeyRow(); if (!row) return; const next = row.nextElementSibling || row.previousElementSibling; row.remove();
     if (next?.classList.contains("dg-foreign-key-row")) selectForeignKeyRow(next); else { document.getElementById("database-foreign-key-editor")?.classList.add("hidden"); document.getElementById("database-foreign-key-empty")?.classList.remove("hidden"); }
     refreshForeignKeyCount(); updateTableSqlPreview();
-    document.getElementById("database-remove-foreign-key").disabled = !activeForeignKeyRow();
+    const remove = document.getElementById("database-remove-foreign-key"); if (remove) remove.disabled = !activeForeignKeyRow();
   }
   function indexRowData(row) {
     let columns = [], includeColumns = [];
@@ -1196,7 +1429,7 @@
     syncIndexIncludeColumns(index.includeColumns);
     document.querySelector("[data-index-editor-title]").textContent = index.name;
     renderIndexColumns(row);
-    document.getElementById("database-remove-index").disabled = false;
+    const remove = document.getElementById("database-remove-index"); if (remove) remove.disabled = false;
   }
   function updateIndexFromEditor() {
     const row = activeIndexRow(); if (!row) return;
@@ -1270,14 +1503,14 @@
     row.dataset.indexMethod = initial.method || "Btree"; row.dataset.indexColumns = JSON.stringify((initial.columns || tableColumnNames().slice(0, 1)).map(column => typeof column === "string" ? { name: column, order: "None", collation: "", operatorClass: "" } : column));
     row.dataset.indexIncludeColumns = JSON.stringify(initial.includeColumns || []); row.dataset.indexCondition = initial.condition || ""; row.dataset.indexTablespace = initial.tablespace || "";
     if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns.map(column => column.name)), row);
-    renderIndexSummary(row); row.addEventListener("click", () => selectIndexRow(row)); wireObjectTreeKeyboard(row, "dg-index-row", selectIndexRow, removeActiveIndex); document.getElementById("database-index-list").appendChild(row);
+    renderIndexSummary(row); wireDesignerObjectRow(row, "indexes", selectIndexRow); document.getElementById("database-index-list").appendChild(row);
     selectIndexRow(row); refreshIndexCount(); updateAutoObjectNames(); updateTableSqlPreview(); document.getElementById("database-index-column-name").focus();
   }
   function removeActiveIndex() {
     const row = activeIndexRow(); if (!row) return; const next = row.nextElementSibling || row.previousElementSibling; row.remove();
     if (next?.classList.contains("dg-index-row")) selectIndexRow(next); else { document.getElementById("database-index-editor")?.classList.add("hidden"); document.getElementById("database-index-empty")?.classList.remove("hidden"); }
     refreshIndexCount(); updateAutoObjectNames(); updateTableSqlPreview();
-    document.getElementById("database-remove-index").disabled = !activeIndexRow();
+    const remove = document.getElementById("database-remove-index"); if (remove) remove.disabled = !activeIndexRow();
   }
   function checkRowData(row) { return { name: row.dataset.checkName || "", expression: row.dataset.checkExpression || "" }; }
   function renderCheckSummary(row) {
@@ -1291,7 +1524,7 @@
     document.getElementById("database-check-empty")?.classList.add("hidden"); document.getElementById("database-check-editor")?.classList.remove("hidden");
     const check = checkRowData(row); document.getElementById("database-check-name").value = check.name; document.getElementById("database-check-expression").value = check.expression;
     document.querySelector("[data-check-editor-title]").textContent = check.name || "check";
-    document.getElementById("database-remove-check").disabled = false;
+    const remove = document.getElementById("database-remove-check"); if (remove) remove.disabled = false;
   }
   function updateCheckFromEditor() {
     const row = activeCheckRow(); if (!row) return;
@@ -1301,33 +1534,44 @@
   function addCheckRow(initial = {}) {
     const row = document.createElement("button"); row.type = "button"; row.className = "dg-check-row dg-tree-object-row"; row.setAttribute("role", "option");
     const ordinal = document.querySelectorAll(".dg-check-row").length + 1; row.dataset.checkName = initial.name || `${form.elements.Name?.value.trim() || "table"}_check_${ordinal}`; row.dataset.checkExpression = initial.expression || "";
-    renderCheckSummary(row); row.addEventListener("click", () => selectCheckRow(row)); wireObjectTreeKeyboard(row, "dg-check-row", selectCheckRow, removeActiveCheck); document.getElementById("database-check-list").appendChild(row);
+    renderCheckSummary(row); wireDesignerObjectRow(row, "checks", selectCheckRow); document.getElementById("database-check-list").appendChild(row);
     selectCheckRow(row); refreshCheckCount(); updateTableSqlPreview(); document.getElementById("database-check-expression").focus();
   }
   function removeActiveCheck() {
     const row = activeCheckRow(); if (!row) return; const next = row.nextElementSibling || row.previousElementSibling; row.remove();
     if (next?.classList.contains("dg-check-row")) selectCheckRow(next); else { document.getElementById("database-check-editor")?.classList.add("hidden"); document.getElementById("database-check-empty")?.classList.remove("hidden"); }
     refreshCheckCount(); updateTableSqlPreview();
-    document.getElementById("database-remove-check").disabled = !activeCheckRow();
+    const remove = document.getElementById("database-remove-check"); if (remove) remove.disabled = !activeCheckRow();
   }
   function bindDesignerSections(metadata) {
-    document.querySelectorAll("[data-designer-section]").forEach(button => button.addEventListener("click", () => {
+    document.querySelectorAll("[data-designer-section]").forEach(button => {
+      button.addEventListener("click", () => {
       clearDesignerObjectSelection();
       document.querySelectorAll("[data-designer-section]").forEach(item => { item.classList.toggle("is-active", item === button); item.setAttribute("aria-selected", item === button ? "true" : "false"); });
       document.querySelectorAll("[data-designer-panel]").forEach(panel => panel.classList.toggle("hidden", panel.dataset.designerPanel !== button.dataset.designerSection));
-    }));
-    document.getElementById("database-add-column").addEventListener("click", () => addColumnRow(metadata));
+      refreshDesignerToolbar();
+      });
+      if (designerSectionConfig[button.dataset.designerSection]) {
+        button.setAttribute("aria-haspopup", "menu");
+        document.getElementById(designerSectionConfig[button.dataset.designerSection].listId)?.setAttribute("aria-multiselectable", "true");
+        button.addEventListener("contextmenu", event => showDesignerContextMenu(event, button.dataset.designerSection));
+        button.addEventListener("keydown", event => { if (event.key === "F10" && event.shiftKey) showDesignerContextMenu(event, button.dataset.designerSection); });
+      }
+    });
+    document.getElementById("database-designer-add").addEventListener("click", () => addDesignerObject(activeDesignerSection()));
+    document.getElementById("database-designer-remove").addEventListener("click", () => removeDesignerRows(activeDesignerSection(), selectedDesignerRows(activeDesignerSection())));
+    document.getElementById("database-designer-move-up").addEventListener("click", () => moveDesignerRows(activeDesignerSection(), -1));
+    document.getElementById("database-designer-move-down").addEventListener("click", () => moveDesignerRows(activeDesignerSection(), 1));
+    if (!document.body.dataset.designerContextBound) {
+      document.body.dataset.designerContextBound = "true";
+      document.addEventListener("pointerdown", event => { if (!event.target.closest("#database-designer-context-menu")) closeDesignerContextMenu(); });
+    }
     document.getElementById("database-empty-add-column").addEventListener("click", () => addColumnRow(metadata));
-    document.getElementById("database-remove-column").addEventListener("click", removeActiveColumn);
-    document.getElementById("database-move-column-up").addEventListener("click", () => moveColumn(-1));
-    document.getElementById("database-move-column-down").addEventListener("click", () => moveColumn(1));
     ["database-column-name", "database-column-comment", "database-column-type", "database-column-not-null", "database-column-primary", "database-column-default-expression",
       "database-column-identity-kind", "database-column-identity", "database-column-identity-min", "database-column-identity-max", "database-column-identity-step", "database-column-identity-cache", "database-column-identity-cycle"].forEach(id => {
       document.getElementById(id).addEventListener("input", updateColumnFromEditor); document.getElementById(id).addEventListener("change", updateColumnFromEditor);
     });
-    document.getElementById("database-add-key").addEventListener("click", () => addKeyRow());
     document.getElementById("database-empty-add-key").addEventListener("click", () => addKeyRow());
-    document.getElementById("database-remove-key").addEventListener("click", removeActiveKey);
     document.getElementById("database-key-name").addEventListener("input", () => {
       const row = activeKeyRow(); if (!row) return;
       row.dataset.keyAutoName = "false"; document.getElementById("database-key-auto-name").checked = false; updateKeyFromEditor();
@@ -1356,9 +1600,7 @@
       row.dataset.keyColumns = JSON.stringify(key.columns);
       updateAutoObjectNames(); renderKeyColumns(row); renderKeySummary(row); updateTableSqlPreview();
     });
-    document.getElementById("database-add-foreign-key").addEventListener("click", () => addForeignKeyRow(metadata));
     document.getElementById("database-empty-add-foreign-key").addEventListener("click", () => addForeignKeyRow(metadata));
-    document.getElementById("database-remove-foreign-key").addEventListener("click", removeActiveForeignKey);
     document.getElementById("database-foreign-key-name").addEventListener("input", () => { const row = activeForeignKeyRow(); if (!row) return; row.dataset.foreignKeyAutoName = "false"; document.getElementById("database-foreign-key-auto-name").checked = false; document.getElementById("database-foreign-key-name").readOnly = false; updateForeignKeyFromEditor(); });
     document.getElementById("database-foreign-key-auto-name").addEventListener("change", event => { const row = activeForeignKeyRow(); if (!row) return; row.dataset.foreignKeyAutoName = event.target.checked ? "true" : "false"; document.getElementById("database-foreign-key-name").readOnly = event.target.checked; if (event.target.checked) updateAutoObjectNames(); else updateForeignKeyFromEditor(); });
     ["database-foreign-key-comment", "database-fk-on-update", "database-fk-on-delete", "database-fk-deferrable", "database-fk-initially-deferred"].forEach(id => {
@@ -1371,24 +1613,18 @@
     document.getElementById("database-move-fk-mapping-down").addEventListener("click", () => mutateForeignKeyMappings("down"));
     document.getElementById("database-fk-local-column").addEventListener("change", updateForeignKeyMappingFromEditor);
     document.getElementById("database-fk-target-column").addEventListener("change", updateForeignKeyMappingFromEditor);
-    document.getElementById("database-add-index").addEventListener("click", () => addIndexRow());
     document.getElementById("database-empty-add-index").addEventListener("click", () => addIndexRow());
-    document.getElementById("database-remove-index").addEventListener("click", removeActiveIndex);
     document.getElementById("database-index-name").addEventListener("input", () => { const row = activeIndexRow(); if (!row) return; row.dataset.indexAutoName = "false"; document.getElementById("database-index-auto-name").checked = false; updateIndexFromEditor(); });
     document.getElementById("database-index-auto-name").addEventListener("change", event => { const row = activeIndexRow(); if (!row) return; row.dataset.indexAutoName = event.target.checked ? "true" : "false"; document.getElementById("database-index-name").readOnly = event.target.checked; if (event.target.checked) updateAutoObjectNames(); else updateIndexFromEditor(); });
     ["database-index-comment", "database-index-method", "database-index-unique", "database-index-nulls-not-distinct", "database-index-condition", "database-index-include-columns", "database-index-tablespace"].forEach(id => { document.getElementById(id).addEventListener("input", updateIndexFromEditor); document.getElementById(id).addEventListener("change", updateIndexFromEditor); });
     document.getElementById("database-add-index-column").addEventListener("click", () => mutateIndexColumns("add")); document.getElementById("database-remove-index-column").addEventListener("click", () => mutateIndexColumns("remove"));
     document.getElementById("database-move-index-column-up").addEventListener("click", () => mutateIndexColumns("up")); document.getElementById("database-move-index-column-down").addEventListener("click", () => mutateIndexColumns("down"));
     ["database-index-column-name", "database-index-column-order", "database-index-column-collation", "database-index-column-operator-class"].forEach(id => document.getElementById(id).addEventListener("change", updateIndexColumnFromEditor));
-    document.getElementById("database-add-check").addEventListener("click", () => addCheckRow());
     document.getElementById("database-empty-add-check").addEventListener("click", () => addCheckRow());
-    document.getElementById("database-remove-check").addEventListener("click", removeActiveCheck);
     ["database-check-name", "database-check-expression"].forEach(id => { document.getElementById(id).addEventListener("input", updateCheckFromEditor); document.getElementById(id).addEventListener("change", updateCheckFromEditor); });
     refreshKeyControls();
-    document.getElementById("database-remove-foreign-key").disabled = true;
-    document.getElementById("database-remove-index").disabled = true;
-    document.getElementById("database-remove-check").disabled = true;
     refreshColumnControls();
+    refreshDesignerToolbar();
     document.getElementById("database-add-table-grant").addEventListener("click", () => addTableGrantRow(metadata));
   }
   function addTableGrantRow(metadata) {
@@ -1610,7 +1846,7 @@
       description: t("designer.tableHelp"), variant: "table",
       body: `<div class="dg-table-designer">
         <aside class="dg-designer-sidebar" aria-label="Table object sections">
-          <div class="dg-designer-toolbar"><button type="button" aria-label="${t("designer.addObject")}">+</button><button type="button" disabled aria-label="${t("designer.removeObject")}">−</button><span></span><button type="button" aria-label="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z"/></svg></button></div>
+          <div class="dg-designer-toolbar" role="toolbar" aria-label="${t("designer.objectActions")}"><button type="button" id="database-designer-add" aria-label="${t("designer.addObject")}" title="${t("common.add")}">+</button><button type="button" id="database-designer-remove" disabled aria-label="${t("designer.removeObject")}" title="${t("common.delete")}">−</button><span></span><button type="button" id="database-designer-move-up" disabled aria-label="${t("designer.moveUp")}" title="${t("designer.moveUp")}">↑</button><button type="button" id="database-designer-move-down" disabled aria-label="${t("designer.moveDown")}" title="${t("designer.moveDown")}">↓</button></div>
           <button type="button" class="dg-designer-object is-active" role="tab" aria-selected="true" data-designer-section="table"><span class="dg-table-glyph" aria-hidden="true"></span><span><strong data-designer-table-name>table_name</strong><small><span data-designer-table-context>${html(schema)} · Local</span> · coordinator</small></span></button>
           <nav class="dg-designer-tree" role="tablist" aria-label="Table definition">
             <div class="dg-designer-tree-group">
@@ -1655,7 +1891,7 @@
               </div>
             </section>
             <section data-designer-panel="columns" class="dg-designer-panel hidden">
-              <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Column Designer</strong><small>PostgreSQL column properties</small></div><div><button type="button" id="database-add-column" class="dg-toolbar-button">+ Add</button><button type="button" id="database-remove-column" class="dg-toolbar-button is-danger">− Remove</button><button type="button" id="database-move-column-up" class="dg-toolbar-button">↑</button><button type="button" id="database-move-column-down" class="dg-toolbar-button">↓</button></div></div>
+              <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Column Designer</strong><small>PostgreSQL column properties</small></div></div>
               <div id="database-column-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No column selected</strong><p>Add a column, then configure its name, catalog type, nullability and default.</p><button type="button" id="database-empty-add-column" class="dg-toolbar-button">+ Add column</button></div>
               <div id="database-column-editor" class="dg-object-editor hidden">
                 <header class="dg-key-editor-heading"><span class="dg-column-icon" aria-hidden="true"></span><strong data-column-editor-title>column_name</strong><span>column</span></header>
@@ -1679,7 +1915,7 @@
               </div>
             </section>
             <section data-designer-panel="keys" class="dg-designer-panel hidden">
-              <div class="database-column-toolbar dg-key-panel-toolbar"><div><strong>Key Designer</strong><small>${t("designer.keyHelp")}</small></div><select id="database-key-mobile-select" class="dg-key-mobile-select" aria-label="Selected key" disabled><option>No keys</option></select><div><button type="button" id="database-add-key" class="dg-toolbar-button">+ Add key</button><button type="button" id="database-remove-key" class="dg-toolbar-button is-danger">− Remove</button></div></div>
+              <div class="database-column-toolbar dg-key-panel-toolbar"><div><strong>Key Designer</strong><small>${t("designer.keyHelp")}</small></div><select id="database-key-mobile-select" class="dg-key-mobile-select" aria-label="Selected key" disabled><option>No keys</option></select></div>
                 <section class="dg-key-detail dg-key-detail-standalone">
                   <div id="database-key-empty" class="dg-key-empty-state">
                     <span class="dg-key-empty-icon" aria-hidden="true"></span>
@@ -1715,7 +1951,7 @@
                 </section>
             </section>
             <section data-designer-panel="foreign-keys" class="dg-designer-panel hidden">
-              <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Foreign Key Designer</strong><small>Map local columns to a referenced table</small></div><div><button type="button" id="database-add-foreign-key" class="dg-toolbar-button">+ Add</button><button type="button" id="database-remove-foreign-key" class="dg-toolbar-button is-danger">− Remove</button></div></div>
+              <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Foreign Key Designer</strong><small>Map local columns to a referenced table</small></div></div>
               <div id="database-foreign-key-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No foreign key selected</strong><p>Add a foreign key to configure its target and column mappings.</p><button type="button" id="database-empty-add-foreign-key" class="dg-toolbar-button">+ Add foreign key</button></div>
               <div id="database-foreign-key-editor" class="dg-object-editor hidden">
                 <header class="dg-key-editor-heading"><span class="dg-foreign-key-icon" aria-hidden="true"></span><strong data-foreign-key-editor-title>foreign_key</strong><span>constraint</span></header>
@@ -1729,7 +1965,7 @@
               </div>
             </section>
             <section data-designer-panel="indexes" class="dg-designer-panel hidden">
-              <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Index Designer</strong><small>Ordered columns and PostgreSQL access method</small></div><div><button type="button" id="database-add-index" class="dg-toolbar-button">+ Add</button><button type="button" id="database-remove-index" class="dg-toolbar-button is-danger">− Remove</button></div></div>
+              <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Index Designer</strong><small>Ordered columns and PostgreSQL access method</small></div></div>
               <div id="database-index-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No index selected</strong><p>Add an index to configure method, uniqueness and ordered columns.</p><button type="button" id="database-empty-add-index" class="dg-toolbar-button">+ Add index</button></div>
               <div id="database-index-editor" class="dg-object-editor hidden">
                 <header class="dg-key-editor-heading"><span class="dg-index-icon" aria-hidden="true"></span><strong data-index-editor-title>index</strong><span>index</span></header>
@@ -1748,7 +1984,7 @@
               </div>
             </section>
             <section data-designer-panel="checks" class="dg-designer-panel hidden">
-              <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Check Designer</strong><small>One safe PostgreSQL boolean expression</small></div><div><button type="button" id="database-add-check" class="dg-toolbar-button">+ Add</button><button type="button" id="database-remove-check" class="dg-toolbar-button is-danger">− Remove</button></div></div>
+              <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Check Designer</strong><small>One safe PostgreSQL boolean expression</small></div></div>
               <div id="database-check-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No check selected</strong><p>Add a check constraint, then enter its boolean expression.</p><button type="button" id="database-empty-add-check" class="dg-toolbar-button">+ Add check</button></div>
               <div id="database-check-editor" class="dg-object-editor hidden">
                 <header class="dg-key-editor-heading"><span class="dg-check-icon" aria-hidden="true"></span><strong data-check-editor-title>check</strong><span>constraint</span></header>

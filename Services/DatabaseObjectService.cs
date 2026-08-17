@@ -485,7 +485,19 @@ public sealed class DatabaseObjectService(
 
                 static string SnapshotHash(object value) =>
                     DatabaseExplorerSafety.QueryHash(JsonSerializer.Serialize(value));
-                var keysChanged = SnapshotHash(new
+                var currentColumns = current.Definition.Columns.ToDictionary(column => column.Name, StringComparer.Ordinal);
+                var originalNames = request.Columns.Where(column => column.OriginalName is not null)
+                    .Select(column => column.OriginalName!).ToList();
+                if (originalNames.Distinct(StringComparer.Ordinal).Count() != originalNames.Count)
+                    throw new ArgumentException("Original column names must be unique.");
+                var droppedColumnNames = currentColumns.Keys.Except(originalNames, StringComparer.Ordinal).ToList();
+                if ((current.Definition.PartitionKey is not null &&
+                     droppedColumnNames.Contains(current.Definition.PartitionKey, StringComparer.Ordinal)) ||
+                    (current.Definition.DistributionColumn is not null &&
+                     droppedColumnNames.Contains(current.Definition.DistributionColumn, StringComparer.Ordinal)))
+                    throw new InvalidOperationException("Partition and distribution columns cannot be dropped in direct Modify mode.");
+
+                var keysChanged = droppedColumnNames.Count > 0 || SnapshotHash(new
                     {
                         PrimaryColumns = current.Definition.Columns.Where(column => column.PrimaryKey).Select(column => column.Name),
                         current.Definition.Keys
@@ -494,16 +506,9 @@ public sealed class DatabaseObjectService(
                         PrimaryColumns = request.Columns.Where(column => column.PrimaryKey).Select(column => column.Name),
                         request.Keys
                     });
-                var foreignKeysChanged = SnapshotHash(current.Definition.ForeignKeys) != SnapshotHash(request.ForeignKeys);
-                var checksChanged = SnapshotHash(current.Definition.Checks) != SnapshotHash(request.Checks);
-                var indexesChanged = SnapshotHash(current.Definition.Indexes) != SnapshotHash(request.Indexes);
-
-                var currentColumns = current.Definition.Columns.ToDictionary(column => column.Name, StringComparer.Ordinal);
-                var originalNames = request.Columns.Where(column => column.OriginalName is not null)
-                    .Select(column => column.OriginalName!).ToList();
-                if (originalNames.Distinct(StringComparer.Ordinal).Count() != originalNames.Count ||
-                    currentColumns.Keys.Except(originalNames, StringComparer.Ordinal).Any())
-                    throw new InvalidOperationException("Dropping existing columns is not supported by direct Modify mode.");
+                var foreignKeysChanged = droppedColumnNames.Count > 0 || SnapshotHash(current.Definition.ForeignKeys) != SnapshotHash(request.ForeignKeys);
+                var checksChanged = droppedColumnNames.Count > 0 || SnapshotHash(current.Definition.Checks) != SnapshotHash(request.Checks);
+                var indexesChanged = droppedColumnNames.Count > 0 || SnapshotHash(current.Definition.Indexes) != SnapshotHash(request.Indexes);
                 foreach (var column in request.Columns.Where(column => column.OriginalName is not null))
                 {
                     if (!currentColumns.ContainsKey(column.OriginalName!))
@@ -560,6 +565,10 @@ public sealed class DatabaseObjectService(
                     if (indexesChanged)
                         foreach (var index in current.Definition.Indexes)
                             await ExecuteCommandAsync(connection, $"DROP INDEX {Qualified(request.Schema, index.Name)}", cancellationToken, transaction);
+
+                    foreach (var columnName in droppedColumnNames)
+                        await ExecuteCommandAsync(connection,
+                            $"ALTER TABLE {table} DROP COLUMN {Quote(columnName)} RESTRICT", cancellationToken, transaction);
 
                     var withoutImplicitPrimary = request.Columns.Select(column => column with { PrimaryKey = false }).ToList();
                     if (keysChanged)

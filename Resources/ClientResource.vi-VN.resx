@@ -38,4 +38,22 @@
   <data name="maintenance.modeCascadeFk" xml:space="preserve"><value>Citus sẽ tự động cascade qua {0} Table liên quan và {1} Foreign Key.</value></data>
   <data name="maintenance.modeQueue" xml:space="preserve"><value>Tạo và đưa conversion vào hàng đợi</value></data>
   <data name="designer.columnNeedsName" xml:space="preserve"><value>Column {0} cần có tên.</value></data>
+  <data name="common.add" xml:space="preserve"><value>Thêm</value></data>
+  <data name="designer.columns" xml:space="preserve"><value>cột</value></data>
+  <data name="designer.keys" xml:space="preserve"><value>khóa</value></data>
+  <data name="designer.foreignKeys" xml:space="preserve"><value>khóa ngoại</value></data>
+  <data name="designer.indexes" xml:space="preserve"><value>chỉ mục</value></data>
+  <data name="designer.checks" xml:space="preserve"><value>ràng buộc check</value></data>
+  <data name="designer.confirmDeleteObjects" xml:space="preserve"><value>Xóa {0} {1} khỏi định nghĩa bảng này?</value></data>
+  <data name="designer.deleteMany" xml:space="preserve"><value>Xóa {0} {1}</value></data>
+  <data name="designer.duplicate" xml:space="preserve"><value>Nhân bản</value></data>
+  <data name="designer.objectActions" xml:space="preserve"><value>Thao tác đối tượng bảng</value></data>
+  <data name="designer.moveUp" xml:space="preserve"><value>Di chuyển lên</value></data>
+  <data name="designer.moveDown" xml:space="preserve"><value>Di chuyển xuống</value></data>
+  <data name="designer.cannotDeleteRoutingColumn" xml:space="preserve"><value>Không thể xóa partition key hoặc Citus distribution column tại đây.</value></data>
+  <data name="designer.deleteEyebrow" xml:space="preserve"><value>TABLE DESIGNER</value></data>
+  <data name="designer.deleteTitle" xml:space="preserve"><value>Xóa {0} {1}?</value></data>
+  <data name="designer.deleteWarning" xml:space="preserve"><value>Các đối tượng đã chọn sẽ bị xóa khỏi định nghĩa table khi bạn lưu. Thao tác này có thể ảnh hưởng đến constraint và index.</value></data>
+  <data name="designer.moreObjects" xml:space="preserve"><value>và {0} đối tượng khác…</value></data>
+  <data name="designer.unnamedObject" xml:space="preserve"><value>Đối tượng chưa đặt tên</value></data>
 </root>
