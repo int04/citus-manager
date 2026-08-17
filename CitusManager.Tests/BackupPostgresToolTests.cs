@@ -34,6 +34,14 @@ public sealed class BackupPostgresToolTests
         Assert.Contains("--compress=gzip:5", arguments);
     }
 
+    [Theory]
+    [InlineData("pg_dump (PostgreSQL) 16.9", 16)]
+    [InlineData("pg_restore (PostgreSQL) 18.4 (Homebrew)", 18)]
+    public void Tool_version_parser_returns_postgresql_major(string version, int expected)
+    {
+        Assert.Equal(expected, PostgresToolRunner.ParseMajor(version));
+    }
+
     [Fact]
     public async Task List_validation_drains_archive_when_pg_restore_closes_stdin_early()
     {

@@ -47,6 +47,9 @@ public sealed class RestoreRunExecutor(
             var backup = run.BackupRun ?? throw new InvalidOperationException("Backup is unavailable.");
             var sourceTopology = JsonSerializer.Deserialize<CitusBackupTopology>(backup.CitusMetadataJson ?? string.Empty, JsonOptions)
                 ?? throw new InvalidOperationException("Backup Citus metadata is missing.");
+            var toolMajor = sourceTopology.PgDumpMajor
+                ?? throw new InvalidOperationException(
+                    "This backup does not record its pg_dump major version and cannot be restored safely. Create a new backup with the matching PostgreSQL toolchain.");
             var target = ResolveTarget(run);
             BackupDestinationCopy sourceCopy = null!;
             IBackupStorageProvider sourceProvider = null!;
@@ -55,6 +58,7 @@ public sealed class RestoreRunExecutor(
 
             await PhaseAsync(run, "Preflight", 1, async () =>
             {
+                await postgres.ResolveToolchainAsync(toolMajor, linked.Token);
                 foreach (var candidate in backup.DestinationCopies.Where(x => x.Status == BackupCopyStatus.Succeeded && x.ManifestCommitted))
                 {
                     try
@@ -98,11 +102,11 @@ public sealed class RestoreRunExecutor(
                                 1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
                             await artifacts.ReadToAsync($"{candidate.ObjectPrefix}/manifest.v1.json", candidateProvider, output, _options.SpoolPath, linked.Token);
                             run.ProcessedBytes = output.Length;
-                            await postgres.ListAsync(archive, linked.Token);
+                            await postgres.ListAsync(toolMajor, archive, linked.Token);
                         }
                         else
                         {
-                            await StreamArtifactAsync(candidate, candidateProvider, stream => postgres.ListStreamAsync(stream, linked.Token), linked.Token);
+                            await StreamArtifactAsync(candidate, candidateProvider, stream => postgres.ListStreamAsync(toolMajor, stream, linked.Token), linked.Token);
                             run.ProcessedBytes = candidateManifest.ArchivePlaintextLength;
                         }
                         sourceCopy = candidate; sourceProvider = candidateProvider; manifest = candidateManifest;
@@ -121,13 +125,15 @@ public sealed class RestoreRunExecutor(
             await PhaseAsync(run, "PreData", 3, async () =>
             {
                 mutated = true;
-                await RestorePhaseAsync(target, archive, sourceCopy, sourceProvider, "pre-data", run.IsSameTarget, 1, linked.Token);
+                if (run.IsSameTarget)
+                    await DropBlockingForeignKeysAsync(target, linked.Token);
+                await RestorePhaseAsync(target, toolMajor, archive, sourceCopy, sourceProvider, "pre-data", run.IsSameTarget, 1, linked.Token);
             }, linked.Token);
             await PhaseAsync(run, "CitusTopology", 4, () => metadata.ApplyTopologyAsync(sourceTopology, target, linked.Token), linked.Token);
             await PhaseAsync(run, "Data", 5, async () =>
-                await RestorePhaseAsync(target, archive, sourceCopy, sourceProvider, "data", false, Math.Clamp(run.ParallelJobs, 1, 32), linked.Token), linked.Token);
+                await RestorePhaseAsync(target, toolMajor, archive, sourceCopy, sourceProvider, "data", false, Math.Clamp(run.ParallelJobs, 1, 32), linked.Token), linked.Token);
             await PhaseAsync(run, "PostData", 6, async () =>
-                await RestorePhaseAsync(target, archive, sourceCopy, sourceProvider, "post-data", false, Math.Clamp(run.ParallelJobs, 1, 32), linked.Token), linked.Token);
+                await RestorePhaseAsync(target, toolMajor, archive, sourceCopy, sourceProvider, "post-data", false, Math.Clamp(run.ParallelJobs, 1, 32), linked.Token), linked.Token);
             await PhaseAsync(run, "Validation", 7, () => metadata.ValidateRestoredTopologyAsync(sourceTopology, target, linked.Token), linked.Token);
 
             run.Status = RestoreRunStatus.Succeeded; run.CurrentPhase = "Succeeded"; run.CompletedAt = DateTimeOffset.UtcNow;
@@ -190,11 +196,40 @@ public sealed class RestoreRunExecutor(
         return Convert.ToBoolean(await command.ExecuteScalarAsync(ct));
     }
 
-    private Task<PostgresToolResult> RestorePhaseAsync(ClusterProfile target, string? archive,
+    private async Task DropBlockingForeignKeysAsync(ClusterProfile target, CancellationToken ct)
+    {
+        await using var connection = connections.Create(target);
+        await connection.OpenAsync(ct);
+        var statements = new List<string>();
+        await using (var list = new Npgsql.NpgsqlCommand("""
+            SELECT format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I',
+              n.nspname, c.relname, con.conname)
+            FROM pg_constraint con
+            JOIN pg_class c ON c.oid = con.conrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE con.contype = 'f'
+              AND con.conparentid = 0
+              AND n.nspname NOT IN ('pg_catalog','information_schema','citus','columnar')
+              AND n.nspname !~ '^pg_toast'
+            ORDER BY n.nspname, c.relname, con.conname
+            """, connection))
+        await using (var reader = await list.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) statements.Add(reader.GetString(0));
+
+        // Citus rejects multiple distributed-table DDL operations in one transaction.
+        // Execute each statement in its own implicit transaction.
+        foreach (var statement in statements)
+        {
+            await using var drop = new Npgsql.NpgsqlCommand(statement, connection);
+            await drop.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    private Task<PostgresToolResult> RestorePhaseAsync(ClusterProfile target, int postgresMajor, string? archive,
         BackupDestinationCopy copy, IBackupStorageProvider provider, string section, bool clean, int jobs, CancellationToken ct) =>
         archive is not null
-            ? postgres.RestoreFileAsync(target, archive, section, clean, jobs, null, ct)
-            : StreamArtifactAsync(copy, provider, stream => postgres.RestoreStreamAsync(target, stream, section, clean, null, ct), ct);
+            ? postgres.RestoreFileAsync(target, postgresMajor, archive, section, clean, jobs, null, ct)
+            : StreamArtifactAsync(copy, provider, stream => postgres.RestoreStreamAsync(target, postgresMajor, stream, section, clean, null, ct), ct);
 
     private async Task<PostgresToolResult> StreamArtifactAsync(
         BackupDestinationCopy copy, IBackupStorageProvider provider,

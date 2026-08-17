@@ -7,6 +7,8 @@ using CitusManager.Security;
 namespace CitusManager.Services;
 
 public sealed record PostgresToolResult(long Bytes, string Diagnostic, TimeSpan Duration);
+public sealed record PostgresToolchainInfo(int Major, string PgDumpPath, string PgRestorePath,
+    string PgDumpVersion, string PgRestoreVersion);
 public sealed class PostgresToolException(string tool, int exitCode, string diagnostic)
     : InvalidOperationException($"{tool} failed with exit code {exitCode}: {diagnostic}")
 {
@@ -18,17 +20,24 @@ public sealed class PostgresToolException(string tool, int exitCode, string diag
 public interface IPostgresToolRunner
 {
     Task<string> ReadVersionAsync(string tool, CancellationToken cancellationToken);
+    Task<PostgresToolchainInfo> ResolveToolchainAsync(int postgresMajor, CancellationToken cancellationToken);
     Task<PostgresToolResult> DumpAsync(
-        ClusterProfile source, Stream destination, Func<long, ValueTask>? progress,
+        ClusterProfile source, int postgresMajor, Stream destination, Func<long, ValueTask>? progress,
         CancellationToken cancellationToken);
     Task<PostgresToolResult> RestoreFileAsync(
-        ClusterProfile target, string archivePath, string section, bool clean, int jobs,
+        ClusterProfile target, int postgresMajor, string archivePath, string section, bool clean, int jobs,
         Func<long, ValueTask>? progress, CancellationToken cancellationToken);
     Task<PostgresToolResult> RestoreStreamAsync(
-        ClusterProfile target, Stream archive, string section, bool clean,
+        ClusterProfile target, int postgresMajor, Stream archive, string section, bool clean,
         Func<long, ValueTask>? progress, CancellationToken cancellationToken);
-    Task<PostgresToolResult> ListAsync(string archivePath, CancellationToken cancellationToken);
-    Task<PostgresToolResult> ListStreamAsync(Stream archive, CancellationToken cancellationToken);
+    Task<PostgresToolResult> ListAsync(int postgresMajor, string archivePath, CancellationToken cancellationToken);
+    Task<PostgresToolResult> ListStreamAsync(int postgresMajor, Stream archive, CancellationToken cancellationToken);
+}
+
+public sealed class PostgresToolchainOptions
+{
+    public string PgDumpPath { get; set; } = "pg_dump";
+    public string PgRestorePath { get; set; } = "pg_restore";
 }
 
 public sealed class PostgresToolOptions
@@ -36,6 +45,7 @@ public sealed class PostgresToolOptions
     public const string SectionName = "Backup:PostgresTools";
     public string PgDumpPath { get; set; } = "pg_dump";
     public string PgRestorePath { get; set; } = "pg_restore";
+    public Dictionary<int, PostgresToolchainOptions> Versions { get; set; } = [];
     public string Compression { get; set; } = "gzip:5";
     public int StallMinutes { get; set; } = 30;
     public int DiagnosticLimitCharacters { get; set; } = 32_768;
@@ -60,13 +70,69 @@ public sealed class PostgresToolRunner(
         return result.Diagnostic.Trim();
     }
 
+    public async Task<PostgresToolchainInfo> ResolveToolchainAsync(int postgresMajor, CancellationToken cancellationToken)
+    {
+        var candidates = _options.Versions.TryGetValue(postgresMajor, out var versioned)
+            ? [versioned]
+            : DiscoverToolchains(postgresMajor).ToList();
+        var detected = new List<string>();
+        foreach (var selected in candidates)
+        {
+            try
+            {
+                var dump = (await RunAsync(selected.PgDumpPath, ["--version"], null, null, null, cancellationToken)).Diagnostic.Trim();
+                var restore = (await RunAsync(selected.PgRestorePath, ["--version"], null, null, null, cancellationToken)).Diagnostic.Trim();
+                var dumpMajor = ParseMajor(dump);
+                var restoreMajor = ParseMajor(restore);
+                detected.Add($"{selected.PgDumpPath}={dumpMajor}, {selected.PgRestorePath}={restoreMajor}");
+                if (dumpMajor == postgresMajor && restoreMajor == postgresMajor)
+                    return new(postgresMajor, selected.PgDumpPath, selected.PgRestorePath, dump, restore);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception exception)
+            {
+                detected.Add($"{selected.PgDumpPath}/{selected.PgRestorePath} unavailable ({exception.GetType().Name})");
+            }
+        }
+        throw new InvalidOperationException(
+            $"PostgreSQL {postgresMajor} backup toolchain is required. Checked: {string.Join("; ", detected)}. " +
+            $"Install the PostgreSQL {postgresMajor} client or configure Backup:PostgresTools:Versions:{postgresMajor}.");
+    }
+
+    private IEnumerable<PostgresToolchainOptions> DiscoverToolchains(int major)
+    {
+        yield return new() { PgDumpPath = _options.PgDumpPath, PgRestorePath = _options.PgRestorePath };
+        var roots = new[]
+        {
+            $"/opt/homebrew/opt/postgresql@{major}/bin",
+            $"/usr/local/opt/postgresql@{major}/bin",
+            $"/usr/lib/postgresql/{major}/bin"
+        };
+        foreach (var root in roots)
+        {
+            var dump = Path.Combine(root, "pg_dump");
+            var restore = Path.Combine(root, "pg_restore");
+            if (File.Exists(dump) && File.Exists(restore))
+                yield return new() { PgDumpPath = dump, PgRestorePath = restore };
+        }
+    }
+
+    internal static int ParseMajor(string version)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(version, @"(?<!\d)(\d+)(?:\.\d+)?");
+        if (!match.Success || !int.TryParse(match.Groups[1].Value, out var major))
+            throw new InvalidOperationException($"Cannot parse PostgreSQL tool version: {version}");
+        return major;
+    }
+
     public async Task<PostgresToolResult> DumpAsync(
-        ClusterProfile source, Stream destination, Func<long, ValueTask>? progress,
+        ClusterProfile source, int postgresMajor, Stream destination, Func<long, ValueTask>? progress,
         CancellationToken cancellationToken)
     {
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
         var args = BuildDumpArguments(source, _options.Compression);
         return await WithCredentialsAsync(source, (environment, token) =>
-            RunAsync(_options.PgDumpPath, args, environment, destination, progress, token), cancellationToken);
+            RunAsync(toolchain.PgDumpPath, args, environment, destination, progress, token), cancellationToken);
     }
 
     internal static List<string> BuildDumpArguments(ClusterProfile source, string? compression)
@@ -83,7 +149,7 @@ public sealed class PostgresToolRunner(
     }
 
     public async Task<PostgresToolResult> RestoreFileAsync(
-        ClusterProfile target, string archivePath, string section, bool clean, int jobs,
+        ClusterProfile target, int postgresMajor, string archivePath, string section, bool clean, int jobs,
         Func<long, ValueTask>? progress, CancellationToken cancellationToken)
     {
         if (section is not ("pre-data" or "data" or "post-data"))
@@ -98,19 +164,26 @@ public sealed class PostgresToolRunner(
         if (clean && section == "pre-data") args.AddRange(["--clean", "--if-exists"]);
         if (!string.IsNullOrWhiteSpace(target.Username)) args.AddRange(["--username", target.Username]);
         args.Add(archivePath);
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
         return await WithCredentialsAsync(target, (environment, token) =>
-            RunAsync(_options.PgRestorePath, args, environment, null, progress, token), cancellationToken);
+            RunAsync(toolchain.PgRestorePath, args, environment, null, progress, token), cancellationToken);
     }
 
-    public Task<PostgresToolResult> ListAsync(string archivePath, CancellationToken cancellationToken) =>
-        RunAsync(_options.PgRestorePath, ["--list", archivePath], null, null, null, cancellationToken);
+    public async Task<PostgresToolResult> ListAsync(int postgresMajor, string archivePath, CancellationToken cancellationToken)
+    {
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
+        return await RunAsync(toolchain.PgRestorePath, ["--list", archivePath], null, null, null, cancellationToken);
+    }
 
-    public Task<PostgresToolResult> ListStreamAsync(Stream archive, CancellationToken cancellationToken) =>
-        RunAsync(_options.PgRestorePath, ["--list"], null, null, null, cancellationToken, archive,
+    public async Task<PostgresToolResult> ListStreamAsync(int postgresMajor, Stream archive, CancellationToken cancellationToken)
+    {
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
+        return await RunAsync(toolchain.PgRestorePath, ["--list"], null, null, null, cancellationToken, archive,
             drainInputAfterConsumerCloses: true);
+    }
 
     public Task<PostgresToolResult> RestoreStreamAsync(
-        ClusterProfile target, Stream archive, string section, bool clean,
+        ClusterProfile target, int postgresMajor, Stream archive, string section, bool clean,
         Func<long, ValueTask>? progress, CancellationToken cancellationToken)
     {
         if (section is not ("pre-data" or "data" or "post-data"))
@@ -123,8 +196,15 @@ public sealed class PostgresToolRunner(
         };
         if (clean && section == "pre-data") args.AddRange(["--clean", "--if-exists"]);
         if (!string.IsNullOrWhiteSpace(target.Username)) args.AddRange(["--username", target.Username]);
-        return WithCredentialsAsync(target, (environment, token) =>
-            RunAsync(_options.PgRestorePath, args, environment, null, progress, token, archive), cancellationToken);
+        return RestoreStreamCoreAsync(target, postgresMajor, archive, args, progress, cancellationToken);
+    }
+
+    private async Task<PostgresToolResult> RestoreStreamCoreAsync(ClusterProfile target, int postgresMajor,
+        Stream archive, IReadOnlyList<string> args, Func<long, ValueTask>? progress, CancellationToken cancellationToken)
+    {
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
+        return await WithCredentialsAsync(target, (environment, token) =>
+            RunAsync(toolchain.PgRestorePath, args, environment, null, progress, token, archive), cancellationToken);
     }
 
     private async Task<T> WithCredentialsAsync<T>(

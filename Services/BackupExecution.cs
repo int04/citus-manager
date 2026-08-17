@@ -65,9 +65,18 @@ public sealed class BackupRunExecutor(
         try
         {
             var cluster = run.Cluster ?? throw new InvalidOperationException("Backup cluster is unavailable.");
+            CitusBackupTopology before = null!;
+            PostgresToolchainInfo toolchain = null!;
             await PhaseAsync(run, "Preflight", 1, async () =>
             {
-                await ValidateToolVersionsAsync(cluster, linked.Token);
+                before = await metadata.CollectAsync(cluster, linked.Token);
+                toolchain = await postgres.ResolveToolchainAsync(Major(before.PostgreSqlVersion), linked.Token);
+                before = before with
+                {
+                    PgDumpMajor = toolchain.Major,
+                    PgDumpVersion = toolchain.PgDumpVersion,
+                    PgRestoreVersion = toolchain.PgRestoreVersion
+                };
                 Directory.CreateDirectory(_options.SpoolPath);
                 var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(_options.SpoolPath))!);
                 if (drive.AvailableFreeSpace < 512L * 1024 * 1024)
@@ -81,12 +90,11 @@ public sealed class BackupRunExecutor(
                 if (usable == 0) throw new InvalidOperationException("No storage destination passed write/read/delete preflight.");
             }, linked.Token);
 
-            CitusBackupTopology before = null!;
-            await PhaseAsync(run, "Metadata", 2, async () =>
+            await PhaseAsync(run, "Metadata", 2, () =>
             {
-                before = await metadata.CollectAsync(cluster, linked.Token);
                 run.CitusMetadataJson = JsonSerializer.Serialize(before, JsonOptions);
                 run.EstimatedSourceBytes = before.DatabaseSizeBytes;
+                return Task.CompletedTask;
             }, linked.Token);
 
             await PhaseAsync(run, "Dumping", 3, async () =>
@@ -104,7 +112,7 @@ public sealed class BackupRunExecutor(
                     }, json, false), spool, linked.Token);
                 try
                 {
-                    var result = await postgres.DumpAsync(cluster, pipe.Writer.AsStream(), bytes =>
+                    var result = await postgres.DumpAsync(cluster, toolchain.Major, pipe.Writer.AsStream(), bytes =>
                     {
                         Interlocked.Exchange(ref dumpedBytes, bytes);
                         return ValueTask.CompletedTask;
@@ -144,7 +152,7 @@ public sealed class BackupRunExecutor(
             {
                 var target = run.DestinationCopies.First(x => x.Status == BackupCopyStatus.Succeeded && x.ManifestCommitted);
                 var provider = CreateProvider(target);
-                var listed = await ListArtifactAsync(artifactResult!.ManifestKey, provider, linked.Token);
+                var listed = await ListArtifactAsync(toolchain.Major, artifactResult!.ManifestKey, provider, linked.Token);
                 run.DiagnosticTail = listed.Diagnostic;
                 var after = await metadata.CollectAsync(cluster, linked.Token);
                 if (!string.Equals(before.Fingerprint, after.Fingerprint, StringComparison.Ordinal))
@@ -254,7 +262,7 @@ public sealed class BackupRunExecutor(
         await db.SaveChangesAsync(ct);
     }
 
-    private async Task<PostgresToolResult> ListArtifactAsync(string manifestKey, IBackupStorageProvider provider, CancellationToken ct)
+    private async Task<PostgresToolResult> ListArtifactAsync(int postgresMajor, string manifestKey, IBackupStorageProvider provider, CancellationToken ct)
     {
         var pipe = new Pipe(new PipeOptions(pauseWriterThreshold: 16L * 1024 * 1024, resumeWriterThreshold: 8L * 1024 * 1024));
         var producer = Task.Run(async () =>
@@ -268,7 +276,7 @@ public sealed class BackupRunExecutor(
         }, ct);
         try
         {
-            var result = await postgres.ListStreamAsync(pipe.Reader.AsStream(), ct);
+            var result = await postgres.ListStreamAsync(postgresMajor, pipe.Reader.AsStream(), ct);
             await producer;
             return result;
         }
@@ -359,15 +367,6 @@ public sealed class BackupRunExecutor(
             catch (Exception exception) { delivery.Status = DeliveryStatus.Failed; delivery.SafeError = Safe(exception); }
         }
         await db.SaveChangesAsync(ct);
-    }
-
-    private async Task ValidateToolVersionsAsync(ClusterProfile cluster, CancellationToken ct)
-    {
-        var dump = await postgres.ReadVersionAsync("pg_dump", ct);
-        _ = await postgres.ReadVersionAsync("pg_restore", ct);
-        var source = await metadata.CollectAsync(cluster, ct);
-        if (Major(dump) < Major(source.PostgreSqlVersion))
-            throw new InvalidOperationException("pg_dump client major version is older than PostgreSQL server.");
     }
 
     private async Task PhaseAsync(BackupRun run, string name, int sequence, Func<Task> action, CancellationToken ct)

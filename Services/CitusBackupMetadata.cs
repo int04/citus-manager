@@ -19,7 +19,12 @@ public sealed record CitusBackupTopology(
     IReadOnlyList<string> DistributedSchemas, IReadOnlyList<CitusBackupNode> Nodes,
     IReadOnlyList<CitusBackupTable> Tables, IReadOnlyList<CitusBackupConstraint> Constraints,
     IReadOnlyList<CitusBackupExtension> Extensions, IReadOnlyList<CitusBackupCapability> Capabilities,
-    string Fingerprint, DateTimeOffset CapturedAt);
+    string Fingerprint, DateTimeOffset CapturedAt)
+{
+    public int? PgDumpMajor { get; init; }
+    public string? PgDumpVersion { get; init; }
+    public string? PgRestoreVersion { get; init; }
+}
 
 public interface ICitusBackupMetadataCollector
 {
@@ -62,7 +67,7 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
                 nodes.Add(new(reader.GetString(0), reader.GetInt32(1), reader.GetString(2), reader.GetBoolean(3), reader.GetBoolean(4), reader.GetBoolean(5)));
 
         var distributedSchemas = new List<string>();
-        if (await RelationExistsAsync(connection, "pg_catalog.citus_schemas", cancellationToken))
+        if (await RelationExistsAsync(connection, "citus_schemas", cancellationToken))
         {
             await using var command = new NpgsqlCommand("SELECT schema_name::text FROM citus_schemas ORDER BY schema_name::text", connection);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -157,10 +162,17 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
     {
         await using var connection = connections.Create(target);
         await connection.OpenAsync(cancellationToken);
-        foreach (var schema in source.DistributedSchemas.Order(StringComparer.Ordinal))
+        // Older manifests could miss citus_schemas because the collector looked for
+        // the view in pg_catalog. Table type "schema" remains sufficient to recover it.
+        var distributedSchemas = source.DistributedSchemas
+            .Concat(source.Tables.Where(x => x.Type.Equals("schema", StringComparison.OrdinalIgnoreCase)).Select(x => x.Schema))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        foreach (var schema in distributedSchemas)
             await ExecuteAsync(connection, "SELECT citus_schema_distribute($1)", [schema], cancellationToken);
 
-        var eligible = source.Tables.Where(x => !x.IsPartition && !source.DistributedSchemas.Contains(x.Schema, StringComparer.Ordinal)).ToList();
+        var eligible = source.Tables.Where(x => !x.IsPartition && !distributedSchemas.Contains(x.Schema, StringComparer.Ordinal)).ToList();
         foreach (var table in eligible.Where(x => x.Type.Equals("reference", StringComparison.OrdinalIgnoreCase)))
             await ExecuteAsync(connection, "SELECT create_reference_table($1::regclass)", [Qualified(table)], cancellationToken);
 
