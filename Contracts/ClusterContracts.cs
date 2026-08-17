@@ -56,6 +56,17 @@ public sealed record ClusterResponse(
     DateTimeOffset? LastCheckedAt,
     string? LastError);
 
+/// <summary>Control-database registration that distinguishes an intentional query endpoint from a drained worker.</summary>
+public sealed record ClusterQueryEndpointResponse(
+    Guid Id,
+    string Host,
+    int Port,
+    bool IsEnabled,
+    QueryEndpointHealth Health,
+    bool MetadataSynced,
+    DateTimeOffset? LastCheckedAt,
+    string? LastError);
+
 /// <summary>Installed database capabilities discovered from the coordinator.</summary>
 public sealed record CapabilityResponse(
     string PostgreSqlVersion,

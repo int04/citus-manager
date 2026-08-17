@@ -30,6 +30,7 @@ public interface IDatabaseQueryConsoleService
 public sealed class DatabaseQueryConsoleService(
     ControlDbContext db,
     ICitusConnectionFactory connections,
+    IQueryEndpointRouter queryEndpoints,
     IQueryConsoleExecutionRegistry executionRegistry,
     IStringLocalizer<DatabaseResource> text,
     IOptions<DatabaseExplorerOptions> configuredOptions) : IDatabaseQueryConsoleService
@@ -40,7 +41,7 @@ public sealed class DatabaseQueryConsoleService(
         Guid clusterId, QueryConsoleScope scope, CancellationToken ct)
     {
         var target = await ResolveTargetAsync(clusterId, scope.NodeId, ct);
-        await using var connection = await OpenAsync(target, ct);
+        await using var connection = await OpenAsync(target, true, ct);
         const string relationSql = """
             SELECT n.nspname, c.relname,
                    CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view'
@@ -128,7 +129,10 @@ public sealed class DatabaseQueryConsoleService(
         executionRegistry.Register(request.ExecutionId, actorId, clusterId, selected);
         try
         {
-            await using var connection = await OpenAsync(target, ct);
+            var selectedStatements = descriptors.Where(x => selected.Contains(x.Index)).ToList();
+            var provenReadOnly = selectedStatements.Count > 0 &&
+                                 selectedStatements.All(x => x.Risk == ConsoleRiskLevel.ReadOnly);
+            await using var connection = await OpenAsync(target, provenReadOnly, ct);
             await ConfigureSessionAsync(connection, target, request.Scope, ct);
             yield return new("connected", DateTimeOffset.UtcNow, Message: target.Label, QueryHash: queryHash);
             foreach (var descriptor in descriptors.Where(x => selected.Contains(x.Index)))
@@ -222,7 +226,7 @@ public sealed class DatabaseQueryConsoleService(
         var page = Math.Max(1, request.Page);
         var sql = BuildReplaySql(request, includeOrder: true) + " LIMIT $1 OFFSET $2";
         var watch = Stopwatch.StartNew();
-        await using var connection = await OpenAsync(target, ct);
+        await using var connection = await OpenAsync(target, true, ct);
         await ConfigureSessionAsync(connection, target, request.Scope, ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
@@ -270,7 +274,7 @@ public sealed class DatabaseQueryConsoleService(
         ConsoleSqlAnalyzer.EnsureSingleReadOnly(request.Sql);
         var target = await ResolveTargetAsync(clusterId, request.NodeId, ct);
         var watch = Stopwatch.StartNew();
-        await using var connection = await OpenAsync(target, ct);
+        await using var connection = await OpenAsync(target, true, ct);
         await ConfigureSessionAsync(connection, target, request.Scope, ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
@@ -294,7 +298,7 @@ public sealed class DatabaseQueryConsoleService(
             Sql = request.Sql, NodeId = request.NodeId, Scope = request.Scope,
             Where = request.Where, OrderBy = request.OrderBy
         };
-        await using var connection = await OpenAsync(target, ct);
+        await using var connection = await OpenAsync(target, true, ct);
         await ConfigureSessionAsync(connection, target, request.Scope, ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
@@ -318,7 +322,7 @@ public sealed class DatabaseQueryConsoleService(
     {
         ConsoleSqlAnalyzer.EnsureSingleReadOnly(request.Sql);
         var target = await ResolveTargetAsync(clusterId, request.NodeId, ct);
-        await using var connection = await OpenAsync(target, ct);
+        await using var connection = await OpenAsync(target, true, ct);
         await ConfigureSessionAsync(connection, target, request.Scope, ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
@@ -385,8 +389,18 @@ public sealed class DatabaseQueryConsoleService(
             $"{profile.Database} [worker {reader.GetInt32(0)}]");
     }
 
-    private async Task<NpgsqlConnection> OpenAsync(Target target, CancellationToken ct)
+    private async Task<NpgsqlConnection> OpenAsync(Target target, bool provenReadOnly, CancellationToken ct)
     {
+        if (target.IsCoordinator && provenReadOnly)
+        {
+            var routed = await queryEndpoints.OpenAsync(target.Profile, true, ct);
+            if (!routed.IsControlCoordinator)
+            {
+                await using var readOnly = new NpgsqlCommand("SET default_transaction_read_only = on", routed.Connection);
+                await readOnly.ExecuteNonQueryAsync(ct);
+            }
+            return routed.Connection;
+        }
         var connection = target.IsCoordinator ? connections.Create(target.Profile) : connections.Create(target.Profile, target.Host, target.Port);
         await connection.OpenAsync(ct);
         return connection;

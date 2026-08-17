@@ -487,7 +487,8 @@ public sealed record OperationProgressResponse(
     TimeSpan? Elapsed, bool CanCancel, string? Warning, string? SafeError,
     IReadOnlyList<OperationStepResponse> Steps,
     string? ResultSchema = null, string? ResultTable = null,
-    long? ExactRows = null, long? ExactBytes = null);
+    long? ExactRows = null, long? ExactBytes = null,
+    OperationProgressSnapshot? TopologyProgress = null);
 
 /// <summary>One column returned by a database query.</summary>
 public sealed record ResultColumnResponse(string Name, string DataType);

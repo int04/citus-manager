@@ -2,69 +2,141 @@
 @using CitusManager.Localization
 @using Microsoft.Extensions.Localization
 @inject IStringLocalizer<ClusterResource> T
-@{ ViewData["Title"] = Model.Cluster.Name; var inventory = Model.Inventory; }
+@{
+    ViewData["Title"] = Model.Cluster.Name;
+    var inventory = Model.Inventory;
+    var canOperate = User.IsInRole("Operator") || User.IsInRole("Admin");
+    var topologyGroups = ClusterTopologyPresentation.Classify(inventory?.Nodes ?? [], Model.QueryEndpoints);
+    var queryNodes = topologyGroups.QueryNodes;
+    var workers = topologyGroups.Workers;
+}
+<link rel="stylesheet" href="~/css/clusters.css" asp-append-version="true" />
 <div class="page-heading">
     <div><p class="eyebrow">@Model.Cluster.Host:@Model.Cluster.Port / @Model.Cluster.Database</p><h1>@Model.Cluster.Name</h1><p>Citus @Model.Cluster.CitusVersion · TLS @Model.Cluster.SslMode</p></div>
-    <div class="heading-actions"><a class="btn btn-primary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">@T["Cluster.Data"]</a><a class="btn btn-secondary" asp-controller="Backups" asp-action="Cluster" asp-route-clusterId="@Model.Cluster.Id"><i class="fa fa-database" aria-hidden="true"></i> @T["Cluster.Backup"]</a><a class="btn btn-secondary" asp-controller="Activity" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Activity</a><a class="btn btn-secondary" asp-controller="Metrics" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Metrics</a><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Cluster.Id">@T["Cluster.Refresh"]</a></div>
+    <div class="heading-actions"><a class="btn btn-primary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">@T["Cluster.Data"]</a><a class="btn btn-secondary" asp-controller="Backups" asp-action="Cluster" asp-route-clusterId="@Model.Cluster.Id"><i class="fa fa-database" aria-hidden="true"></i> @T["Cluster.Backup"]</a><a class="btn btn-secondary" asp-controller="Activity" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Activity</a><a class="btn btn-secondary" asp-controller="Metrics" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Metrics</a><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Cluster.Id" asp-route-refresh="true">@T["Cluster.Refresh"]</a></div>
 </div>
 @if (Model.SafeError is not null) { <div class="notice danger" role="alert">@Model.SafeError</div> }
 @if (inventory is not null)
 {
-    <section class="metric-grid" aria-label="Cluster metrics">
-        <article class="metric-card"><span>Nodes</span><strong>@inventory.Nodes.Count</strong><small>@inventory.Nodes.Count(x => x.IsActive) active</small></article>
-        <article class="metric-card"><span>Workers</span><strong>@inventory.Nodes.Count(x => x.ShouldHaveShards)</strong><small>eligible for shards</small></article>
-        <article class="metric-card"><span>Placements</span><strong>@inventory.Nodes.Sum(x => x.PlacementCount)</strong><small>physical shard copies</small></article>
-        <article class="metric-card"><span>Distributed tables</span><strong>@inventory.Tables.Count</strong><small>visible in citus_tables</small></article>
+    <section class="metric-grid" aria-label="@T["Cluster.MetricsLabel"]">
+        <article class="metric-card"><span>@T["Cluster.Nodes"]</span><strong>@inventory.Nodes.Count</strong><small>@T["Cluster.Active", inventory.Nodes.Count(x => x.IsActive)]</small></article>
+        <article class="metric-card"><span>@T["Cluster.Workers"]</span><strong>@workers.Count</strong><small>@T["Cluster.RegisteredWorkers"]</small></article>
+        <article class="metric-card"><span>@T["Cluster.Placements"]</span><strong>@inventory.Nodes.Sum(x => x.PlacementCount)</strong><small>@T["Cluster.ShardCopies"]</small></article>
+        <article class="metric-card"><span>@T["Cluster.DistributedTables"]</span><strong>@inventory.Tables.Count</strong><small>@T["Cluster.InventoryAt", inventory.CollectedAt.ToLocalTime().ToString("g")]</small></article>
     </section>
-    <section class="section-block">
-        <div class="section-title"><div><h2>Topology</h2><p>Metadata/query nodes + shard-eligible workers.</p></div></div>
-        <div class="topology-grid">
-        @foreach (var node in inventory.Nodes)
-        {
-            <article class="node-card">
-                <div class="node-card-head"><span class="status-dot @(node.IsActive ? "ok" : "bad")"></span><strong>@node.Host:@node.Port</strong></div>
-                <code>@node.Role · group @node.GroupId</code>
-                <dl class="compact-dl"><div><dt>Node ID</dt><dd>@node.NodeId</dd></div><div><dt>Placements</dt><dd>@node.PlacementCount</dd></div><div><dt>Shard bytes</dt><dd>@FormatBytes(node.ShardBytes)</dd></div><div><dt>Metadata</dt><dd>@(node.HasMetadata ? (node.MetadataSynced ? "synced" : "unsynced") : "worker")</dd></div></dl>
-                @if (node.IsActive) { <a class="btn btn-secondary mt-4 w-full" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id" asp-route-nodeId="@node.NodeId">@T["Cluster.NodeData"]</a> }
-                else { <button class="btn btn-secondary mt-4 w-full" type="button" disabled title="@T["Cluster.Inactive"]">@T["Cluster.NodeData"]</button> }
-            </article>
-        }
+
+    <section id="cluster-operations"
+             class="section-block topology-operations"
+             data-cluster-operations
+             data-cluster-id="@Model.Cluster.Id"
+             data-api-root="/api/operations/clusters/@Model.Cluster.Id"
+             data-operation-url="/Operations/Details/{id}"
+             data-i18n-moves="@T["Cluster.Moves"]"
+             data-i18n-placements-to-move="@T["Cluster.PlacementsToMove"]"
+             data-i18n-data-to-move="@T["Cluster.DataToMove"]"
+             data-i18n-available-targets="@T["Cluster.AvailableTargets"]"
+             data-i18n-source="@T["Cluster.Source"]"
+             data-i18n-target="@T["Cluster.Target"]"
+             data-i18n-shard="@T["Cluster.Shards"]"
+             data-i18n-bytes="@T["Cluster.Bytes"]"
+             data-i18n-snapshot="@T["Cluster.Snapshot"]"
+             data-i18n-confirmation-mismatch="@T["Cluster.ConfirmationMismatch"]"
+             data-i18n-missing-operation-id="@T["Cluster.MissingOperationId"]"
+             data-i18n-preparing-operation="@T["Cluster.PreparingOperation"]"
+             data-i18n-active-conflict="@T["Cluster.ActiveConflict"]"
+             data-can-operate="@canOperate.ToString().ToLowerInvariant()">
+        <div class="section-title topology-title">
+            <div><h2>@T["Cluster.Topology"]</h2><p>@T["Cluster.TopologyHelp"]</p></div>
+            @if (canOperate)
+            {
+                <div class="topology-actions" aria-label="@T["Cluster.TopologyActions"]">
+                    <button class="btn btn-primary" type="button" data-open-operation="add-worker"><i class="fa fa-plus" aria-hidden="true"></i> @T["Cluster.AddWorker"]</button>
+                    <button class="btn btn-secondary" type="button" data-open-operation="add-query"><i class="fa fa-sitemap" aria-hidden="true"></i> @T["Cluster.AddQueryNode"]</button>
+                    <button class="btn btn-secondary" type="button" data-open-operation="rebalance"><i class="fa fa-random" aria-hidden="true"></i> @T["Cluster.Rebalance"]</button>
+                </div>
+            }
         </div>
+
+        <div id="topology-live-status" class="operation-live-strip" aria-live="polite" aria-atomic="true" hidden>
+            <div class="operation-live-copy"><span class="status-pill warning" data-live-status>@T["Cluster.OperationRunning"]</span><strong data-live-title></strong><small data-live-detail></small></div>
+            <div class="operation-live-progress"><progress max="100" value="0" data-live-progress></progress><span data-live-percent>0%</span></div>
+            <a class="table-link" data-live-link href="#">@T["Cluster.ViewOperation"]</a>
+        </div>
+
+        <div class="topology-group">
+            <div class="topology-group-heading"><div><h3>@T["Cluster.QueryNodes"]</h3><p>@T["Cluster.QueryNodesHelp"]</p></div><span class="status-pill neutral">@queryNodes.Count</span></div>
+            @if (queryNodes.Count == 0) { <div class="empty-state compact"><p>@T["Cluster.NoQueryNodes"]</p></div> }
+            else
+            {
+                <div class="topology-grid">
+                @foreach (var node in queryNodes)
+                {
+                    <article class="node-card node-card-query" data-node-card data-node-host="@node.Host" data-node-port="@node.Port">
+                        <div class="node-card-head"><span class="status-dot @(node.IsActive ? "ok" : "bad")" aria-hidden="true"></span><div><strong>@node.Host:@node.Port</strong><small>@(node.IsActive ? T["Cluster.ActiveNode"] : T["Cluster.Inactive"])</small></div><span class="node-role">@(node.GroupId == 0 ? T["Cluster.ControlCoordinator"] : T["Cluster.QueryNode"])</span></div>
+                        <dl class="compact-dl"><div><dt>@T["Cluster.NodeId"]</dt><dd>@node.NodeId</dd></div><div><dt>@T["Cluster.Group"]</dt><dd>@node.GroupId</dd></div><div><dt>@T["Cluster.Placements"]</dt><dd>@node.PlacementCount</dd></div><div><dt>@T["Cluster.Metadata"]</dt><dd>@(node.MetadataSynced ? T["Cluster.Synced"] : T["Cluster.Unsynced"])</dd></div></dl>
+                        <div class="node-card-actions">
+                            @if (node.IsActive) { <a class="btn btn-secondary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id" asp-route-nodeId="@node.NodeId">@T["Cluster.NodeData"]</a> }
+                            else { <button class="btn btn-secondary" type="button" disabled title="@T["Cluster.Inactive"]">@T["Cluster.NodeData"]</button> }
+                            @if (canOperate && node.GroupId != 0)
+                            {
+                                <details class="node-action-menu"><summary class="btn btn-ghost" aria-label="@T["Cluster.QueryNodeActions", node.Host]"><i class="fa fa-ellipsis-h" aria-hidden="true"></i><span>@T["Cluster.Actions"]</span></summary><div class="node-action-popover"><button class="danger" type="button" data-open-operation="retire" data-node-kind="query" data-host="@node.Host" data-port="@node.Port"><i class="fa fa-trash-o" aria-hidden="true"></i><span><strong>@T["Cluster.RemoveQueryNode"]</strong><small>@T["Cluster.RemoveQueryNodeShort"]</small></span></button></div></details>
+                            }
+                        </div>
+                    </article>
+                }
+                </div>
+            }
+        </div>
+
+        <div class="topology-group">
+            <div class="topology-group-heading"><div><h3>@T["Cluster.Workers"]</h3><p>@T["Cluster.WorkersHelp"]</p></div><span class="status-pill neutral">@workers.Count</span></div>
+            @if (workers.Count == 0) { <div class="empty-state compact"><p>@T["Cluster.NoWorkers"]</p></div> }
+            else
+            {
+                <div class="topology-grid">
+                @foreach (var node in workers)
+                {
+                    <article class="node-card" data-node-card data-node-host="@node.Host" data-node-port="@node.Port">
+                        <div class="node-card-head"><span class="status-dot @(node.IsActive ? "ok" : "bad")" aria-hidden="true"></span><div><strong>@node.Host:@node.Port</strong><small>@(node.IsActive ? T["Cluster.ActiveNode"] : T["Cluster.Inactive"])</small></div><span class="node-role">@(node.ShouldHaveShards ? T["Cluster.Worker"] : T["Cluster.DrainedWorker"])</span></div>
+                        <dl class="compact-dl"><div><dt>@T["Cluster.NodeId"]</dt><dd>@node.NodeId</dd></div><div><dt>@T["Cluster.Placements"]</dt><dd>@node.PlacementCount</dd></div><div><dt>@T["Cluster.ShardBytes"]</dt><dd>@FormatBytes(node.ShardBytes)</dd></div><div><dt>@T["Cluster.Group"]</dt><dd>@node.GroupId</dd></div></dl>
+                        <div class="node-card-actions">
+                            @if (node.IsActive) { <a class="btn btn-secondary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id" asp-route-nodeId="@node.NodeId">@T["Cluster.NodeData"]</a> }
+                            else { <button class="btn btn-secondary" type="button" disabled>@T["Cluster.NodeData"]</button> }
+                            @if (canOperate)
+                            {
+                                <details class="node-action-menu"><summary class="btn btn-ghost" aria-label="@T["Cluster.WorkerActions", node.Host]"><i class="fa fa-ellipsis-h" aria-hidden="true"></i><span>@T["Cluster.Actions"]</span></summary><div class="node-action-popover">@if (node.ShouldHaveShards) { <button type="button" data-open-operation="drain" data-host="@node.Host" data-port="@node.Port"><i class="fa fa-exchange" aria-hidden="true"></i><span><strong>@T["Cluster.DrainWorker"]</strong><small>@T["Cluster.DrainWorkerShort"]</small></span></button> }<button class="danger" type="button" data-open-operation="retire" data-node-kind="worker" data-host="@node.Host" data-port="@node.Port"><i class="fa fa-trash-o" aria-hidden="true"></i><span><strong>@T["Cluster.RetireWorker"]</strong><small>@T["Cluster.RetireWorkerShort"]</small></span></button></div></details>
+                            }
+                        </div>
+                    </article>
+                }
+                </div>
+            }
+        </div>
+
+        @if (canOperate)
+        {
+            <form id="cluster-operation-token" hidden>@Html.AntiForgeryToken()</form>
+            <partial name="_TopologyOperationDialogs" model="Model.Cluster" />
+        }
     </section>
+
     <section class="section-block">
-        <div class="section-title"><div><h2>Tables</h2><p>Version-dependent columns projected safely.</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Table</th><th>Type</th><th>Distribution</th><th>Shards</th><th>Colocation</th><th>Size</th><th>Storage</th></tr></thead><tbody>
+        <div class="section-title"><div><h2>@T["Cluster.Tables"]</h2><p>@T["Cluster.TablesHelp"]</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>@T["Cluster.Table"]</th><th>@T["Cluster.Type"]</th><th>@T["Cluster.Distribution"]</th><th>@T["Cluster.Shards"]</th><th>@T["Cluster.Colocation"]</th><th>@T["Cluster.Size"]</th><th>@T["Cluster.Storage"]</th></tr></thead><tbody>
         @foreach (var table in inventory.Tables)
         { <tr><td><code>@table.Name</code></td><td>@table.Type</td><td><code>@table.DistributionColumn</code></td><td>@table.ShardCount</td><td>@table.ColocationId</td><td>@table.TableSize</td><td>@table.AccessMethod</td></tr> }
         </tbody></table></div>
     </section>
 }
-@if (User.IsInRole("Operator") || User.IsInRole("Admin"))
-{
-    <section class="section-block">
-        <div class="section-title"><div><h2>@T["Cluster.PlanTitle"]</h2><p>@T["Cluster.PlanHelp"]</p></div></div>
-        <form asp-controller="Operations" asp-action="Create" method="post" class="panel form-panel">
-            <input type="hidden" name="clusterId" value="@Model.Cluster.Id" />
-            <fieldset><legend>Topology operation</legend><div class="form-grid">
-                <div class="field"><label for="kind">Operation *</label><select id="kind" name="Kind"><option value="AddWorker">Add worker</option><option value="Rebalance">Rebalance</option><option value="DrainWorker">Drain worker</option><option value="RemoveWorker">Remove worker</option></select></div>
-                <div class="field"><label for="workerHost">Worker host</label><input id="workerHost" name="WorkerHost" autocomplete="off" /></div>
-                <div class="field"><label for="workerPort">Worker port</label><input id="workerPort" name="WorkerPort" type="number" min="1" max="65535" value="5432" inputmode="numeric" /></div>
-                <div class="field"><label for="typedConfirmation">Typed confirmation</label><input id="typedConfirmation" name="TypedConfirmation" autocomplete="off" /><small>@T["Cluster.RemoveConfirmation"]</small></div>
-            </div>
-            <label class="check-field"><input type="checkbox" name="ExternalCapacityAndBackupChecksAcknowledged" value="true" /><span>@T["Cluster.CapacityAck"]</span></label></fieldset>
-            <div class="warning-callout"><strong>@T["Cluster.Warning"]</strong> @T["Cluster.WarningHelp"]</div>
-            <div class="form-actions"><button class="btn btn-primary" type="submit">@T["Cluster.CreatePlan"]</button></div>
-        </form>
-    </section>
-}
 <section class="section-block">
-    <div class="section-title"><div><h2>Operations</h2><p>@T["Cluster.OperationsHelp"]</p></div></div>
-    <div id="operation-table-live" hx-get="@Url.Action("OperationTable", "Clusters", new { id = Model.Cluster.Id })" hx-trigger="every 5s" hx-swap="innerHTML"><partial name="_OperationTable" model="Model.Operations" /></div>
+    <div class="section-title"><div><h2>@T["Cluster.Operations"]</h2><p>@T["Cluster.OperationsHelpNew"]</p></div><a class="btn btn-secondary" asp-controller="Operations" asp-action="Index">@T["Cluster.AllOperations"]</a></div>
+    <div id="operation-table-live"><partial name="_OperationTable" model="Model.Operations" /></div>
 </section>
 @if (User.IsInRole("Admin"))
 {
     <section class="danger-zone"><h2>@T["Cluster.Danger"]</h2><p>@T["Cluster.DeleteHelp"]</p><form asp-action="Delete" method="post"><input type="hidden" name="id" value="@Model.Cluster.Id" /><button class="btn btn-danger" type="submit">@T["Cluster.Delete"]</button></form></section>
 }
+@section Scripts { <script src="~/js/clusters.js" asp-append-version="true" defer></script> }
 @functions {
-    static string FormatBytes(long bytes) => bytes switch { >= 1_099_511_627_776 => $"{bytes / 1_099_511_627_776d:N1} TiB", >= 1_073_741_824 => $"{bytes / 1_073_741_824d:N1} GiB", >= 1_048_576 => $"{bytes / 1_048_576d:N1} MiB", _ => $"{bytes:N0} B" };
+    static string FormatBytes(long bytes) => bytes switch { >= 1_099_511_627_776 => $"{bytes / 1_099_511_627_776d:N1} TiB", >= 1_073_741_824 => $"{bytes / 1_073_741_824d:N1} GiB", >= 1_048_576 => $"{bytes / 1_048_576d:N1} MiB", >= 1_024 => $"{bytes / 1_024d:N1} KiB", _ => $"{bytes:N0} B" };
 }

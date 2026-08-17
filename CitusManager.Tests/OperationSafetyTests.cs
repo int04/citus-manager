@@ -26,8 +26,10 @@ public sealed class OperationSafetyTests
 
     [Theory]
     [InlineData(OperationKind.AddWorker, OperationRisk.Write)]
+    [InlineData(OperationKind.AddQueryNode, OperationRisk.Write)]
     [InlineData(OperationKind.Rebalance, OperationRisk.Impact)]
     [InlineData(OperationKind.DrainWorker, OperationRisk.Impact)]
+    [InlineData(OperationKind.RetireWorker, OperationRisk.Destructive)]
     [InlineData(OperationKind.RemoveWorker, OperationRisk.Destructive)]
     [InlineData(OperationKind.ConvertTable, OperationRisk.Impact)]
     [InlineData(OperationKind.CreatePartitionedTable, OperationRisk.Write)]
@@ -38,6 +40,10 @@ public sealed class OperationSafetyTests
     [InlineData(OperationKind.ChangeTableMode, OperationRisk.Impact)]
     public void Operation_risk_is_fixed(OperationKind kind, OperationRisk expected) =>
         Assert.Equal(expected, OperationSafety.RiskFor(kind));
+
+    [Fact]
+    public void Add_worker_with_rebalance_is_impact() =>
+        Assert.Equal(OperationRisk.Impact, OperationSafety.RiskFor(OperationKind.AddWorker, true));
 
     [Fact]
     public void Valid_remove_passes_safety_validation()
@@ -55,8 +61,10 @@ public sealed class OperationSafetyTests
 
     [Theory]
     [InlineData(OperationKind.AddWorker)]
+    [InlineData(OperationKind.AddQueryNode)]
     [InlineData(OperationKind.Rebalance)]
     [InlineData(OperationKind.DrainWorker)]
+    [InlineData(OperationKind.RetireWorker)]
     [InlineData(OperationKind.RemoveWorker)]
     [InlineData(OperationKind.ConvertTable)]
     [InlineData(OperationKind.CreatePartitionedTable)]

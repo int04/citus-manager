@@ -2,22 +2,62 @@
 @using CitusManager.Localization
 @using Microsoft.Extensions.Localization
 @inject IStringLocalizer<OperationsResource> T
-@{ ViewData["Title"] = $"Operation {Model.Id.ToString()[..8]}"; }
-<div class="page-heading"><div><p class="eyebrow">@Model.Risk · @Model.RequestedAt.ToLocalTime().ToString("g")</p><h1>@Model.Kind</h1><p><code>@Model.Id</code></p></div><span class="status-pill status-large @StatusClass(Model.Status)">@Model.Status</span></div>
-@if (Model.SafeError is not null) { <div class="notice danger" role="alert">@Model.SafeError</div> }
-<div class="two-column">
-    <section class="panel"><h2>@T["Approval"]</h2><dl class="detail-list"><div><dt>@T["RequestedBy"]</dt><dd><code>@Model.RequestedBy</code></dd></div><div><dt>@T["ApprovedBy"]</dt><dd><code>@(Model.ApprovedBy?.ToString() ?? T["Pending"])</code></dd></div><div><dt>@T["Started"]</dt><dd>@(Model.StartedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div><div><dt>@T["Completed"]</dt><dd>@(Model.CompletedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div></dl>
-    <div class="form-actions">
-        @if (Model.Status == OperationStatus.AwaitingApproval && (User.IsInRole("Admin") || User.IsInRole("Operator"))) { <form asp-action="Approve" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-primary" type="submit">@T["Approve"]</button></form> }
-        @if (Model.Kind is not (OperationKind.Backup or OperationKind.Restore) && Model.Status is OperationStatus.AwaitingApproval or OperationStatus.Approved or OperationStatus.Running) { <form asp-action="Cancel" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-danger" type="submit">@T["Cancel"]</button></form> }
-    </div></section>
-    <section class="panel"><h2>@T["Plan"]</h2><pre class="json-block">@Pretty(Model.PlanJson)</pre></section>
-</div>
-<section class="section-block"><div class="section-title"><div><h2>@T["Checkpoints"]</h2><p>@T["CheckpointHelp"]</p></div><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Id">@T["Common.Refresh"]</a></div>
-@if (Model.Steps.Count == 0) { <div class="empty-state compact"><p>@T["NotStarted"]</p></div> } else { <ol class="timeline">@foreach (var step in Model.Steps) { <li><span class="status-dot @(step.Status == "Succeeded" ? "ok" : "bad")"></span><div><strong>@step.Sequence. @step.Name</strong><p>@step.Detail</p><small>@step.CompletedAt?.ToLocalTime().ToString("G")</small></div></li> }</ol> }
+@{
+    ViewData["Title"] = $"Operation {Model.Id.ToString()[..8]}";
+    var completeSteps = Model.Steps.Count(x => x.Status == "Succeeded");
+    var currentStep = Model.Steps.LastOrDefault(x => x.Status != "Succeeded") ?? Model.Steps.LastOrDefault();
+    var isActive = Model.Status is OperationStatus.Running or OperationStatus.Cancelling or OperationStatus.RetryScheduled or OperationStatus.Approved;
+    int? progress = isActive ? null : Model.Status == OperationStatus.Succeeded ? 100 :
+        Model.Steps.Count == 0 ? 0 : (int)Math.Round(completeSteps * 100d / Model.Steps.Count);
+}
+<link rel="stylesheet" href="~/css/clusters.css" asp-append-version="true" />
+<div class="page-heading operation-heading"><div><p class="eyebrow">@Model.Risk · @Model.RequestedAt.ToLocalTime().ToString("g")</p><h1>@Model.Kind</h1><p><code>@Model.Id</code></p></div><span class="status-pill status-large @StatusClass(Model.Status)" data-operation-status>@Model.Status</span></div>
+@if (Model.SafeError is not null)
+{
+    <div class="operation-error" role="alert"><i class="fa fa-exclamation-circle" aria-hidden="true"></i><div><strong>@T["OperationFailed"]</strong><p>@Model.SafeError</p><small>@T["RecoveryHelp"]</small></div></div>
+}
+
+<section class="operation-progress-panel" aria-labelledby="progress-title" aria-live="polite" data-operation-progress data-operation-id="@Model.Id" data-active="@isActive.ToString().ToLowerInvariant()">
+    <div class="operation-progress-head"><div><span class="dialog-kicker">@T["ExecutionProgress"]</span><h2 id="progress-title">@(currentStep?.Name ?? T["WaitingToStart"])</h2><p data-progress-detail>@(currentStep?.Detail ?? T["QueuedDetail"])</p></div><strong class="operation-progress-percent">@(progress.HasValue ? $"{progress}%" : "…")</strong></div>
+    @if (progress.HasValue) { <progress max="100" value="@progress.Value">@progress%</progress> }
+    else { <progress max="100">@T["ExecutionProgress"]</progress> }
+    <div class="operation-progress-meta"><span>@T["StepCount", Math.Min(completeSteps + (isActive ? 1 : 0), Model.Steps.Count), Model.Steps.Count]</span><span data-progress-elapsed>@T["Elapsed"] @Elapsed(Model.StartedAt, Model.CompletedAt)</span><span data-progress-updated>@T["LastUpdated"] @((currentStep?.CompletedAt ?? currentStep?.StartedAt ?? Model.RequestedAt).ToLocalTime().ToString("T"))</span></div>
 </section>
-@if (Model.ResultJson is not null) { <section class="panel"><h2>@T["Result"]</h2><pre class="json-block">@Pretty(Model.ResultJson)</pre></section> }
+
+<div class="two-column operation-detail-grid">
+    <section class="panel"><h2>@T["Approval"]</h2><dl class="detail-list"><div><dt>@T["RequestedBy"]</dt><dd><code>@Model.RequestedBy</code></dd></div><div><dt>@T["ApprovedBy"]</dt><dd><code>@(Model.ApprovedBy?.ToString() ?? T["Pending"])</code></dd></div><div><dt>@T["Started"]</dt><dd>@(Model.StartedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div><div><dt>@T["Completed"]</dt><dd>@(Model.CompletedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div></dl>
+        <div class="form-actions">
+            @if (Model.Status == OperationStatus.AwaitingApproval && (User.IsInRole("Admin") || User.IsInRole("Operator"))) { <form asp-action="Approve" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-primary" type="submit">@T["Approve"]</button></form> }
+            @if (Model.Kind is not (OperationKind.Backup or OperationKind.Restore) && Model.Status is OperationStatus.AwaitingApproval or OperationStatus.Approved or OperationStatus.Running) { <form asp-action="Cancel" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-danger" type="submit">@T["Cancel"]</button></form> }
+        </div>
+    </section>
+    <section class="panel"><h2>@T["CurrentWork"]</h2><dl class="detail-list"><div><dt>@T["Phase"]</dt><dd>@(currentStep?.Name ?? "—")</dd></div><div><dt>@T["Detail"]</dt><dd>@(currentStep?.Detail ?? "—")</dd></div><div><dt>@T["CheckpointStatus"]</dt><dd><span class="status-pill @(currentStep?.Status == "Succeeded" ? "success" : "warning")">@(currentStep?.Status ?? T["Pending"])</span></dd></div></dl></section>
+</div>
+
+<section class="section-block"><div class="section-title"><div><h2>@T["Checkpoints"]</h2><p>@T["CheckpointHelp"]</p></div><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Id">@T["Common.Refresh"]</a></div>
+@if (Model.Steps.Count == 0) { <div class="empty-state compact"><p>@T["NotStarted"]</p></div> }
+else
+{
+    <ol class="operation-stepper">
+    @foreach (var step in Model.Steps)
+    {
+        var stepClass = step.Status == "Succeeded" ? "complete" : step.Status is "Failed" or "RecoveryRequired" ? "failed" : "active";
+        <li class="@stepClass"><span class="step-marker" aria-hidden="true">@(step.Status == "Succeeded" ? "✓" : step.Sequence.ToString())</span><div><div class="step-title"><strong>@step.Name</strong><span class="status-pill @(stepClass == "complete" ? "success" : stepClass == "failed" ? "danger" : "warning")">@step.Status</span></div><p>@step.Detail</p><small>@step.StartedAt.ToLocalTime().ToString("G") @if (step.CompletedAt is not null) { <text>→ @step.CompletedAt.Value.ToLocalTime().ToString("T")</text> }</small></div></li>
+    }
+    </ol>
+}
+</section>
+
+<details class="technical-details panel"><summary><span><i class="fa fa-code" aria-hidden="true"></i> @T["TechnicalDetails"]</span><small>@T["TechnicalDetailsHelp"]</small></summary><div><h3>@T["Plan"]</h3><pre class="json-block">@Pretty(Model.PlanJson)</pre>@if (Model.ResultJson is not null) { <h3 class="mt-4">@T["Result"]</h3><pre class="json-block">@Pretty(Model.ResultJson)</pre> }</div></details>
+
+@section Scripts {
+@if (isActive)
+{
+<script src="~/js/operation-details.js" asp-append-version="true" defer></script>
+}
+}
 @functions {
-    static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled => "warning", _ => "neutral" };
+    static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled or OperationStatus.Cancelling => "warning", _ => "neutral" };
     static string Pretty(string json) { try { using var doc = System.Text.Json.JsonDocument.Parse(json); return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }); } catch { return "Invalid sanitized JSON"; } }
+    static string Elapsed(DateTimeOffset? started, DateTimeOffset? completed) { if (started is null) return "—"; var duration = (completed ?? DateTimeOffset.UtcNow) - started.Value; return duration.TotalHours >= 1 ? $"{(int)duration.TotalHours}h {duration.Minutes}m" : $"{Math.Max(0, duration.Minutes)}m {Math.Max(0, duration.Seconds)}s"; }
 }

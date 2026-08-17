@@ -47,6 +47,7 @@ public interface IDatabaseExplorerService
 public sealed class DatabaseExplorerService(
     ControlDbContext db,
     ICitusConnectionFactory connections,
+    IQueryEndpointRouter queryEndpoints,
     IOptions<DatabaseExplorerOptions> configuredOptions) : IDatabaseExplorerService
 {
     private readonly DatabaseExplorerOptions options = configuredOptions.Value;
@@ -156,7 +157,7 @@ public sealed class DatabaseExplorerService(
 
         var target = await ResolveTargetAsync(clusterId, nodeId, cancellationToken);
         if (!target.IsCoordinator) throw new InvalidOperationException("Tree details are read from the coordinator catalog only.");
-        await using var connection = await OpenAsync(target, cancellationToken);
+        await using var connection = await OpenAsync(target, true, cancellationToken);
         await EnsureCoordinatorObjectAsync(connection, schema, name, cancellationToken);
         var items = new List<DatabaseTreeChildResponse>();
         await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = options.CommandTimeoutSeconds };
@@ -191,7 +192,7 @@ public sealed class DatabaseExplorerService(
         var target = await ResolveTargetAsync(clusterId, request.NodeId, cancellationToken);
         var pageSize = NormalizePageSize(request.PageSize);
         var page = Math.Max(1, request.Page);
-        await using var connection = await OpenAsync(target, cancellationToken);
+        await using var connection = await OpenAsync(target, true, cancellationToken);
 
         IReadOnlyList<PhysicalRelation> relations = [];
         string sourceSql;
@@ -241,7 +242,7 @@ public sealed class DatabaseExplorerService(
         Guid clusterId, TableStructureRequest request, CancellationToken cancellationToken)
     {
         var target = await ResolveTargetAsync(clusterId, request.NodeId, cancellationToken);
-        await using var connection = await OpenAsync(target, cancellationToken);
+        await using var connection = await OpenAsync(target, true, cancellationToken);
         string schema;
         string table;
         IReadOnlyList<long> shardIds;
@@ -276,6 +277,8 @@ public sealed class DatabaseExplorerService(
         if (string.IsNullOrWhiteSpace(request.Sql)) throw new ArgumentException("SQL is required.");
         var target = await ResolveTargetAsync(clusterId, request.NodeId, cancellationToken);
         if (!target.IsCoordinator) DatabaseWorkspaceQueryValidator.ValidateReadOnlySql(request.Sql);
+        var descriptors = ConsoleSqlAnalyzer.Analyze(request.Sql);
+        var provenReadOnly = descriptors.Count > 0 && descriptors.All(x => x.Risk == ConsoleRiskLevel.ReadOnly);
         var queryHash = DatabaseExplorerSafety.QueryHash(request.Sql);
         var watch = Stopwatch.StartNew();
         var success = false;
@@ -285,7 +288,7 @@ public sealed class DatabaseExplorerService(
         var resultSetLimitReached = false;
         try
         {
-            await using var connection = await OpenAsync(target, cancellationToken);
+            await using var connection = await OpenAsync(target, provenReadOnly, cancellationToken);
             await using var transaction = target.IsCoordinator ? null : await connection.BeginTransactionAsync(cancellationToken);
             if (transaction is not null)
             {
@@ -368,8 +371,19 @@ public sealed class DatabaseExplorerService(
         return new(profile, reader.GetInt32(0), host, port, false, $"Worker · {host}:{port}");
     }
 
-    private async Task<NpgsqlConnection> OpenAsync(ResolvedTarget target, CancellationToken cancellationToken)
+    private async Task<NpgsqlConnection> OpenAsync(
+        ResolvedTarget target, bool provenReadOnly, CancellationToken cancellationToken)
     {
+        if (target.IsCoordinator && provenReadOnly)
+        {
+            var routed = await queryEndpoints.OpenAsync(target.Profile, true, cancellationToken);
+            if (!routed.IsControlCoordinator)
+            {
+                await using var readOnly = new NpgsqlCommand("SET default_transaction_read_only = on", routed.Connection);
+                await readOnly.ExecuteNonQueryAsync(cancellationToken);
+            }
+            return routed.Connection;
+        }
         var connection = target.IsCoordinator
             ? connections.Create(target.Profile)
             : connections.Create(target.Profile, target.Host, target.Port);
@@ -380,7 +394,7 @@ public sealed class DatabaseExplorerService(
     private async Task<IReadOnlyList<DatabaseObjectResponse>> ReadCoordinatorCatalogAsync(
         ResolvedTarget target, bool showSystem, CancellationToken cancellationToken)
     {
-        await using var connection = await OpenAsync(target, cancellationToken);
+        await using var connection = await OpenAsync(target, true, cancellationToken);
         const string sql = """
             SELECT ns.nspname, c.relname,
                    CASE WHEN c.relkind IN ('r','p','f') THEN 'table'
@@ -457,7 +471,7 @@ public sealed class DatabaseExplorerService(
         if (placements.Count == 0) return [];
         var shardIds = placements.Select(x => x.ShardId).ToHashSet();
         var physical = new Dictionary<(string Schema, long ShardId), PhysicalRelation>();
-        await using (var worker = await OpenAsync(target, cancellationToken))
+        await using (var worker = await OpenAsync(target, true, cancellationToken))
         {
             const string relationSql = """
                 SELECT ns.nspname, c.relname, GREATEST(c.reltuples::bigint, 0), pg_total_relation_size(c.oid)

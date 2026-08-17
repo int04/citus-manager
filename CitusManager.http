@@ -61,6 +61,73 @@ GET {{baseUrl}}/api/clusters/{{clusterId}}/activity
 ### Read metric samples
 GET {{baseUrl}}/api/clusters/{{clusterId}}/metrics?take=1000
 
+### Preview current rebalance plan
+GET {{baseUrl}}/api/operations/clusters/{{clusterId}}/previews/rebalance?drainOnly=false
+
+### Preview draining one worker
+GET {{baseUrl}}/api/operations/clusters/{{clusterId}}/previews/rebalance?drainOnly=true&workerHost=worker-03.internal&workerPort=5432
+
+### Read lightweight active topology operation
+GET {{baseUrl}}/api/operations/clusters/{{clusterId}}/active-summary
+
+### Add worker and rebalance in one durable workflow
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}/add-node
+Content-Type: application/json
+
+{
+  "role": "Worker",
+  "host": "worker-03.internal",
+  "port": 5432,
+  "rebalanceAfterAdd": true,
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "idempotencyKey": "add-worker-03-20260817"
+}
+
+### Add a shard-ineligible MX query coordinator
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}/add-node
+Content-Type: application/json
+
+{
+  "role": "QueryCoordinator",
+  "host": "query-02.internal",
+  "port": 5432,
+  "rebalanceAfterAdd": false,
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "idempotencyKey": "add-query-02-20260817"
+}
+
+### Queue typed rebalance
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}/rebalance
+Content-Type: application/json
+
+{
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "idempotencyKey": "rebalance-20260817-01"
+}
+
+### Drain worker but keep it registered
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}/drain-worker
+Content-Type: application/json
+
+{
+  "host": "worker-03.internal",
+  "port": 5432,
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "idempotencyKey": "drain-worker-03-20260817"
+}
+
+### Drain, verify zero placements, then remove worker metadata
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}/retire-worker
+Content-Type: application/json
+
+{
+  "host": "worker-03.internal",
+  "port": 5432,
+  "externalCapacityAndBackupChecksAcknowledged": true,
+  "typedConfirmation": "worker-03.internal",
+  "idempotencyKey": "retire-worker-03-20260817"
+}
+
 ### Create and automatically queue a rebalance plan
 POST {{baseUrl}}/api/operations/clusters/{{clusterId}}
 Content-Type: application/json

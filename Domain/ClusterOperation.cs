@@ -3,8 +3,10 @@ namespace CitusManager.Domain;
 public enum OperationKind
 {
     AddWorker,
+    AddQueryNode,
     Rebalance,
     DrainWorker,
+    RetireWorker,
     RemoveWorker,
     ConvertTable,
     CreatePartitionedTable,
@@ -49,6 +51,7 @@ public sealed class ClusterOperation
     public OperationStatus Status { get; set; } = OperationStatus.Approved;
     public required string PlanJson { get; set; }
     public required string PlanHash { get; set; }
+    public string? IdempotencyKey { get; set; }
     public string? ResultJson { get; set; }
     public string? SafeError { get; set; }
     public Guid RequestedBy { get; set; }

@@ -43,6 +43,58 @@ public static class OperationEndpoints
             .RequireAuthorization("Operator")
             .WithName("CreateOperation").WithSummary("Create, approve, and queue an immutable preflight plan");
 
+        group.MapPost("/clusters/{clusterId:guid}/add-node", async Task<Accepted<OperationResponse>> (
+                Guid clusterId, AddNodeRequest request, ClaimsPrincipal user,
+                IOperationService service, CancellationToken cancellationToken) =>
+            {
+                var operation = await service.AddNodeAsync(clusterId, request, EndpointUser.Id(user), cancellationToken);
+                return TypedResults.Accepted($"/api/operations/{operation.Id}", operation);
+            })
+            .RequireAuthorization("Operator")
+            .WithName("AddTopologyNode").WithSummary("Add a worker or shard-ineligible MX query node");
+
+        group.MapPost("/clusters/{clusterId:guid}/rebalance", async Task<Accepted<OperationResponse>> (
+                Guid clusterId, RebalanceRequest request, ClaimsPrincipal user,
+                IOperationService service, CancellationToken cancellationToken) =>
+            {
+                var operation = await service.RebalanceAsync(clusterId, request, EndpointUser.Id(user), cancellationToken);
+                return TypedResults.Accepted($"/api/operations/{operation.Id}", operation);
+            })
+            .RequireAuthorization("Operator")
+            .WithName("RebalanceTopology").WithSummary("Queue a background Citus rebalance");
+
+        group.MapPost("/clusters/{clusterId:guid}/drain-worker", async Task<Accepted<OperationResponse>> (
+                Guid clusterId, DrainWorkerRequest request, ClaimsPrincipal user,
+                IOperationService service, CancellationToken cancellationToken) =>
+            {
+                var operation = await service.DrainWorkerAsync(clusterId, request, EndpointUser.Id(user), cancellationToken);
+                return TypedResults.Accepted($"/api/operations/{operation.Id}", operation);
+            })
+            .RequireAuthorization("Operator")
+            .WithName("DrainTopologyWorker").WithSummary("Move placements off a worker without removing it");
+
+        group.MapPost("/clusters/{clusterId:guid}/retire-worker", async Task<Accepted<OperationResponse>> (
+                Guid clusterId, RetireWorkerRequest request, ClaimsPrincipal user,
+                IOperationService service, CancellationToken cancellationToken) =>
+            {
+                var operation = await service.RetireWorkerAsync(clusterId, request, EndpointUser.Id(user), cancellationToken);
+                return TypedResults.Accepted($"/api/operations/{operation.Id}", operation);
+            })
+            .RequireAuthorization("Operator")
+            .WithName("RetireTopologyWorker").WithSummary("Drain then safely remove a worker from Citus metadata");
+
+        group.MapGet("/clusters/{clusterId:guid}/previews/rebalance", async Task<Ok<RebalancePreviewResponse>> (
+                Guid clusterId, bool? drainOnly, string? workerHost, int? workerPort,
+                IOperationService service, CancellationToken cancellationToken) =>
+                TypedResults.Ok(await service.PreviewRebalanceAsync(
+                    clusterId, drainOnly == true, workerHost, workerPort, cancellationToken)))
+            .WithName("PreviewTopologyRebalance").WithSummary("Build a lazy immutable rebalance preview");
+
+        group.MapGet("/clusters/{clusterId:guid}/active-summary", async Task<Ok<ActiveOperationSummaryResponse?>> (
+                Guid clusterId, IOperationService service, CancellationToken cancellationToken) =>
+                TypedResults.Ok<ActiveOperationSummaryResponse?>(await service.GetActiveAsync(clusterId, cancellationToken)))
+            .WithName("GetActiveTopologyOperation").WithSummary("Get the lightweight active topology operation projection");
+
         group.MapPost("/clusters/{clusterId:guid}/table-conversions", async Task<Accepted<OperationResponse>> (
                 Guid clusterId, CreateTableConversionOperationRequest request, ClaimsPrincipal user,
                 IOperationService service, CancellationToken cancellationToken) =>

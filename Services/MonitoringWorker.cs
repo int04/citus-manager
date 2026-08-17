@@ -28,6 +28,7 @@ public sealed class MonitoringWorker(
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
         var inspector = scope.ServiceProvider.GetRequiredService<ICitusInspector>();
+        var topologyCache = scope.ServiceProvider.GetRequiredService<IClusterTopologyCache>();
         var prometheus = scope.ServiceProvider.GetRequiredService<IPrometheusCollector>();
         var clusters = await db.Clusters.Where(x => x.IsEnabled).ToListAsync(cancellationToken);
         foreach (var cluster in clusters)
@@ -35,6 +36,7 @@ public sealed class MonitoringWorker(
             try
             {
                 var inventory = await inspector.CollectAsync(cluster, cancellationToken);
+                topologyCache.Set(cluster.Id, inventory);
                 cluster.LastCheckedAt = inventory.CollectedAt;
                 cluster.LastError = null;
                 AddMetric(db, cluster.Id, "citus.nodes.total", inventory.Nodes.Count);

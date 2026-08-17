@@ -26,7 +26,11 @@ public sealed record OperationPlan(
     RebuildIndexPlan? RebuildIndex = null,
     InspectTablePlan? InspectTable = null,
     ChangeTableModePlan? ChangeTableMode = null,
-    CreatePartitionedTablePlan? CreatePartitionedTable = null);
+    CreatePartitionedTablePlan? CreatePartitionedTable = null,
+    bool RebalanceAfterAdd = false,
+    string? IdempotencyKey = null,
+    string? TopologyFingerprint = null,
+    long? RebalanceJobId = null);
 
 public sealed record CreatePartitionedTablePlan(CreateTableRequest Request);
 
@@ -46,6 +50,13 @@ public interface IOperationService
     Task<IReadOnlyList<OperationResponse>> GetAllAsync(Guid? clusterId, CancellationToken cancellationToken);
     Task<OperationResponse?> GetAsync(Guid id, CancellationToken cancellationToken);
     Task<OperationResponse> CreateAsync(Guid clusterId, CreateOperationRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> AddNodeAsync(Guid clusterId, AddNodeRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> RebalanceAsync(Guid clusterId, RebalanceRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> DrainWorkerAsync(Guid clusterId, DrainWorkerRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> RetireWorkerAsync(Guid clusterId, RetireWorkerRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<RebalancePreviewResponse> PreviewRebalanceAsync(
+        Guid clusterId, bool drainOnly, string? workerHost, int? workerPort, CancellationToken cancellationToken);
+    Task<ActiveOperationSummaryResponse?> GetActiveAsync(Guid clusterId, CancellationToken cancellationToken);
     Task<OperationResponse> CreateTableConversionAsync(
         Guid clusterId, CreateTableConversionOperationRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> CreateRangePartitionsAsync(Guid clusterId, CreateRangePartitionsRequest request, Guid actorId, CancellationToken cancellationToken);
@@ -68,6 +79,7 @@ public sealed class OperationService(
     public async Task<IReadOnlyList<OperationResponse>> GetAllAsync(
         Guid? clusterId, CancellationToken cancellationToken)
     {
+        var take = clusterId.HasValue ? 25 : 200;
         var query = db.Operations.AsNoTracking().Include(x => x.Steps).AsQueryable();
         var backupQuery = db.BackupRuns.AsNoTracking().Include(x => x.Steps)
             .Include(x => x.DestinationCopies).ThenInclude(x => x.StorageProfile).AsQueryable();
@@ -78,10 +90,10 @@ public sealed class OperationService(
             backupQuery = backupQuery.Where(x => x.ClusterId == clusterId);
             restoreQuery = restoreQuery.Where(x => x.SourceClusterId == clusterId || x.TargetClusterId == clusterId);
         }
-        var operations = (await query.OrderByDescending(x => x.RequestedAt).Take(200).ToListAsync(cancellationToken)).Select(Map);
-        var backups = (await backupQuery.OrderByDescending(x => x.CreatedAt).Take(200).ToListAsync(cancellationToken)).Select(MapBackup);
-        var restores = (await restoreQuery.OrderByDescending(x => x.CreatedAt).Take(200).ToListAsync(cancellationToken)).Select(MapRestore);
-        return operations.Concat(backups).Concat(restores).OrderByDescending(x => x.RequestedAt).Take(200).ToList();
+        var operations = (await query.OrderByDescending(x => x.RequestedAt).Take(take).ToListAsync(cancellationToken)).Select(Map);
+        var backups = (await backupQuery.OrderByDescending(x => x.CreatedAt).Take(take).ToListAsync(cancellationToken)).Select(MapBackup);
+        var restores = (await restoreQuery.OrderByDescending(x => x.CreatedAt).Take(take).ToListAsync(cancellationToken)).Select(MapRestore);
+        return operations.Concat(backups).Concat(restores).OrderByDescending(x => x.RequestedAt).Take(take).ToList();
     }
 
     public async Task<OperationResponse?> GetAsync(Guid id, CancellationToken cancellationToken)
@@ -114,6 +126,7 @@ public sealed class OperationService(
         int? current = null, total = null;
         long? processed = null, totalBytes = null, exactRows = null, exactBytes = null;
         string? warning = null, resultSchema = null, resultTable = null;
+        OperationProgressSnapshot? topologyProgress = null;
         if (!string.IsNullOrWhiteSpace(operation.ResultJson))
         {
             try
@@ -129,6 +142,18 @@ public sealed class OperationService(
                 if (root.TryGetProperty("Table", out var tableValue) || root.TryGetProperty("table", out tableValue)) resultTable = tableValue.GetString();
                 if (root.TryGetProperty("exactRows", out var rowsValue) && rowsValue.ValueKind != JsonValueKind.Null && rowsValue.TryGetInt64(out var rowsNumber)) exactRows = rowsNumber;
                 if (root.TryGetProperty("exactBytes", out var exactBytesValue) && exactBytesValue.ValueKind != JsonValueKind.Null && exactBytesValue.TryGetInt64(out var exactBytesNumber)) exactBytes = exactBytesNumber;
+                if (root.TryGetProperty("PercentBasis", out _) || root.TryGetProperty("percentBasis", out _))
+                {
+                    var snapshot = JsonSerializer.Deserialize<OperationProgressSnapshot>(operation.ResultJson,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    topologyProgress = snapshot;
+                    current = snapshot?.MovesProcessed;
+                    total = snapshot?.MovesTotal;
+                    processed = snapshot?.BytesProcessed;
+                    totalBytes = snapshot?.BytesTotal;
+                    warning = snapshot?.PercentBasis == OperationPercentBasis.Indeterminate
+                        ? "Installed Citus does not expose a safe progress denominator." : warning;
+                }
             }
             catch (JsonException) { }
         }
@@ -139,11 +164,14 @@ public sealed class OperationService(
             ? (operation.CompletedAt ?? DateTimeOffset.UtcNow) - operation.StartedAt.Value : null;
         var canCancel = operation.Status is OperationStatus.AwaitingApproval or OperationStatus.Approved ||
                         operation.Status == OperationStatus.Running &&
-                        (operation.Kind is OperationKind.CreateRangePartitions or OperationKind.InspectTable ||
+                        (operation.Kind is OperationKind.CreateRangePartitions or OperationKind.InspectTable or
+                            OperationKind.Rebalance or OperationKind.DrainWorker ||
+                         operation.Kind == OperationKind.AddWorker && operation.Steps.Any(x => x.Name == "rebalance-started") ||
+                         operation.Kind == OperationKind.RetireWorker && !operation.Steps.Any(x => x.Name is "disable-node" or "remove-dispatched") ||
                          operation.Kind == OperationKind.MergeRangePartitions && !operation.Steps.Any(x => x.Name == "merge-cutover-started"));
         return new(operation.Id, operation.Kind, operation.Risk, operation.Status, phase, current, total,
             processed, totalBytes, elapsed, canCancel, warning, operation.SafeError, steps,
-            resultSchema, resultTable, exactRows, exactBytes);
+            resultSchema, resultTable, exactRows, exactBytes, topologyProgress);
     }
 
     public async Task<OperationResponse> CreateRangePartitionsAsync(
@@ -237,16 +265,25 @@ public sealed class OperationService(
 
         var inventory = await inspector.CollectAsync(cluster, cancellationToken);
         EnsureCapabilities(request.Kind, inventory.Capability);
+        if (request.Kind == OperationKind.AddWorker && request.RebalanceAfterAdd)
+            EnsureCapabilities(OperationKind.Rebalance, inventory.Capability);
 
         string preview = "[]";
         long? placements = null;
+        long? distributedPlacements = null;
         if (request.Kind is OperationKind.Rebalance)
             preview = await GetRebalancePlanSafelyAsync(cluster, false, cancellationToken);
-        if (request.Kind is OperationKind.DrainWorker or OperationKind.RemoveWorker)
+        if (request.Kind is OperationKind.DrainWorker or OperationKind.RetireWorker or OperationKind.RemoveWorker)
         {
+            var target = inventory.Nodes.SingleOrDefault(x =>
+                string.Equals(x.Host, request.WorkerHost, StringComparison.OrdinalIgnoreCase) &&
+                x.Port == request.WorkerPort);
+            if (target is null) throw new InvalidOperationException("Target worker is not registered.");
             placements = await inspector.CountPlacementsAsync(cluster, request.WorkerHost!, request.WorkerPort!.Value, cancellationToken);
-            preview = request.Kind == OperationKind.DrainWorker
-                ? await GetRebalancePlanSafelyAsync(cluster, true, cancellationToken)
+            distributedPlacements = await mutator.CountDistributedPlacementsAsync(
+                cluster, request.WorkerHost!, request.WorkerPort.Value, cancellationToken);
+            preview = request.Kind is OperationKind.DrainWorker or OperationKind.RetireWorker
+                ? JsonSerializer.Serialize(TargetDrainPreview(target, TopologyFingerprint(inventory), distributedPlacements.Value))
                 : "[]";
         }
         if (request.Kind == OperationKind.RemoveWorker && placements != 0)
@@ -258,31 +295,102 @@ public sealed class OperationService(
             "Verify tested backup/PITR, free disk, WAL, network, connections, and a rollback owner outside this UI."
         };
         if (request.Kind == OperationKind.AddWorker)
-            warnings.Add("Adding a worker does not move existing shards. Create a separate rebalance operation if needed.");
+            warnings.Add(request.RebalanceAfterAdd
+                ? "A fresh movement plan is computed after the worker is registered, then the same durable operation starts rebalance."
+                : "Adding a worker does not move existing shards until a later rebalance operation runs.");
         if (request.Kind == OperationKind.DrainWorker)
             warnings.Add("Cancelling drain does not move already-transferred shards back.");
+        if (request.Kind == OperationKind.RetireWorker)
+            warnings.Add("The worker is removed from Citus metadata only after an automatic drain reaches zero placements; infrastructure is never deleted.");
+        if (request.Kind == OperationKind.AddQueryNode)
+            warnings.Add("This MX query node receives synchronized metadata but remains ineligible for shard placements; DDL and topology changes stay pinned to the control coordinator.");
 
         var plan = new OperationPlan(request.Kind, request.WorkerHost, request.WorkerPort,
             inventory.Capability.CitusVersion, inventory.Capability.Functions,
-            preview, placements, warnings, DateTimeOffset.UtcNow);
-        var planJson = JsonSerializer.Serialize(plan);
-        var operation = new ClusterOperation
+            preview, placements, warnings, DateTimeOffset.UtcNow,
+            RebalanceAfterAdd: request.RebalanceAfterAdd,
+            IdempotencyKey: request.IdempotencyKey,
+            TopologyFingerprint: TopologyFingerprint(inventory));
+        return await SaveTopologyOperationAsync(clusterId, actorId, plan, cancellationToken);
+    }
+
+    public Task<OperationResponse> AddNodeAsync(
+        Guid clusterId, AddNodeRequest request, Guid actorId, CancellationToken cancellationToken) =>
+        CreateAsync(clusterId, new CreateOperationRequest
         {
-            ClusterId = clusterId,
-            Kind = request.Kind,
-            Risk = OperationSafety.RiskFor(request.Kind),
-            Status = OperationStatus.Approved,
-            PlanJson = planJson,
-            PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
-            RequestedBy = actorId,
-            ApprovedBy = actorId,
-            ApprovedAt = DateTimeOffset.UtcNow
-        };
-        db.Operations.Add(operation);
-        db.AuditEvents.Add(ClusterService.Audit(actorId, "operation.request", "operation", operation.Id,
-            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, AutoApproved = true }));
-        await db.SaveChangesAsync(cancellationToken);
-        return Map(operation);
+            Kind = request.Role == AddNodeRole.Worker ? OperationKind.AddWorker : OperationKind.AddQueryNode,
+            WorkerHost = request.Host, WorkerPort = request.Port,
+            RebalanceAfterAdd = request.Role == AddNodeRole.Worker && request.RebalanceAfterAdd,
+            ExternalCapacityAndBackupChecksAcknowledged = request.ExternalCapacityAndBackupChecksAcknowledged,
+            IdempotencyKey = request.IdempotencyKey
+        }, actorId, cancellationToken);
+
+    public Task<OperationResponse> RebalanceAsync(
+        Guid clusterId, RebalanceRequest request, Guid actorId, CancellationToken cancellationToken) =>
+        CreateAsync(clusterId, new CreateOperationRequest
+        {
+            Kind = OperationKind.Rebalance,
+            ExternalCapacityAndBackupChecksAcknowledged = request.ExternalCapacityAndBackupChecksAcknowledged,
+            IdempotencyKey = request.IdempotencyKey
+        }, actorId, cancellationToken);
+
+    public Task<OperationResponse> DrainWorkerAsync(
+        Guid clusterId, DrainWorkerRequest request, Guid actorId, CancellationToken cancellationToken) =>
+        CreateAsync(clusterId, new CreateOperationRequest
+        {
+            Kind = OperationKind.DrainWorker, WorkerHost = request.Host, WorkerPort = request.Port,
+            ExternalCapacityAndBackupChecksAcknowledged = request.ExternalCapacityAndBackupChecksAcknowledged,
+            IdempotencyKey = request.IdempotencyKey
+        }, actorId, cancellationToken);
+
+    public Task<OperationResponse> RetireWorkerAsync(
+        Guid clusterId, RetireWorkerRequest request, Guid actorId, CancellationToken cancellationToken) =>
+        CreateAsync(clusterId, new CreateOperationRequest
+        {
+            Kind = OperationKind.RetireWorker, WorkerHost = request.Host, WorkerPort = request.Port,
+            ExternalCapacityAndBackupChecksAcknowledged = request.ExternalCapacityAndBackupChecksAcknowledged,
+            TypedConfirmation = request.TypedConfirmation, IdempotencyKey = request.IdempotencyKey
+        }, actorId, cancellationToken);
+
+    public async Task<RebalancePreviewResponse> PreviewRebalanceAsync(
+        Guid clusterId, bool drainOnly, string? workerHost, int? workerPort, CancellationToken cancellationToken)
+    {
+        var cluster = await db.Clusters.AsNoTracking().SingleOrDefaultAsync(x => x.Id == clusterId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cluster not found.");
+        var inventory = await inspector.CollectAsync(cluster, cancellationToken);
+        EnsureCapabilities(drainOnly ? OperationKind.DrainWorker : OperationKind.Rebalance, inventory.Capability);
+        if (drainOnly)
+        {
+            if (string.IsNullOrWhiteSpace(workerHost) || workerPort is null)
+                throw new ArgumentException("Worker host and port are required for a drain preview.");
+            var target = inventory.Nodes.SingleOrDefault(x =>
+                string.Equals(x.Host, workerHost, StringComparison.OrdinalIgnoreCase) && x.Port == workerPort.Value)
+                ?? throw new InvalidOperationException("Target worker is not registered.");
+            var distributedPlacements = await mutator.CountDistributedPlacementsAsync(
+                cluster, workerHost, workerPort.Value, cancellationToken);
+            return TargetDrainPreview(target, TopologyFingerprint(inventory), distributedPlacements);
+        }
+        var json = await GetRebalancePlanSafelyAsync(cluster, false, cancellationToken);
+        return ParsePreview(json, TopologyFingerprint(inventory));
+    }
+
+    public async Task<ActiveOperationSummaryResponse?> GetActiveAsync(Guid clusterId, CancellationToken cancellationToken)
+    {
+        var active = await db.Operations.AsNoTracking().Where(x => x.ClusterId == clusterId &&
+                (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running || x.Status == OperationStatus.Cancelling))
+            .OrderBy(x => x.ApprovedAt).Select(x => new
+            {
+                x.Id, x.Kind, x.Status, x.RequestedAt, x.StartedAt,
+                x.PlanJson, x.ResultJson,
+                StepCount = x.Steps.Count,
+                Phase = x.Steps.OrderByDescending(step => step.Sequence).Select(step => step.Name).FirstOrDefault()
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (active is null) return null;
+        var progress = TryReadProgress(active.ResultJson) ?? StepProgress(
+            active.Kind, active.PlanJson, active.StepCount, active.Phase ?? active.Status.ToString());
+        return new(active.Id, active.Kind, active.Status, active.Phase ?? active.Status.ToString(),
+            active.RequestedAt, active.StartedAt, progress);
     }
 
     public async Task<OperationResponse> CreateTableConversionAsync(
@@ -385,6 +493,9 @@ public sealed class OperationService(
     public async Task<OperationResponse> CancelAsync(Guid id, Guid actorId, CancellationToken cancellationToken)
     {
         var operation = await LoadAsync(id, cancellationToken);
+        if (operation.Kind == OperationKind.RetireWorker &&
+            operation.Steps.Any(x => x.Name is "disable-node" or "remove-dispatched"))
+            throw new InvalidOperationException("Worker retirement cannot be cancelled after reference-placement cleanup was dispatched.");
         operation.Status = operation.Status switch
         {
             OperationStatus.AwaitingApproval or OperationStatus.Approved => OperationStatus.Cancelled,
@@ -442,6 +553,157 @@ public sealed class OperationService(
         return Map(operation);
     }
 
+    private async Task<OperationResponse> SaveTopologyOperationAsync(
+        Guid clusterId, Guid actorId, OperationPlan plan, CancellationToken cancellationToken)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        // Serialize topology creation even when no operation row exists yet. The runner still owns the execution lease.
+        if (db.Database.GetDbConnection() is NpgsqlConnection)
+        {
+            var lockKey = BitConverter.ToInt64(SHA256.HashData(clusterId.ToByteArray()), 0);
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({lockKey})", cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(plan.IdempotencyKey))
+        {
+            var matching = await db.Operations.Include(x => x.Steps).SingleOrDefaultAsync(x =>
+                x.ClusterId == clusterId && x.IdempotencyKey == plan.IdempotencyKey, cancellationToken);
+            if (matching is not null)
+            {
+                var existingPlan = TryReadPlan(matching.PlanJson);
+                if (existingPlan?.Kind != plan.Kind || !string.Equals(existingPlan.WorkerHost, plan.WorkerHost, StringComparison.OrdinalIgnoreCase) ||
+                    existingPlan.WorkerPort != plan.WorkerPort)
+                    throw new InvalidOperationException("Idempotency key was already used for a different topology request.");
+                await transaction.CommitAsync(cancellationToken);
+                return Map(matching);
+            }
+        }
+
+        var active = await db.Operations.Include(x => x.Steps).Where(x => x.ClusterId == clusterId &&
+                (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running || x.Status == OperationStatus.Cancelling))
+            .OrderBy(x => x.ApprovedAt).FirstOrDefaultAsync(cancellationToken);
+        if (active is not null)
+        {
+            var activePlan = TryReadPlan(active.PlanJson);
+            if (!string.IsNullOrWhiteSpace(plan.IdempotencyKey) &&
+                string.Equals(activePlan?.IdempotencyKey, plan.IdempotencyKey, StringComparison.Ordinal))
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return Map(active);
+            }
+            throw new InvalidOperationException($"Another topology operation is active for this cluster: {active.Id}.");
+        }
+
+        var planJson = JsonSerializer.Serialize(plan);
+        var operation = new ClusterOperation
+        {
+            ClusterId = clusterId, Kind = plan.Kind,
+            Risk = OperationSafety.RiskFor(plan.Kind, plan.RebalanceAfterAdd),
+            Status = OperationStatus.Approved, PlanJson = planJson,
+            PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
+            IdempotencyKey = plan.IdempotencyKey,
+            RequestedBy = actorId, ApprovedBy = actorId, ApprovedAt = DateTimeOffset.UtcNow
+        };
+        db.Operations.Add(operation);
+        db.AuditEvents.Add(ClusterService.Audit(actorId, "operation.request", "operation", operation.Id,
+            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash, plan.IdempotencyKey, AutoApproved = true }));
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return Map(operation);
+    }
+
+    private static OperationPlan? TryReadPlan(string json)
+    {
+        try { return JsonSerializer.Deserialize<OperationPlan>(json); }
+        catch (JsonException) { return null; }
+    }
+
+    private static OperationProgressSnapshot? TryReadProgress(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("percentBasis", out _) &&
+                !document.RootElement.TryGetProperty("PercentBasis", out _)) return null;
+            return JsonSerializer.Deserialize<OperationProgressSnapshot>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private static OperationProgressSnapshot StepProgress(
+        OperationKind kind, string planJson, int completedSteps, string phase)
+    {
+        var plan = TryReadPlan(planJson);
+        var total = kind switch
+        {
+            OperationKind.AddWorker when plan?.RebalanceAfterAdd == true => 5,
+            OperationKind.AddWorker or OperationKind.AddQueryNode or OperationKind.Rebalance => 3,
+            OperationKind.DrainWorker => 4,
+            OperationKind.RetireWorker => 5,
+            _ => Math.Max(completedSteps + 1, 1)
+        };
+        var current = Math.Min(completedSteps, total);
+        return new(current, total, Math.Round(current * 100m / total, 1), OperationPercentBasis.Steps,
+            current, total, null, null, null, null, phase, null, null,
+            DateTimeOffset.UtcNow, null, null, null);
+    }
+
+    private static string TopologyFingerprint(ClusterInventoryResponse inventory)
+    {
+        var topology = string.Join('|', inventory.Nodes.OrderBy(x => x.NodeId).Select(x =>
+            $"{x.NodeId}:{x.GroupId}:{x.Host.ToLowerInvariant()}:{x.Port}:{x.IsActive}:{x.HasMetadata}:{x.MetadataSynced}:{x.ShouldHaveShards}:{x.PlacementCount}"));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(topology)));
+    }
+
+    private static RebalancePreviewResponse ParsePreview(string json, string fingerprint)
+    {
+        var moves = new List<RebalanceMoveSummary>();
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var row in document.RootElement.EnumerateArray())
+                {
+                    string? Text(params string[] names) => Find(row, names)?.ToString();
+                    long? Number(params string[] names) => long.TryParse(Text(names), out var value) ? value : null;
+                    moves.Add(new(Text("source_name", "sourcehost", "source_host"), (int?)Number("source_port", "sourceport"),
+                        Text("target_name", "targethost", "target_host"), (int?)Number("target_port", "targetport"),
+                        Text("table_name", "tablename", "logicalrelid"), Number("shardid", "shard_id"),
+                        Number("shard_size", "shard_size_bytes", "bytes")));
+                }
+            }
+        }
+        catch (JsonException) { }
+        var knownBytes = moves.Where(x => x.Bytes.HasValue).Sum(x => x.Bytes!.Value);
+        return new(fingerprint, moves.Count, moves.Any(x => x.Bytes.HasValue) ? knownBytes : null, moves,
+            moves.Any(x => !x.Bytes.HasValue) ? ["Installed Citus preview does not expose byte estimates for every move."] : [],
+            DateTimeOffset.UtcNow);
+
+        static JsonElement? Find(JsonElement row, string[] names)
+        {
+            foreach (var property in row.EnumerateObject())
+                if (names.Any(name => string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)))
+                    return property.Value;
+            return null;
+        }
+    }
+
+    private static RebalancePreviewResponse TargetDrainPreview(
+        CitusNodeResponse target, string fingerprint, long distributedPlacements) => new(
+        fingerprint,
+        checked((int)Math.Min(distributedPlacements, int.MaxValue)),
+        distributedPlacements == 0 ? 0 : target.ShardBytes,
+        distributedPlacements == 0
+            ? []
+            : [new(target.Host, target.Port, null, null, null, null, target.ShardBytes)],
+        distributedPlacements == 0
+            ? ["No distributed shard movement is required. Citus removes any remaining reference-table placement metadata with the disabled node."]
+            : ["Destination nodes are selected by Citus only after this worker is marked shard-ineligible; shown bytes are a topology estimate."],
+        DateTimeOffset.UtcNow);
+
     private async Task<ClusterOperation> LoadAsync(Guid id, CancellationToken cancellationToken) =>
         await db.Operations.Include(x => x.Steps).SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
         ?? throw new KeyNotFoundException("Operation not found.");
@@ -466,13 +728,18 @@ public sealed class OperationService(
         string[] required = kind switch
         {
             OperationKind.AddWorker => ["citus_add_node"],
+            OperationKind.AddQueryNode => ["citus_add_inactive_node", "citus_activate_node", "citus_set_node_property"],
             OperationKind.Rebalance => ["get_rebalance_table_shards_plan", "citus_rebalance_start", "citus_rebalance_status"],
             OperationKind.DrainWorker => ["citus_set_node_property", "get_rebalance_table_shards_plan", "citus_rebalance_start", "citus_rebalance_status"],
+            OperationKind.RetireWorker => ["citus_set_node_property", "get_rebalance_table_shards_plan", "citus_rebalance_start", "citus_rebalance_status", "citus_disable_node", "citus_remove_node"],
             OperationKind.RemoveWorker => ["citus_remove_node"],
             OperationKind.ConvertTable => ["create_distributed_table"],
             _ => []
         };
         var missing = required.Where(x => !names.Contains(x)).ToArray();
+        if (kind is OperationKind.Rebalance or OperationKind.DrainWorker or OperationKind.RetireWorker &&
+            missing.Contains("citus_rebalance_status") && names.Contains("get_rebalance_progress"))
+            missing = missing.Where(x => x != "citus_rebalance_status").ToArray();
         if (missing.Length > 0)
             throw new InvalidOperationException($"Installed Citus lacks required capabilities: {string.Join(", ", missing)}.");
     }
@@ -567,23 +834,25 @@ internal static class OperationSafety
             throw new ArgumentException("Backup and restore operations must be created from the backup workflow.");
         if (request.Kind == OperationKind.ConvertTable)
             throw new ArgumentException("Use the dedicated table-conversion endpoint.");
-        if (request.Kind is OperationKind.AddWorker or OperationKind.DrainWorker or OperationKind.RemoveWorker)
+        if (request.Kind is OperationKind.AddWorker or OperationKind.AddQueryNode or OperationKind.DrainWorker or
+            OperationKind.RetireWorker or OperationKind.RemoveWorker)
         {
             if (string.IsNullOrWhiteSpace(request.WorkerHost) || request.WorkerPort is null)
                 throw new ArgumentException("Worker host and port are required.");
         }
         if (!request.ExternalCapacityAndBackupChecksAcknowledged)
             throw new ArgumentException("External capacity, backup/PITR, and rollback-owner checks must be acknowledged.");
-        if (request.Kind == OperationKind.RemoveWorker &&
+        if (request.Kind is OperationKind.RetireWorker or OperationKind.RemoveWorker &&
             !string.Equals(request.TypedConfirmation, request.WorkerHost, StringComparison.Ordinal))
             throw new ArgumentException("Typed confirmation must exactly match the worker host.");
     }
 
-    internal static OperationRisk RiskFor(OperationKind kind) => kind switch
+    internal static OperationRisk RiskFor(OperationKind kind, bool rebalanceAfterAdd = false) => kind switch
     {
-        OperationKind.AddWorker => OperationRisk.Write,
+        OperationKind.AddWorker when rebalanceAfterAdd => OperationRisk.Impact,
+        OperationKind.AddWorker or OperationKind.AddQueryNode => OperationRisk.Write,
         OperationKind.Rebalance or OperationKind.DrainWorker => OperationRisk.Impact,
-        OperationKind.RemoveWorker => OperationRisk.Destructive,
+        OperationKind.RetireWorker or OperationKind.RemoveWorker => OperationRisk.Destructive,
         OperationKind.ConvertTable => OperationRisk.Impact,
         OperationKind.CreatePartitionedTable or OperationKind.CreateRangePartitions => OperationRisk.Write,
         OperationKind.InspectTable => OperationRisk.Read,

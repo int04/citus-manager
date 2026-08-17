@@ -9,6 +9,7 @@ public sealed class ControlDbContext(DbContextOptions<ControlDbContext> options)
     : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>(options)
 {
     public DbSet<ClusterProfile> Clusters => Set<ClusterProfile>();
+    public DbSet<ClusterQueryEndpoint> ClusterQueryEndpoints => Set<ClusterQueryEndpoint>();
     public DbSet<ClusterOperation> Operations => Set<ClusterOperation>();
     public DbSet<OperationStep> OperationSteps => Set<OperationStep>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
@@ -45,9 +46,21 @@ public sealed class ControlDbContext(DbContextOptions<ControlDbContext> options)
             entity.Property(x => x.PrometheusBaseUrl).HasMaxLength(500);
         });
 
+        builder.Entity<ClusterQueryEndpoint>(entity =>
+        {
+            entity.HasIndex(x => new { x.ClusterId, x.Host, x.Port }).IsUnique();
+            entity.HasIndex(x => new { x.ClusterId, x.IsEnabled, x.Health });
+            entity.Property(x => x.Host).HasMaxLength(255);
+            entity.Property(x => x.LastError).HasMaxLength(1000);
+            entity.HasOne(x => x.Cluster).WithMany().HasForeignKey(x => x.ClusterId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         builder.Entity<ClusterOperation>(entity =>
         {
             entity.HasIndex(x => new { x.ClusterId, x.Status });
+            entity.HasIndex(x => new { x.ClusterId, x.IdempotencyKey }).IsUnique();
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(128);
             entity.Property(x => x.Version).IsConcurrencyToken();
             entity.HasMany(x => x.Steps).WithOne(x => x.Operation)
                 .HasForeignKey(x => x.OperationId).OnDelete(DeleteBehavior.Cascade);

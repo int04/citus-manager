@@ -4,15 +4,28 @@
 @inject IStringLocalizer<OperationsResource> T
 @if (Model.Count == 0)
 {
-    <div class="empty-state compact"><p>@T["Empty"]</p></div>
+    <div class="empty-state compact"><h3>@T["Empty"]</h3><p>@T["EmptyHelp"]</p></div>
 }
 else
 {
-    <div class="table-wrap"><table><thead><tr><th>@T["Requested"]</th><th>@T["Kind"]</th><th>@T["Risk"]</th><th>@T["Status"]</th><th>@T["Requester"]</th><th></th></tr></thead><tbody>
-    @foreach (var operation in Model)
+    <div class="operation-list" aria-label="@T["RecentOperations"]">
+    @foreach (var operation in Model.Take(25))
     {
-        <tr><td>@operation.RequestedAt.ToLocalTime().ToString("g")</td><td>@operation.Kind</td><td><span class="status-pill @(operation.Risk == OperationRisk.Destructive ? "danger" : operation.Risk == OperationRisk.Impact ? "warning" : "neutral")">@operation.Risk</span></td><td><span class="status-pill @StatusClass(operation.Status)">@operation.Status</span></td><td><code>@operation.RequestedBy.ToString()[..8]</code></td><td><a class="table-link" asp-controller="Operations" asp-action="Details" asp-route-id="@operation.Id">@T["Details"]</a></td></tr>
+        var completedSteps = operation.Steps.Count(x => x.Status == "Succeeded");
+        var percent = operation.Steps.Count == 0 ? 0 : (int)Math.Round(completedSteps * 100d / operation.Steps.Count);
+        var current = operation.Steps.LastOrDefault(x => x.Status != "Succeeded") ?? operation.Steps.LastOrDefault();
+        <article class="operation-row">
+            <div class="operation-row-main"><span class="operation-kind-icon" aria-hidden="true"><i class="fa @KindIcon(operation.Kind.ToString())"></i></span><div><div class="operation-row-title"><strong>@operation.Kind</strong><span class="status-pill @StatusClass(operation.Status)">@operation.Status</span><span class="status-pill @(operation.Risk == OperationRisk.Destructive ? "danger" : operation.Risk == OperationRisk.Impact ? "warning" : "neutral")">@operation.Risk</span></div><p>@(current?.Detail ?? T["QueuedDetail"])</p><small>@operation.RequestedAt.ToLocalTime().ToString("g") · <code>@operation.Id.ToString()[..8]</code></small></div></div>
+            @if (operation.Status is OperationStatus.Running or OperationStatus.Cancelling or OperationStatus.RetryScheduled)
+            {
+                <div class="operation-row-progress" aria-label="@T["ProgressLabel", percent]"><progress max="100" value="@percent"></progress><span>@percent%</span></div>
+            }
+            <a class="btn btn-secondary" asp-controller="Operations" asp-action="Details" asp-route-id="@operation.Id">@T["Details"]</a>
+        </article>
     }
-    </tbody></table></div>
+    </div>
 }
-@functions { static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled => "warning", _ => "neutral" }; }
+@functions {
+    static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled or OperationStatus.Cancelling => "warning", _ => "neutral" };
+    static string KindIcon(string kind) => kind switch { "AddWorker" or "AddQueryNode" => "fa-plus", "Rebalance" => "fa-random", "DrainWorker" => "fa-exchange", "RetireWorker" or "RemoveWorker" => "fa-trash-o", _ => "fa-tasks" };
+}

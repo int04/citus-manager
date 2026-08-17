@@ -11,17 +11,19 @@ public interface IClusterService
 {
     Task<IReadOnlyList<ClusterResponse>> GetAllAsync(CancellationToken cancellationToken);
     Task<ClusterResponse?> GetAsync(Guid id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ClusterQueryEndpointResponse>> GetQueryEndpointsAsync(Guid id, CancellationToken cancellationToken);
     Task<ClusterConnectionTestResponse> TestConnectionAsync(
         TestClusterConnectionRequest request, CancellationToken cancellationToken);
     Task<ClusterResponse> CreateAsync(CreateClusterRequest request, Guid actorId, CancellationToken cancellationToken);
-    Task<ClusterInventoryResponse> RefreshAsync(Guid id, CancellationToken cancellationToken);
+    Task<ClusterInventoryResponse> RefreshAsync(Guid id, CancellationToken cancellationToken, bool force = false);
     Task DeleteAsync(Guid id, Guid actorId, CancellationToken cancellationToken);
 }
 
 public sealed class ClusterService(
     ControlDbContext db,
     ICitusInspector inspector,
-    IClusterSecretProtector secrets) : IClusterService
+    IClusterSecretProtector secrets,
+    IClusterTopologyCache topologyCache) : IClusterService
 {
     public async Task<IReadOnlyList<ClusterResponse>> GetAllAsync(CancellationToken cancellationToken) =>
         await db.Clusters.AsNoTracking().OrderBy(x => x.Name).Select(x => Map(x)).ToListAsync(cancellationToken);
@@ -31,6 +33,16 @@ public sealed class ClusterService(
         var cluster = await db.Clusters.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         return cluster is null ? null : Map(cluster);
     }
+
+    public async Task<IReadOnlyList<ClusterQueryEndpointResponse>> GetQueryEndpointsAsync(
+        Guid id, CancellationToken cancellationToken) =>
+        await db.ClusterQueryEndpoints.AsNoTracking()
+            .Where(x => x.ClusterId == id)
+            .OrderBy(x => x.Host).ThenBy(x => x.Port)
+            .Select(x => new ClusterQueryEndpointResponse(
+                x.Id, x.Host, x.Port, x.IsEnabled, x.Health, x.MetadataSynced,
+                x.LastCheckedAt, x.LastError))
+            .ToListAsync(cancellationToken);
 
     public async Task<ClusterConnectionTestResponse> TestConnectionAsync(
         TestClusterConnectionRequest request, CancellationToken cancellationToken)
@@ -72,8 +84,10 @@ public sealed class ClusterService(
         return Map(cluster);
     }
 
-    public async Task<ClusterInventoryResponse> RefreshAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<ClusterInventoryResponse> RefreshAsync(
+        Guid id, CancellationToken cancellationToken, bool force = false)
     {
+        if (!force && topologyCache.TryGet(id, out var cached)) return cached;
         var cluster = await db.Clusters.SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new KeyNotFoundException("Cluster not found.");
         try
@@ -84,6 +98,7 @@ public sealed class ClusterService(
             cluster.CapabilityJson = JsonSerializer.Serialize(inventory.Capability);
             cluster.LastCheckedAt = inventory.CollectedAt;
             cluster.LastError = null;
+            topologyCache.Set(id, inventory);
             await db.SaveChangesAsync(cancellationToken);
             return inventory;
         }
@@ -106,6 +121,7 @@ public sealed class ClusterService(
         if (active)
             throw new InvalidOperationException("Cluster has an active operation.");
         db.Clusters.Remove(cluster);
+        topologyCache.Remove(id);
         db.AuditEvents.Add(Audit(actorId, "cluster.delete-profile", "cluster", id,
             new { cluster.Name, note = "Control-plane profile only; target Citus cluster was not changed." }));
         await db.SaveChangesAsync(cancellationToken);

@@ -49,6 +49,9 @@ public sealed class OperationExecutor(
 
             var current = await inspector.CollectAsync(cluster, hostStoppingToken);
             EnsureSameMajorVersion(plan.CitusVersion, current.Capability.CitusVersion);
+            if (!string.IsNullOrWhiteSpace(plan.TopologyFingerprint) && !HasTopologyMutationStep(operation) &&
+                !string.Equals(plan.TopologyFingerprint, TopologyFingerprint(current), StringComparison.Ordinal))
+                throw new InvalidOperationException("Citus topology changed after this operation was planned; create a fresh preview.");
             await SaveStepAsync(operation, "preflight", "Succeeded",
                 $"Citus {current.Capability.CitusVersion}; {current.Nodes.Count} nodes discovered.", hostStoppingToken);
 
@@ -57,11 +60,17 @@ public sealed class OperationExecutor(
                 case OperationKind.AddWorker:
                     await ExecuteAddWorkerAsync(operation, cluster, plan, current, hostStoppingToken);
                     break;
+                case OperationKind.AddQueryNode:
+                    await ExecuteAddQueryNodeAsync(operation, cluster, plan, current, hostStoppingToken);
+                    break;
                 case OperationKind.Rebalance:
                     await ExecuteRebalanceAsync(operation, cluster, false, hostStoppingToken);
                     break;
                 case OperationKind.DrainWorker:
                     await ExecuteDrainAsync(operation, cluster, plan, current, hostStoppingToken);
+                    break;
+                case OperationKind.RetireWorker:
+                    await ExecuteRetireAsync(operation, cluster, plan, current, hostStoppingToken);
                     break;
                 case OperationKind.RemoveWorker:
                     await ExecuteRemoveAsync(operation, cluster, plan, current, hostStoppingToken);
@@ -100,7 +109,7 @@ public sealed class OperationExecutor(
         {
             logger.LogError(exception, "Operation {OperationId} failed ({ErrorType}, SQLSTATE {SqlState}).",
                 operation.Id, exception.GetType().Name, (exception as PostgresException)?.SqlState);
-            operation.Status = operation.Kind == OperationKind.RemoveWorker ||
+            operation.Status = operation.Kind is OperationKind.RemoveWorker or OperationKind.RetireWorker ||
                                (operation.Kind == OperationKind.ConvertTable && HasStep(operation, "table-preflight")) ||
                                (operation.Kind == OperationKind.MergeRangePartitions && HasStep(operation, "merge-cutover-started")) ||
                                (operation.Kind == OperationKind.RebuildIndex &&
@@ -147,6 +156,13 @@ public sealed class OperationExecutor(
         var node = after.Nodes.SingleOrDefault(x => SameNode(x.Host, x.Port, plan.WorkerHost!, plan.WorkerPort!.Value));
         if (node is null || !node.IsActive || (node.HasMetadata && !node.MetadataSynced))
             throw new InvalidOperationException("Worker registration checkpoint failed.");
+        if (plan.RebalanceAfterAdd)
+        {
+            await SaveStepAsync(operation, "post-add-preview", "Succeeded",
+                await inspector.GetRebalancePlanAsync(cluster, false, cancellationToken), cancellationToken);
+            await ExecuteRebalanceAsync(operation, cluster, false, cancellationToken);
+            return;
+        }
         await CompleteAsync(operation, new
         {
             node.Host,
@@ -159,26 +175,78 @@ public sealed class OperationExecutor(
         }, cancellationToken);
     }
 
+    private async Task ExecuteAddQueryNodeAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan plan,
+        Contracts.ClusterInventoryResponse current, CancellationToken cancellationToken)
+    {
+        var existing = current.Nodes.SingleOrDefault(x => SameNode(x.Host, x.Port, plan.WorkerHost!, plan.WorkerPort!.Value));
+        if (existing is null || !existing.IsActive || !existing.HasMetadata || !existing.MetadataSynced || existing.ShouldHaveShards)
+        {
+            await mutator.AddQueryNodeAsync(cluster, plan, cancellationToken);
+            await SaveStepAsync(operation, "add-query-node", "Succeeded",
+                "Inactive registration, shard-ineligible property, activation, metadata sync, and direct read smoke test dispatched.", cancellationToken);
+        }
+        var after = await inspector.CollectAsync(cluster, cancellationToken);
+        var node = after.Nodes.SingleOrDefault(x => SameNode(x.Host, x.Port, plan.WorkerHost!, plan.WorkerPort!.Value));
+        var distributedPlacements = await mutator.CountDistributedPlacementsAsync(
+            cluster, plan.WorkerHost!, plan.WorkerPort!.Value, cancellationToken);
+        if (node is null || !node.IsActive || !node.HasMetadata || !node.MetadataSynced || node.ShouldHaveShards || distributedPlacements != 0)
+            throw new InvalidOperationException("Query node validation requires active, synchronized metadata, shouldhaveshards=false, and zero distributed placements.");
+        var endpoint = await db.ClusterQueryEndpoints.SingleOrDefaultAsync(x =>
+            x.ClusterId == cluster.Id && x.Host == node.Host && x.Port == node.Port, cancellationToken);
+        if (endpoint is null)
+        {
+            endpoint = new ClusterQueryEndpoint { ClusterId = cluster.Id, Host = node.Host, Port = node.Port };
+            db.ClusterQueryEndpoints.Add(endpoint);
+        }
+        endpoint.IsEnabled = true;
+        endpoint.Health = QueryEndpointHealth.Healthy;
+        endpoint.MetadataSynced = true;
+        endpoint.LastCheckedAt = DateTimeOffset.UtcNow;
+        endpoint.LastError = null;
+        await db.SaveChangesAsync(cancellationToken);
+        await CompleteAsync(operation, new
+        {
+            node.Host, node.Port, node.IsActive, node.HasMetadata, node.MetadataSynced,
+            node.ShouldHaveShards, DistributedPlacements = distributedPlacements, node.PlacementCount,
+            note = "Query endpoint registered. DDL and topology operations remain pinned to the control coordinator."
+        }, cancellationToken);
+    }
+
     private async Task ExecuteDrainAsync(
         ClusterOperation operation, ClusterProfile cluster, OperationPlan plan,
         Contracts.ClusterInventoryResponse current, CancellationToken cancellationToken)
     {
         var target = current.Nodes.SingleOrDefault(x => SameNode(x.Host, x.Port, plan.WorkerHost!, plan.WorkerPort!.Value))
             ?? throw new InvalidOperationException("Target worker is not registered.");
-        var placements = await inspector.CountPlacementsAsync(cluster, target.Host, target.Port, cancellationToken);
-        if (placements > 0 && !HasStep(operation, "rebalance-started"))
+        var distributedPlacements = await mutator.CountDistributedPlacementsAsync(
+            cluster, target.Host, target.Port, cancellationToken);
+        if (distributedPlacements > 0 && !HasStep(operation, "rebalance-started"))
         {
             await mutator.SetShardEligibilityAsync(cluster, target.Host, target.Port, false, cancellationToken);
             await SaveStepAsync(operation, "mark-draining", "Succeeded", "shouldhaveshards=false", cancellationToken);
-            await mutator.StartRebalanceAsync(cluster, true, cancellationToken);
-            await SaveStepAsync(operation, "rebalance-started", "Succeeded", "Background drain started.", cancellationToken);
+            var jobId = await mutator.StartRebalanceAsync(cluster, true, cancellationToken);
+            await SaveStepAsync(operation, "rebalance-started", "Succeeded", $"Background drain started; job_id={jobId?.ToString() ?? "unavailable"}.", cancellationToken);
+            operation.ResultJson = JsonSerializer.Serialize(new { jobId });
+            operation.Version++;
+            await db.SaveChangesAsync(cancellationToken);
         }
-        if (placements > 0)
-            await MonitorRebalanceAsync(operation, cluster, target, cancellationToken);
-        placements = await inspector.CountPlacementsAsync(cluster, target.Host, target.Port, cancellationToken);
-        if (placements != 0)
-            throw new InvalidOperationException("Drain ended with placements remaining; node removal is blocked.");
-        await CompleteAsync(operation, new { target.Host, target.Port, PlacementsLeft = placements }, cancellationToken);
+        if (HasStep(operation, "rebalance-started"))
+            await MonitorRebalanceAsync(operation, cluster, target, ReadTrackedJobId(operation), cancellationToken);
+        distributedPlacements = await mutator.CountDistributedPlacementsAsync(
+            cluster, target.Host, target.Port, cancellationToken);
+        if (distributedPlacements != 0)
+            throw new InvalidOperationException("Drain ended with distributed placements remaining.");
+        var referencePlacements = await inspector.CountPlacementsAsync(
+            cluster, target.Host, target.Port, cancellationToken);
+        await CompleteAsync(operation, new
+        {
+            target.Host,
+            target.Port,
+            DistributedPlacementsLeft = distributedPlacements,
+            ReferencePlacementsRetained = referencePlacements,
+            note = "Distributed placements drained. Reference-table placements remain because the worker stays registered."
+        }, cancellationToken);
     }
 
     private async Task ExecuteRebalanceAsync(
@@ -186,11 +254,83 @@ public sealed class OperationExecutor(
     {
         if (!HasStep(operation, "rebalance-started"))
         {
-            await mutator.StartRebalanceAsync(cluster, drainOnly, cancellationToken);
-            await SaveStepAsync(operation, "rebalance-started", "Succeeded", "Background rebalance started.", cancellationToken);
+            var jobId = await mutator.StartRebalanceAsync(cluster, drainOnly, cancellationToken);
+            await SaveStepAsync(operation, "rebalance-started", "Succeeded", $"Background rebalance started; job_id={jobId?.ToString() ?? "unavailable"}.", cancellationToken);
+            operation.ResultJson = JsonSerializer.Serialize(new { jobId });
+            operation.Version++;
+            await db.SaveChangesAsync(cancellationToken);
         }
-        await MonitorRebalanceAsync(operation, cluster, null, cancellationToken);
+        await MonitorRebalanceAsync(operation, cluster, null, ReadTrackedJobId(operation), cancellationToken);
         await CompleteAsync(operation, new { state = "completed" }, cancellationToken);
+    }
+
+    private async Task ExecuteRetireAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan plan,
+        Contracts.ClusterInventoryResponse current, CancellationToken cancellationToken)
+    {
+        var target = current.Nodes.SingleOrDefault(x => SameNode(x.Host, x.Port, plan.WorkerHost!, plan.WorkerPort!.Value));
+        if (target is null)
+        {
+            await RemoveQueryEndpointRegistrationAsync(cluster.Id, plan.WorkerHost!, plan.WorkerPort!.Value, cancellationToken);
+            await CompleteAsync(operation, new { state = "already-removed" }, cancellationToken);
+            return;
+        }
+        var distributedPlacements = await mutator.CountDistributedPlacementsAsync(
+            cluster, target.Host, target.Port, cancellationToken);
+        if (distributedPlacements > 0)
+        {
+            if (!HasStep(operation, "rebalance-started"))
+            {
+                await mutator.SetShardEligibilityAsync(cluster, target.Host, target.Port, false, cancellationToken);
+                await SaveStepAsync(operation, "mark-draining", "Succeeded", "shouldhaveshards=false", cancellationToken);
+                var jobId = await mutator.StartRebalanceAsync(cluster, true, cancellationToken);
+                await SaveStepAsync(operation, "rebalance-started", "Succeeded", $"Retirement drain started; job_id={jobId?.ToString() ?? "unavailable"}.", cancellationToken);
+                operation.ResultJson = JsonSerializer.Serialize(new { jobId });
+                operation.Version++;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+        }
+        if (HasStep(operation, "rebalance-started"))
+            await MonitorRebalanceAsync(operation, cluster, target, ReadTrackedJobId(operation), cancellationToken);
+        distributedPlacements = await mutator.CountDistributedPlacementsAsync(
+            cluster, target.Host, target.Port, cancellationToken);
+        if (distributedPlacements != 0)
+            throw new InvalidOperationException("Mandatory zero-distributed-placement checkpoint failed; worker removal was not dispatched.");
+        await SaveStepAsync(operation, "zero-distributed-placement-check", "Succeeded",
+            "distributed_placements_left=0", cancellationToken);
+        var placements = await inspector.CountPlacementsAsync(cluster, target.Host, target.Port, cancellationToken);
+        if (!HasStep(operation, "disable-node") && placements > 0)
+        {
+            await SaveStepAsync(operation, "disable-node", "Running",
+                "Disabling node to remove reference-table placements before metadata removal.", cancellationToken);
+            await mutator.DisableNodeAsync(cluster, target.Host, target.Port, cancellationToken);
+            await SaveStepAsync(operation, "disable-node", "Succeeded",
+                "Node disabled synchronously; it no longer receives routed Citus work.", cancellationToken);
+        }
+        else if (!HasStep(operation, "disable-node"))
+        {
+            await SaveStepAsync(operation, "disable-node", "Succeeded",
+                "Node has no remaining placements; disable checkpoint did not need to dispatch a command.", cancellationToken);
+        }
+        distributedPlacements = await mutator.CountDistributedPlacementsAsync(
+            cluster, target.Host, target.Port, cancellationToken);
+        if (distributedPlacements != 0)
+            throw new InvalidOperationException("Mandatory zero-distributed-placement checkpoint failed after node disable; worker removal was not dispatched.");
+        placements = await inspector.CountPlacementsAsync(cluster, target.Host, target.Port, cancellationToken);
+        await SaveStepAsync(operation, "remove-safety-check", "Succeeded",
+            $"distributed_placements_left=0; reference_placements_left={placements}. Citus removes reference placement metadata with the node.", cancellationToken);
+        if (!HasStep(operation, "remove-dispatched"))
+        {
+            await SaveStepAsync(operation, "remove-dispatched", "Running", "Removing node from Citus metadata; cancellation is no longer safe.", cancellationToken);
+            await mutator.RemoveWorkerAsync(cluster, target.Host, target.Port, cancellationToken);
+        }
+        var after = await inspector.CollectAsync(cluster, cancellationToken);
+        if (after.Nodes.Any(x => SameNode(x.Host, x.Port, target.Host, target.Port)))
+            throw new InvalidOperationException("Node remains in Citus metadata after remove command.");
+        await RemoveQueryEndpointRegistrationAsync(cluster.Id, target.Host, target.Port, cancellationToken);
+        await CompleteAsync(operation, new { target.Host, target.Port, DistributedPlacementsLeft = 0,
+            ReferencePlacementsRemovedWithNode = placements,
+            note = "Citus metadata removed. Infrastructure was not stopped or deleted." }, cancellationToken);
     }
 
     private async Task ExecuteRemoveAsync(
@@ -504,6 +644,7 @@ public sealed class OperationExecutor(
 
     private async Task MonitorRebalanceAsync(
         ClusterOperation operation, ClusterProfile cluster, Contracts.CitusNodeResponse? drainTarget,
+        long? jobId,
         CancellationToken hostStoppingToken)
     {
         while (!hostStoppingToken.IsCancellationRequested)
@@ -511,7 +652,7 @@ public sealed class OperationExecutor(
             await db.Entry(operation).ReloadAsync(hostStoppingToken);
             if (operation.Status == OperationStatus.Cancelling)
             {
-                var stopped = await mutator.StopRebalanceAsync(cluster, hostStoppingToken);
+                var stopped = await mutator.StopRebalanceAsync(cluster, jobId, hostStoppingToken);
                 if (drainTarget is not null)
                     await mutator.SetShardEligibilityAsync(cluster, drainTarget.Host, drainTarget.Port, true, hostStoppingToken);
                 operation.Status = stopped ? OperationStatus.Cancelled : OperationStatus.RecoveryRequired;
@@ -524,19 +665,52 @@ public sealed class OperationExecutor(
                 return;
             }
 
-            var status = await mutator.ReadRebalanceStatusAsync(cluster, hostStoppingToken);
-            operation.ResultJson = status;
+            var status = await mutator.ReadRebalanceStatusAsync(cluster, jobId, hostStoppingToken);
+            var percentBasis = status.BytesTotal > 0 ? OperationPercentBasis.Bytes :
+                status.MovesTotal > 0 ? OperationPercentBasis.Shards : OperationPercentBasis.Indeterminate;
+            decimal? percent = status.BytesTotal > 0 && status.BytesProcessed.HasValue
+                ? Math.Min(100m, status.BytesProcessed.Value * 100m / status.BytesTotal.Value)
+                : status.MovesTotal > 0 && status.MovesProcessed.HasValue
+                    ? Math.Min(100m, status.MovesProcessed.Value * 100m / status.MovesTotal.Value) : null;
+            var now = DateTimeOffset.UtcNow;
+            OperationProgressSnapshot? previous = null;
+            try
+            {
+                previous = string.IsNullOrWhiteSpace(operation.ResultJson) ? null :
+                    JsonSerializer.Deserialize<OperationProgressSnapshot>(operation.ResultJson,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (JsonException) { }
+            var unchanged = previous is not null && previous.MovesProcessed == status.MovesProcessed &&
+                            previous.BytesProcessed == status.BytesProcessed;
+            DateTimeOffset? stalledAt = unchanged ? previous!.StalledAt ?? previous.LastUpdatedAt : null;
+            operation.ResultJson = JsonSerializer.Serialize(new OperationProgressSnapshot(
+                operation.Steps.Count, Math.Max(operation.Steps.Count + 1, 4), percent, percentBasis,
+                status.MovesProcessed, status.MovesTotal, status.BytesProcessed, status.BytesTotal,
+                status.CurrentSource, status.CurrentTarget, status.CurrentTable, status.CurrentShard,
+                status.JobId ?? jobId, now, stalledAt, null, status.Error));
             operation.Version++;
             await db.SaveChangesAsync(hostStoppingToken);
-            var normalized = status.ToLowerInvariant();
-            if (normalized.Contains("failed", StringComparison.Ordinal) ||
-                normalized.Contains("error", StringComparison.Ordinal))
+            if (status.IsFailed)
                 throw new InvalidOperationException("Citus rebalance job reported failure.");
-            if (status == "[]" || normalized.Contains("finished", StringComparison.Ordinal) ||
-                normalized.Contains("complete", StringComparison.Ordinal))
+            if (status.IsComplete)
                 return;
-            await Task.Delay(TimeSpan.FromSeconds(5), hostStoppingToken);
+            await Task.Delay(TimeSpan.FromSeconds(3 + Random.Shared.NextDouble() * 2), hostStoppingToken);
         }
+    }
+
+    private static long? ReadTrackedJobId(ClusterOperation operation)
+    {
+        if (string.IsNullOrWhiteSpace(operation.ResultJson)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(operation.ResultJson);
+            foreach (var name in new[] { "jobId", "JobId" })
+                if (document.RootElement.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null && value.TryGetInt64(out var id))
+                    return id;
+        }
+        catch (JsonException) { }
+        return null;
     }
 
     private async Task CompleteAsync(ClusterOperation operation, object result, CancellationToken cancellationToken)
@@ -586,6 +760,27 @@ public sealed class OperationExecutor(
 
     private static bool HasStep(ClusterOperation operation, string name) =>
         operation.Steps.Any(x => x.Name == name && x.Status == "Succeeded");
+
+    private async Task RemoveQueryEndpointRegistrationAsync(
+        Guid clusterId, string host, int port, CancellationToken cancellationToken)
+    {
+        var endpoint = await db.ClusterQueryEndpoints.SingleOrDefaultAsync(x =>
+            x.ClusterId == clusterId && x.Host == host && x.Port == port, cancellationToken);
+        if (endpoint is null) return;
+        db.ClusterQueryEndpoints.Remove(endpoint);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static bool HasTopologyMutationStep(ClusterOperation operation) =>
+        operation.Steps.Any(x => x.Name is "add-worker" or "add-query-node" or "mark-draining" or
+            "rebalance-started" or "remove-dispatched");
+
+    private static string TopologyFingerprint(Contracts.ClusterInventoryResponse inventory)
+    {
+        var topology = string.Join('|', inventory.Nodes.OrderBy(x => x.NodeId).Select(x =>
+            $"{x.NodeId}:{x.GroupId}:{x.Host.ToLowerInvariant()}:{x.Port}:{x.IsActive}:{x.HasMetadata}:{x.MetadataSynced}:{x.ShouldHaveShards}:{x.PlacementCount}"));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(topology)));
+    }
 
     private static bool HasLongDistributedReindexName(ClusterOperation operation)
     {

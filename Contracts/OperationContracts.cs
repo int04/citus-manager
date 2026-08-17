@@ -11,7 +11,68 @@ public sealed record CreateOperationRequest
     [Range(1, 65535)] public int? WorkerPort { get; init; }
     public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
     [MaxLength(255)] public string? TypedConfirmation { get; init; }
+    public bool RebalanceAfterAdd { get; init; }
+    [MaxLength(128)] public string? IdempotencyKey { get; init; }
 }
+
+public enum AddNodeRole { Worker, QueryCoordinator }
+
+/// <summary>Context-specific request for registering a pre-provisioned Citus node.</summary>
+public sealed record AddNodeRequest
+{
+    public required AddNodeRole Role { get; init; }
+    [Required, MaxLength(255)] public required string Host { get; init; }
+    [Range(1, 65535)] public int Port { get; init; } = 5432;
+    public bool RebalanceAfterAdd { get; init; } = true;
+    public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
+    [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
+}
+
+public sealed record RebalanceRequest
+{
+    public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
+    [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
+}
+
+public sealed record DrainWorkerRequest
+{
+    [Required, MaxLength(255)] public required string Host { get; init; }
+    [Range(1, 65535)] public int Port { get; init; } = 5432;
+    public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
+    [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
+}
+
+public sealed record RetireWorkerRequest
+{
+    [Required, MaxLength(255)] public required string Host { get; init; }
+    [Range(1, 65535)] public int Port { get; init; } = 5432;
+    public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
+    [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
+    [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
+}
+
+public sealed record RebalanceMoveSummary(
+    string? SourceHost, int? SourcePort, string? TargetHost, int? TargetPort,
+    string? Table, long? ShardId, long? Bytes);
+
+public sealed record RebalancePreviewResponse(
+    string TopologyFingerprint, int MoveCount, long? TotalBytes,
+    IReadOnlyList<RebalanceMoveSummary> Moves, IReadOnlyList<string> Warnings,
+    DateTimeOffset SnapshotAt);
+
+public sealed record ActiveOperationSummaryResponse(
+    Guid Id, OperationKind Kind, OperationStatus Status, string Phase,
+    DateTimeOffset RequestedAt, DateTimeOffset? StartedAt,
+    OperationProgressSnapshot? Progress);
+
+public enum OperationPercentBasis { Bytes, Shards, Steps, Indeterminate }
+
+public sealed record OperationProgressSnapshot(
+    int PhaseIndex, int PhaseCount, decimal? Percent, OperationPercentBasis PercentBasis,
+    int? MovesProcessed, int? MovesTotal, long? BytesProcessed, long? BytesTotal,
+    string? CurrentSource, string? CurrentTarget, string? CurrentTable, long? CurrentShard,
+    long? JobId, DateTimeOffset LastUpdatedAt, DateTimeOffset? StalledAt,
+    string? SqlState, string? Error);
 
 /// <summary>Durable operation returned to the UI.</summary>
 public sealed record OperationResponse(

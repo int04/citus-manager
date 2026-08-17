@@ -69,7 +69,7 @@ public sealed class ClustersController(
         }
     }
 
-    public async Task<IActionResult> Details(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Details(Guid id, bool refresh, CancellationToken cancellationToken)
     {
         var cluster = await clusters.GetAsync(id, cancellationToken);
         if (cluster is null) return NotFound();
@@ -77,13 +77,14 @@ public sealed class ClustersController(
         string? safeError = null;
         try
         {
-            inventory = await clusters.RefreshAsync(id, cancellationToken);
+            inventory = await clusters.RefreshAsync(id, cancellationToken, refresh);
         }
         catch
         {
             safeError = text["Controller.InventoryError"];
         }
         return View(new ClusterDetailsViewModel(cluster, inventory,
+            await clusters.GetQueryEndpointsAsync(id, cancellationToken),
             await operations.GetAllAsync(id, cancellationToken), safeError));
     }
 

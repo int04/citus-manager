@@ -1,0 +1,46 @@
+@model ClusterResponse
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<ClusterResource> T
+
+<dialog class="operation-dialog" data-operation-dialog="add-worker" aria-labelledby="add-worker-title">
+    <form method="dialog" class="operation-dialog-shell" data-operation-form data-operation="add-worker" novalidate>
+        <header><div><span class="dialog-kicker">@T["Cluster.TopologyChange"]</span><h2 id="add-worker-title">@T["Cluster.AddWorker"]</h2><p>@T["Cluster.AddWorkerHelp"]</p></div><button class="dialog-close" value="cancel" aria-label="@T["Cluster.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>
+        <div class="operation-dialog-body"><div class="form-grid"><div class="field"><label for="add-worker-host">@T["Cluster.Host"] *</label><input id="add-worker-host" name="host" required maxlength="255" autocomplete="off" /></div><div class="field"><label for="add-worker-port">@T["Cluster.Port"] *</label><input id="add-worker-port" name="port" type="number" min="1" max="65535" value="5432" required inputmode="numeric" /></div></div><label class="check-field"><input type="checkbox" name="rebalanceAfterAdd" value="true" checked /><span><strong>@T["Cluster.RebalanceAfterAdd"]</strong><small>@T["Cluster.RebalanceAfterAddHelp"]</small></span></label><label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.CapacityAck"]</span></label><div class="dialog-feedback" data-dialog-feedback role="alert" hidden></div></div>
+        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-primary" type="submit" value="submit">@T["Cluster.AddWorker"]</button></footer>
+    </form>
+</dialog>
+
+<dialog class="operation-dialog" data-operation-dialog="add-query" aria-labelledby="add-query-title">
+    <form method="dialog" class="operation-dialog-shell" data-operation-form data-operation="add-query" novalidate>
+        <header><div><span class="dialog-kicker">@T["Cluster.QueryCapacity"]</span><h2 id="add-query-title">@T["Cluster.AddQueryNode"]</h2><p>@T["Cluster.AddQueryNodeHelp"]</p></div><button class="dialog-close" value="cancel" aria-label="@T["Cluster.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>
+        <div class="operation-dialog-body"><div class="info-callout"><i class="fa fa-info-circle" aria-hidden="true"></i><p><strong>@T["Cluster.NotAnotherCoordinator"]</strong><br />@T["Cluster.QueryNodeExplanation"]</p></div><div class="form-grid"><div class="field"><label for="add-query-host">@T["Cluster.Host"] *</label><input id="add-query-host" name="host" required maxlength="255" autocomplete="off" /></div><div class="field"><label for="add-query-port">@T["Cluster.Port"] *</label><input id="add-query-port" name="port" type="number" min="1" max="65535" value="5432" required inputmode="numeric" /></div></div><label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.QueryNodeAck"]</span></label><div class="dialog-feedback" data-dialog-feedback role="alert" hidden></div></div>
+        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-primary" type="submit" value="submit">@T["Cluster.AddQueryNode"]</button></footer>
+    </form>
+</dialog>
+
+<dialog class="operation-dialog" data-operation-dialog="rebalance" aria-labelledby="rebalance-title">
+    <form method="dialog" class="operation-dialog-shell" data-operation-form data-operation="rebalance" novalidate>
+        <header><div><span class="dialog-kicker">@T["Cluster.DataMovement"]</span><h2 id="rebalance-title">@T["Cluster.RebalanceCluster"]</h2><p>@T["Cluster.RebalanceHelp"]</p></div><button class="dialog-close" value="cancel" aria-label="@T["Cluster.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>
+        <div class="operation-dialog-body"><div class="operation-preview" data-preview data-drain-only="false"><div class="preview-loading"><span class="spinner" aria-hidden="true"></span><span>@T["Cluster.LoadingPreview"]</span></div></div><button class="table-link preview-refresh" type="button" data-refresh-preview><i class="fa fa-refresh" aria-hidden="true"></i> @T["Cluster.RefreshPreview"]</button><label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.CapacityAck"]</span></label><div class="dialog-feedback" data-dialog-feedback role="alert" hidden></div></div>
+        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-primary" type="submit" value="submit">@T["Cluster.StartRebalance"]</button></footer>
+    </form>
+</dialog>
+
+<dialog class="operation-dialog" data-operation-dialog="drain" aria-labelledby="drain-title">
+    <form method="dialog" class="operation-dialog-shell" data-operation-form data-operation="drain" novalidate>
+        <input type="hidden" name="host" /><input type="hidden" name="port" />
+        <header><div><span class="dialog-kicker">@T["Cluster.SafeMaintenance"]</span><h2 id="drain-title">@T["Cluster.DrainWorker"]</h2><p>@T["Cluster.DrainHelp"] <code data-target-node></code></p></div><button class="dialog-close" value="cancel" aria-label="@T["Cluster.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>
+        <div class="operation-dialog-body"><div class="warning-callout"><strong>@T["Cluster.WorkerRemains"]</strong> @T["Cluster.DrainWarning"]</div><div class="operation-preview" data-preview data-drain-only="true"><div class="preview-loading"><span class="spinner" aria-hidden="true"></span><span>@T["Cluster.LoadingPreview"]</span></div></div><button class="table-link preview-refresh" type="button" data-refresh-preview><i class="fa fa-refresh" aria-hidden="true"></i> @T["Cluster.RefreshPreview"]</button><label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.CapacityAck"]</span></label><div class="dialog-feedback" data-dialog-feedback role="alert" hidden></div></div>
+        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-primary" type="submit" value="submit">@T["Cluster.StartDrain"]</button></footer>
+    </form>
+</dialog>
+
+<dialog class="operation-dialog" data-operation-dialog="retire" aria-labelledby="retire-title">
+    <form method="dialog" class="operation-dialog-shell" data-operation-form data-operation="retire" novalidate>
+        <input type="hidden" name="host" /><input type="hidden" name="port" />
+        <header><div><span class="dialog-kicker danger">@T["Cluster.DestructiveChange"]</span><h2 id="retire-title">@T["Cluster.RemoveNodeSafely"]</h2><p>@T["Cluster.RemoveNodeHelp"] <code data-target-node></code></p></div><button class="dialog-close" value="cancel" aria-label="@T["Cluster.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>
+        <div class="operation-dialog-body"><div class="danger-callout" role="alert"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i><p><strong>@T["Cluster.RetireSequence"]</strong><br />@T["Cluster.RetireWarning"]</p></div><div class="operation-preview" data-preview data-drain-only="true"><div class="preview-loading"><span class="spinner" aria-hidden="true"></span><span>@T["Cluster.LoadingPreview"]</span></div></div><div class="field"><label for="retire-confirmation">@T["Cluster.TypeNodeHostToConfirm"] <code data-confirm-label></code></label><input id="retire-confirmation" name="typedConfirmation" required autocomplete="off" data-confirm-input /></div><label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.CapacityAck"]</span></label><div class="dialog-feedback" data-dialog-feedback role="alert" hidden></div></div>
+        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-danger" type="submit" value="submit">@T["Cluster.DrainAndRemove"]</button></footer>
+    </form>
+</dialog>
