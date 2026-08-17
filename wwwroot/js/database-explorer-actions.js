@@ -1461,7 +1461,7 @@
     const names = tableColumnNames();
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "dg-key-row";
+    row.className = "dg-key-row dg-tree-object-row";
     row.setAttribute("role", "option");
     row.dataset.keyAutoName = initial.name ? "false" : "true";
     row.dataset.keyName = initial.name || "";
