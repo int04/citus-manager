@@ -1,0 +1,41 @@
+@model BackupClusterViewModel
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<BackupResource> T
+@{ var backupPage = Model.Page; }
+<dialog id="storage-dialog" class="backup-dialog backup-dialog-manager" aria-labelledby="storage-dialog-title">
+    <div class="backup-dialog-head"><div><p class="eyebrow">@T["Profiles.Title"]</p><h2 id="storage-dialog-title">@T["Action.ManageStorage"]</h2></div><button type="button" class="btn btn-ghost" data-dialog-close aria-label="@T["Common.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></div>
+    <div class="hidden notice" role="alert" tabindex="-1" data-dialog-feedback></div>
+    <div class="backup-manager-grid">
+    <section class="backup-manager-list" aria-labelledby="storage-list-title">
+    <h3 id="storage-list-title">@T["Profiles.StorageDestinations"]</h3>
+    <div class="backup-profile-catalog">
+        @foreach (var profile in backupPage.StorageProfiles)
+        {
+            <article><div><strong>@profile.Name</strong><small>@T[$"StorageType.{profile.Type}"] · @(profile.IsHealthy ? T["Common.Ready"] : T["Common.Unhealthy"])</small></div><div class="backup-profile-buttons"><button class="btn btn-secondary" type="button" data-profile-test="/api/backup-storage-profiles/@profile.Id/test"><span>@T["Action.TestProfile", profile.Name]</span></button>@if (profile.Type == "GoogleDrive") { <a class="btn btn-secondary" href="/api/backup-storage-profiles/@profile.Id/google/authorize?returnUrl=@Uri.EscapeDataString($"/Backups/Cluster/{backupPage.Cluster.Id}")">@T["Action.AuthorizeProfile", profile.Name]</a> }</div></article>
+        }
+    </div>
+    </section>
+    <section class="backup-manager-form" aria-labelledby="storage-form-title">
+    <h3 id="storage-form-title">@T["Profiles.AddStorage"]</h3>
+    <form data-profile-form data-url="/api/backup-storage-profiles" data-kind="storage" class="backup-editor-form">
+        <div class="backup-form-grid">
+            <div class="field"><label>@T["Profiles.Name"]</label><input name="name" maxlength="120" required /></div>
+            <div class="field"><label>@T["Profiles.Type"]</label><select name="type"><option value="Local">@T["StorageType.Local"]</option><option value="S3Compatible">@T["StorageType.S3Compatible"]</option><option value="GoogleDrive">@T["StorageType.GoogleDrive"]</option></select></div>
+            <div class="field" data-profile-types="Local"><label>@T["Profiles.LocalSubdirectory"]</label><input name="localSubdirectory" maxlength="500" /></div>
+            <div class="field" data-profile-types="S3Compatible"><label>@T["Profiles.Endpoint"]</label><input name="endpoint" type="url" maxlength="1000" /></div>
+            <div class="field" data-profile-types="S3Compatible"><label>@T["Profiles.Bucket"]</label><input name="bucket" maxlength="255" /></div>
+            <div class="field" data-profile-types="S3Compatible"><label>@T["Profiles.Region"]</label><input name="region" maxlength="100" /></div>
+            <div class="field" data-profile-types="S3Compatible"><label>@T["Profiles.ObjectPrefix"]</label><input name="objectPrefix" maxlength="500" /></div>
+            <div class="field" data-profile-types="S3Compatible"><label>@T["Profiles.AccessKey"]</label><input name="accessKey" autocomplete="off" /></div>
+            <div class="field" data-profile-types="S3Compatible"><label>@T["Profiles.SecretKey"]</label><input name="secretKey" type="password" autocomplete="new-password" /></div>
+            <div class="field" data-profile-types="GoogleDrive"><label>@T["Profiles.DriveFolderId"]</label><input name="googleDriveFolderId" /></div>
+            <div class="field" data-profile-types="GoogleDrive"><label>@T["Profiles.GoogleClientId"]</label><input name="googleClientId" autocomplete="off" /></div>
+            <div class="field" data-profile-types="GoogleDrive"><label>@T["Profiles.GoogleClientSecret"]</label><input name="googleClientSecret" type="password" autocomplete="new-password" /></div>
+            <div class="field" data-profile-types="GoogleDrive"><label>@T["Profiles.GoogleRefreshToken"]</label><input name="googleRefreshToken" type="password" autocomplete="new-password" /></div>
+        </div>
+        <div class="form-actions"><button class="btn btn-secondary" type="button" data-dialog-close>@T["Action.Cancel"]</button><button class="btn btn-primary" type="submit"><span>@T["Action.CreateStorage"]</span></button></div>
+    </form>
+    </section>
+    </div>
+</dialog>

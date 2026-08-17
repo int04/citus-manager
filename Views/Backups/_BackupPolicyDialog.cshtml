@@ -1,0 +1,42 @@
+@model BackupClusterViewModel
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<BackupResource> T
+@{ var backupPage = Model.Page; var policy = backupPage.Policy; }
+<dialog id="backup-policy-dialog" class="backup-dialog backup-dialog-wide" aria-labelledby="backup-policy-title">
+    <div class="backup-dialog-head"><div><p class="eyebrow">@T["Policy.Legend"]</p><h2 id="backup-policy-title">@T["Action.EditPolicy"]</h2></div><button type="button" class="btn btn-ghost" data-dialog-close aria-label="@T["Common.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></div>
+    <div class="hidden notice" role="alert" tabindex="-1" data-dialog-feedback></div>
+    <form id="backup-policy" class="backup-policy" data-schedule-form data-url="/api/clusters/@backupPage.Cluster.Id/backup-policy">
+        <fieldset>
+            <legend class="sr-only">@T["Policy.Legend"]</legend>
+            <div class="backup-policy-top">
+                <label class="check-field backup-enabled"><input name="enabled" type="checkbox" checked="@policy.Enabled" /><span><strong>@T["Policy.Automatic"]</strong><small>@T["Policy.AutomaticHelp"]</small></span></label>
+                <div class="field"><label for="templateId">@T["Policy.Template"]</label><select id="templateId" name="templateId"><option value="">@T["Policy.Custom"]</option>@foreach (var template in backupPage.Templates) { <option value="@template.Id" selected="@(template.Id == policy.TemplateId)">@template.Name · v@template.Version</option> }</select></div>
+            </div>
+            <div class="backup-form-grid">
+                <div class="field"><label for="interval">@T["Schedule.Every"]</label><input id="interval" name="interval" type="number" min="1" max="999" value="@policy.Interval" required /></div>
+                <div class="field"><label for="unit">@T["Schedule.Period"]</label><select id="unit" name="unit">@foreach (var unit in Enum.GetValues<CitusManager.Contracts.BackupScheduleUnit>()) { <option value="@unit" selected="@(unit == policy.Unit)">@T[$"Schedule.Unit.{unit}"]</option> }</select></div>
+                <div class="field" data-schedule-field="minute"><label for="minute">@T["Schedule.Minute"]</label><input id="minute" name="minute" type="number" min="0" max="59" value="@policy.Minute" required /></div>
+                <div class="field" data-schedule-field="hour"><label for="hour">@T["Schedule.Hour"]</label><input id="hour" name="hour" type="number" min="0" max="23" value="@policy.Hour" required /></div>
+                <div class="field" data-schedule-field="week"><label for="dayOfWeek">@T["Schedule.DayOfWeek"]</label><select id="dayOfWeek" name="dayOfWeek">@for (var day = 0; day < 7; day++) { <option value="@day" selected="@(policy.DayOfWeek == day)">@T[$"Day.{(DayOfWeek)day}"]</option> }</select></div>
+                <div class="field" data-schedule-field="month"><label for="dayOfMonth">@T["Schedule.DayOfMonth"]</label><input id="dayOfMonth" name="dayOfMonth" type="number" min="1" max="31" value="@(policy.DayOfMonth ?? 1)" /><small>@T["Schedule.MissingDate"]</small></div>
+                <div class="field"><label for="timeZone">@T["Schedule.TimeZone"]</label><input id="timeZone" name="timeZone" value="@policy.TimeZone" list="iana-timezones" data-timezone-default="@(!policy.IsConfigured ? "true" : "false")" maxlength="100" required autocomplete="off" role="combobox" aria-autocomplete="list" /><small><strong data-timezone-offset></strong> · @T["Schedule.TimeZoneHelp"]</small></div>
+                <div class="field"><label for="retryCount">@T["Schedule.Retries"]</label><input id="retryCount" name="retryCount" type="number" min="0" max="20" value="@policy.RetryCount" required /></div>
+            </div>
+            <details class="backup-advanced">
+                <summary>@T["Policy.RetentionEncryption"]</summary>
+                <div class="backup-form-grid">
+                    <div class="field"><label for="retentionDays">@T["Policy.MaximumAge"]</label><input id="retentionDays" name="retentionDays" type="number" min="1" max="36500" value="@policy.RetentionDays" required /></div>
+                    <div class="field"><label for="retentionMinimum">@T["Policy.MinimumValid"]</label><input id="retentionMinimum" name="retentionMinimum" type="number" min="1" max="1000" value="@policy.RetentionMinimum" required /></div>
+                    <div class="field"><label for="retentionMaximum">@T["Policy.MaximumValid"]</label><input id="retentionMaximum" name="retentionMaximum" type="number" min="1" max="1000" value="@policy.RetentionMaximum" required /></div>
+                    <label class="check-field"><input name="encryptionEnabled" type="checkbox" checked="@policy.EncryptionEnabled" /><span><strong>@T["Policy.Encryption"]</strong><small>@T["Policy.EncryptionWarning"]</small></span></label>
+                </div>
+            </details>
+            <div class="backup-profile-grid">
+                <fieldset class="backup-profile-list"><legend>@T["Profiles.StorageDestinations"]</legend><p>@T["Profiles.StorageHelp"]</p>@foreach (var profile in backupPage.StorageProfiles) { <label class="profile-option"><input type="checkbox" name="storageProfileIds" value="@profile.Id" checked="@policy.StorageProfileIds.Contains(profile.Id)" /><span><strong>@profile.Name <span class="status-pill @(profile.IsHealthy ? "success" : "danger")">@T[$"StorageType.{profile.Type}"]</span></strong><small>@(profile.IsHealthy ? T["Common.Ready"] : T["Common.Unhealthy"])</small></span></label> }</fieldset>
+                <fieldset class="backup-profile-list"><legend>@T["Profiles.Notifications"]</legend><p>@T["Profiles.NotificationsHelp"]</p>@if (backupPage.NotificationProfiles.Count == 0) { <div class="backup-empty">@T["Profiles.NoNotifications"]</div> }@foreach (var profile in backupPage.NotificationProfiles) { <label class="profile-option"><input type="checkbox" name="notificationProfileIds" value="@profile.Id" checked="@policy.NotificationProfileIds.Contains(profile.Id)" /><span><strong>@profile.Name <span class="status-pill @(profile.IsHealthy ? "success" : "danger")">@T[$"NotificationType.{profile.Type}"]</span></strong><small>@(profile.IsHealthy ? T["Common.Ready"] : T["Common.Unhealthy"])</small></span></label> }</fieldset>
+            </div>
+        </fieldset>
+        <div class="form-actions"><button class="btn btn-secondary" type="button" data-dialog-close>@T["Action.Cancel"]</button><button class="btn btn-primary" type="submit"><i class="fa fa-save" aria-hidden="true"></i><span>@T["Action.SavePolicy"]</span></button></div>
+    </form>
+</dialog>

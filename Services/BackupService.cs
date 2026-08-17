@@ -29,7 +29,8 @@ public sealed class BackupService(
         if (cluster is null) return null;
         var policy = await db.ClusterBackupPolicies.AsNoTracking().Include(x => x.Storages).Include(x => x.Notifications)
             .SingleOrDefaultAsync(x => x.ClusterId == clusterId, cancellationToken);
-        var templates = await db.BackupTemplates.AsNoTracking().Where(x => x.IsEnabled).OrderBy(x => x.Name).ToListAsync(cancellationToken);
+        var templates = await db.BackupTemplates.AsNoTracking().Include(x => x.Storages).Include(x => x.Notifications)
+            .Where(x => x.IsEnabled).OrderBy(x => x.Name).ToListAsync(cancellationToken);
         var storages = await db.StorageProfiles.AsNoTracking().Include(x => x.Versions).Where(x => x.IsEnabled).OrderBy(x => x.Name).ToListAsync(cancellationToken);
         var notifications = await db.NotificationProfiles.AsNoTracking().Include(x => x.Versions).Where(x => x.IsEnabled).OrderBy(x => x.Name).ToListAsync(cancellationToken);
         var runs = await db.BackupRuns.AsNoTracking().Include(x => x.Steps).Include(x => x.DestinationCopies).ThenInclude(x => x.StorageProfile)
@@ -44,7 +45,12 @@ public sealed class BackupService(
             if (defaultLocal is not null) mappedPolicy = mappedPolicy with { StorageProfileIds = [defaultLocal.Id] };
         }
         return new(MapCluster(cluster), mappedPolicy,
-            templates.Select(x => new BackupTemplateSummaryResponse(x.Id, x.Name, x.Version, ScheduleSummary(x))).ToList(),
+            templates.Select(x => new BackupTemplateSummaryResponse(
+                x.Id, x.Name, x.Version, ScheduleSummary(x), (Contracts.BackupScheduleUnit)(int)x.ScheduleUnit,
+                x.ScheduleInterval, x.MinuteOfHour, x.RunAtLocalTime.Hour, (int)x.RunOnDayOfWeek, x.RunOnDayOfMonth,
+                x.TimeZoneId, x.RetryCount, x.RetentionMaxAgeDays, x.RetentionMinBackups, x.RetentionMaxBackups,
+                x.EncryptionEnabled, x.Storages.Select(y => y.StorageProfileId).ToList(),
+                x.Notifications.Select(y => y.NotificationProfileId).ToList())).ToList(),
             storages.Select(x => new BackupProfileSummaryResponse(x.Id, x.Name, x.Type.ToString(), x.CurrentVersion,
                 x.Type == StorageType.Local ? "Local encrypted artifact storage" : x.Type == StorageType.S3Compatible ? "S3-compatible / R2" : "Google Drive OAuth", StorageReady(x))).ToList(),
             notifications.Select(x => new BackupProfileSummaryResponse(x.Id, x.Name, x.Type.ToString(), x.CurrentVersion,
@@ -325,12 +331,12 @@ public sealed class BackupService(
         return seconds <= 0 ? null : bytes / seconds;
     }
     private static BackupPolicyResponse MapPolicy(ClusterBackupPolicy? x) => x is null
-        ? new(false, null, 1, Contracts.BackupScheduleUnit.Day, 0, 2, null, 1, "UTC", 3, 30, 3, 30, true, null, [], [])
+        ? new(false, null, 1, Contracts.BackupScheduleUnit.Day, 0, 2, null, 1, "UTC", 3, 30, 3, 30, true, null, [], [], false)
         : new(x.IsEnabled, x.SourceTemplateId, x.ScheduleInterval, (Contracts.BackupScheduleUnit)(int)x.ScheduleUnit,
             x.MinuteOfHour, x.RunAtLocalTime.Hour, (int)x.RunOnDayOfWeek, x.RunOnDayOfMonth, x.TimeZoneId,
             x.RetryCount, x.RetentionMaxAgeDays, x.RetentionMinBackups, x.RetentionMaxBackups, x.EncryptionEnabled,
             x.NextRunAt, x.Storages.Where(y => y.IsEnabled).Select(y => y.StorageProfileId).ToList(),
-            x.Notifications.Where(y => y.IsEnabled).Select(y => y.NotificationProfileId).ToList());
+            x.Notifications.Where(y => y.IsEnabled).Select(y => y.NotificationProfileId).ToList(), true);
     private static ClusterResponse MapCluster(ClusterProfile x) => new(x.Id, x.Name, x.Host, x.Port, x.Database, x.Username,
         x.SslMode, !string.IsNullOrWhiteSpace(x.ProtectedPassword), !string.IsNullOrWhiteSpace(x.PrometheusBaseUrl),
         x.IsEnabled, x.PostgreSqlVersion, x.CitusVersion, x.LastCheckedAt, x.LastError);

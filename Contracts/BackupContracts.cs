@@ -45,9 +45,13 @@ namespace CitusManager.Contracts
         bool Enabled, Guid? TemplateId, int Interval, BackupScheduleUnit Unit, int Minute, int Hour,
         int? DayOfWeek, int? DayOfMonth, string TimeZone, int RetryCount, int RetentionDays,
         int RetentionMinimum, int RetentionMaximum, bool EncryptionEnabled, DateTimeOffset? NextRunAt,
-        IReadOnlyList<Guid> StorageProfileIds, IReadOnlyList<Guid> NotificationProfileIds);
+        IReadOnlyList<Guid> StorageProfileIds, IReadOnlyList<Guid> NotificationProfileIds, bool IsConfigured);
 
-    public sealed record BackupTemplateSummaryResponse(Guid Id, string Name, int Version, string ScheduleSummary);
+    public sealed record BackupTemplateSummaryResponse(
+        Guid Id, string Name, int Version, string ScheduleSummary,
+        BackupScheduleUnit Unit, int Interval, int Minute, int Hour, int DayOfWeek, int DayOfMonth,
+        string TimeZone, int RetryCount, int RetentionDays, int RetentionMinimum, int RetentionMaximum,
+        bool EncryptionEnabled, IReadOnlyList<Guid> StorageProfileIds, IReadOnlyList<Guid> NotificationProfileIds);
     public sealed record BackupProfileSummaryResponse(Guid Id, string Name, string Type, int Version, string Summary, bool IsHealthy);
     public sealed record BackupDestinationCopyResponse(Guid ProfileId, string Name, string Type, string Status, long BytesUploaded, string? SafeError);
     public sealed record BackupStepResponse(int Sequence, string Phase, string Status, string? Detail, long? CompletedUnits, long? TotalUnits, DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt);

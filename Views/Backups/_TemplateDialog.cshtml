@@ -1,0 +1,68 @@
+@model BackupClusterViewModel
+@using System.Text.Json
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<BackupResource> T
+@{
+    var backupPage = Model.Page;
+    var isAdmin = User.IsInRole("Admin");
+    var defaultLocalId = backupPage.StorageProfiles.FirstOrDefault(x => x.Type == "Local" && x.Name == "Local backup storage")?.Id
+        ?? backupPage.StorageProfiles.FirstOrDefault(x => x.Type == "Local")?.Id;
+    var templateJson = JsonSerializer.Serialize(backupPage.Templates.Select(x => new
+    {
+        x.Id, x.Name, x.Version, unit = x.Unit.ToString(), x.Interval, x.Minute, x.Hour,
+        x.DayOfWeek, x.DayOfMonth, x.TimeZone, x.RetryCount, x.RetentionDays,
+        x.RetentionMinimum, x.RetentionMaximum, x.EncryptionEnabled,
+        x.StorageProfileIds, x.NotificationProfileIds
+    }), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+}
+<dialog id="template-dialog" class="backup-dialog backup-dialog-manager" aria-labelledby="template-dialog-title">
+    <div class="backup-dialog-head"><div><p class="eyebrow">@T["Policy.Template"]</p><h2 id="template-dialog-title">@T["Action.ManageTemplates"]</h2></div><button type="button" class="btn btn-ghost" data-dialog-close aria-label="@T["Common.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></div>
+    <div class="hidden notice" role="alert" tabindex="-1" data-dialog-feedback></div>
+    <p class="backup-dialog-help">@T["Templates.Help"]</p>
+    <div class="backup-manager-grid">
+    <section class="backup-manager-list" aria-labelledby="template-list-title">
+    <h3 id="template-list-title">@T["Policy.Template"]</h3>
+    <div class="backup-profile-catalog">
+        @if (backupPage.Templates.Count == 0) { <div class="backup-empty">@T["Templates.Empty"]</div> }
+        @foreach (var template in backupPage.Templates)
+        {
+            <article>
+                <div><strong>@template.Name</strong><small>v@template.Version · @T["Policy.ScheduleSummary", template.Interval, T[$"Schedule.Unit.{template.Unit}"]] · @template.TimeZone</small></div>
+                <div class="backup-profile-buttons">
+                    <button class="btn btn-secondary" type="button" data-template-edit="@template.Id">@T["Action.EditTemplate"]</button>
+                    @if (isAdmin) { <button class="btn btn-danger" type="button" data-template-delete="@template.Id" data-url="/api/backup-templates/@template.Id">@T["Action.DeleteTemplate"]</button> }
+                </div>
+            </article>
+        }
+    </div>
+    </section>
+    <section class="backup-manager-form" aria-labelledby="template-form-title">
+    <h3 id="template-form-title" data-template-form-title data-new-label="@T["Templates.Add"]" data-edit-label="@T["Templates.Edit"]">@T["Templates.Add"]</h3>
+    <form id="backup-template-form" data-schedule-form data-url="/api/backup-templates" data-default-storage-id="@defaultLocalId" class="backup-editor-form">
+        <input type="hidden" name="templateId" />
+        <div class="backup-form-grid">
+            <div class="field"><label for="templateName">@T["Profiles.Name"]</label><input id="templateName" name="name" maxlength="120" required /></div>
+            <div class="field"><label for="templateInterval">@T["Schedule.Every"]</label><input id="templateInterval" name="interval" type="number" min="1" max="999" value="1" required /></div>
+            <div class="field"><label for="templateUnit">@T["Schedule.Period"]</label><select id="templateUnit" name="unit">@foreach (var unit in Enum.GetValues<CitusManager.Contracts.BackupScheduleUnit>()) { <option value="@unit">@T[$"Schedule.Unit.{unit}"]</option> }</select></div>
+            <div class="field" data-schedule-field="minute"><label for="templateMinute">@T["Schedule.Minute"]</label><input id="templateMinute" name="minute" type="number" min="0" max="59" value="0" required /></div>
+            <div class="field" data-schedule-field="hour"><label for="templateHour">@T["Schedule.Hour"]</label><input id="templateHour" name="hour" type="number" min="0" max="23" value="2" required /></div>
+            <div class="field" data-schedule-field="week"><label for="templateDayOfWeek">@T["Schedule.DayOfWeek"]</label><select id="templateDayOfWeek" name="dayOfWeek">@for (var day = 0; day < 7; day++) { <option value="@day">@T[$"Day.{(DayOfWeek)day}"]</option> }</select></div>
+            <div class="field" data-schedule-field="month"><label for="templateDayOfMonth">@T["Schedule.DayOfMonth"]</label><input id="templateDayOfMonth" name="dayOfMonth" type="number" min="1" max="31" value="1" required /><small>@T["Schedule.MissingDate"]</small></div>
+            <div class="field"><label for="templateTimeZone">@T["Schedule.TimeZone"]</label><input id="templateTimeZone" name="timeZone" value="UTC" list="iana-timezones" data-timezone-default="true" maxlength="100" required autocomplete="off" role="combobox" aria-autocomplete="list" /><small><strong data-timezone-offset></strong> · @T["Schedule.TimeZoneHelp"]</small></div>
+            <div class="field"><label for="templateRetryCount">@T["Schedule.Retries"]</label><input id="templateRetryCount" name="retryCount" type="number" min="0" max="20" value="3" required /></div>
+            <div class="field"><label for="templateRetentionDays">@T["Policy.MaximumAge"]</label><input id="templateRetentionDays" name="retentionDays" type="number" min="1" max="36500" value="30" required /></div>
+            <div class="field"><label for="templateRetentionMinimum">@T["Policy.MinimumValid"]</label><input id="templateRetentionMinimum" name="retentionMinimum" type="number" min="1" max="1000" value="3" required /></div>
+            <div class="field"><label for="templateRetentionMaximum">@T["Policy.MaximumValid"]</label><input id="templateRetentionMaximum" name="retentionMaximum" type="number" min="1" max="1000" value="30" required /></div>
+            <label class="check-field"><input name="encryptionEnabled" type="checkbox" checked /><span><strong>@T["Policy.Encryption"]</strong><small>@T["Policy.EncryptionWarning"]</small></span></label>
+        </div>
+        <div class="backup-profile-grid">
+            <fieldset class="backup-profile-list"><legend>@T["Profiles.StorageDestinations"]</legend>@foreach (var profile in backupPage.StorageProfiles) { <label class="profile-option"><input type="checkbox" name="storageProfileIds" value="@profile.Id" checked="@(profile.Id == defaultLocalId)" /><span><strong>@profile.Name</strong><small>@T[$"StorageType.{profile.Type}"]</small></span></label> }</fieldset>
+            <fieldset class="backup-profile-list"><legend>@T["Profiles.Notifications"]</legend>@if (backupPage.NotificationProfiles.Count == 0) { <div class="backup-empty">@T["Profiles.NoNotifications"]</div> }@foreach (var profile in backupPage.NotificationProfiles) { <label class="profile-option"><input type="checkbox" name="notificationProfileIds" value="@profile.Id" /><span><strong>@profile.Name</strong><small>@T[$"NotificationType.{profile.Type}"]</small></span></label> }</fieldset>
+        </div>
+        <div class="form-actions"><button class="btn btn-secondary" type="button" data-template-new>@T["Templates.New"]</button><button class="btn btn-primary" type="submit" data-create-label="@T["Action.CreateTemplate"]" data-update-label="@T["Action.SaveTemplate"]"><span>@T["Action.CreateTemplate"]</span></button></div>
+    </form>
+    </section>
+    </div>
+    <script id="backup-template-data" type="application/json">@Html.Raw(templateJson)</script>
+</dialog>

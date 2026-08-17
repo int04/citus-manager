@@ -1,0 +1,40 @@
+@model BackupClusterViewModel
+@using CitusManager.Localization
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<BackupResource> T
+@{ var backupPage = Model.Page; }
+<dialog id="notification-dialog" class="backup-dialog backup-dialog-manager" aria-labelledby="notification-dialog-title">
+    <div class="backup-dialog-head"><div><p class="eyebrow">@T["Profiles.Title"]</p><h2 id="notification-dialog-title">@T["Action.ManageNotifications"]</h2></div><button type="button" class="btn btn-ghost" data-dialog-close aria-label="@T["Common.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></div>
+    <div class="hidden notice" role="alert" tabindex="-1" data-dialog-feedback></div>
+    <div class="backup-manager-grid">
+    <section class="backup-manager-list" aria-labelledby="notification-list-title">
+    <h3 id="notification-list-title">@T["Profiles.Notifications"]</h3>
+    <div class="backup-profile-catalog">
+        @if (backupPage.NotificationProfiles.Count == 0) { <div class="backup-empty">@T["Profiles.NoNotifications"]</div> }
+        @foreach (var profile in backupPage.NotificationProfiles)
+        {
+            <article><div><strong>@profile.Name</strong><small>@T[$"NotificationType.{profile.Type}"] · @(profile.IsHealthy ? T["Common.Ready"] : T["Common.Unhealthy"])</small></div><button class="btn btn-secondary" type="button" data-profile-test="/api/backup-notification-profiles/@profile.Id/test"><span>@T["Action.TestProfile", profile.Name]</span></button></article>
+        }
+    </div>
+    </section>
+    <section class="backup-manager-form" aria-labelledby="notification-form-title">
+    <h3 id="notification-form-title">@T["Profiles.AddNotification"]</h3>
+    <form data-profile-form data-url="/api/backup-notification-profiles" data-kind="notification" class="backup-editor-form">
+        <div class="backup-form-grid">
+            <div class="field"><label>@T["Profiles.Name"]</label><input name="name" maxlength="120" required /></div>
+            <div class="field"><label>@T["Profiles.Type"]</label><select name="type"><option value="Email">@T["NotificationType.Email"]</option><option value="Telegram">@T["NotificationType.Telegram"]</option></select></div>
+            <div class="field" data-profile-types="Email"><label>@T["Profiles.SmtpHost"]</label><input name="smtpHost" maxlength="255" /></div>
+            <div class="field" data-profile-types="Email"><label>@T["Profiles.SmtpPort"]</label><input name="smtpPort" type="number" min="1" max="65535" value="587" /></div>
+            <label class="check-field" data-profile-types="Email"><input name="smtpUseTls" type="checkbox" checked /><span>@T["Profiles.SmtpTls"]</span></label>
+            <div class="field" data-profile-types="Email"><label>@T["Profiles.From"]</label><input name="smtpFrom" type="email" maxlength="320" /></div>
+            <div class="field" data-profile-types="Email"><label>@T["Profiles.SmtpUsername"]</label><input name="smtpUsername" autocomplete="username" /></div>
+            <div class="field" data-profile-types="Email"><label>@T["Profiles.SmtpPassword"]</label><input name="smtpPassword" type="password" autocomplete="new-password" /></div>
+            <div class="field" data-profile-types="Email"><label>@T["Profiles.EmailRecipients"]</label><input name="emailRecipients" placeholder="a@example.com, b@example.com" /></div>
+            <div class="field" data-profile-types="Telegram"><label>@T["Profiles.TelegramToken"]</label><input name="telegramBotToken" type="password" autocomplete="new-password" /></div>
+            <div class="field" data-profile-types="Telegram"><label>@T["Profiles.TelegramTargets"]</label><input name="telegramTargets" placeholder="@T["Profiles.TelegramTargetsPlaceholder"]" /></div>
+        </div>
+        <div class="form-actions"><button class="btn btn-secondary" type="button" data-dialog-close>@T["Action.Cancel"]</button><button class="btn btn-primary" type="submit"><span>@T["Action.CreateNotification"]</span></button></div>
+    </form>
+    </section>
+    </div>
+</dialog>

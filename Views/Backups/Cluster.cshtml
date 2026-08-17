@@ -11,6 +11,24 @@
     var isAdmin = User.IsInRole("Admin");
     var successfulRuns = backupPage.BackupRuns.Count(x => (x.Status is "Succeeded" or "PartialSucceeded") && x.Destinations.Any(y => y.Status == "Succeeded"));
     var activeRuns = backupPage.BackupRuns.Count(x => x.Status is "Queued" or "Running" or "RetryScheduled" or "Cancelling");
+    string FormatUtcOffset(TimeSpan offset)
+    {
+        var absolute = offset.Duration();
+        return $"UTC{(offset < TimeSpan.Zero ? "-" : "+")}{absolute.Hours:00}:{absolute.Minutes:00}";
+    }
+    var now = DateTimeOffset.UtcNow;
+    var ianaTimeZones = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var zone in TimeZoneInfo.GetSystemTimeZones())
+    {
+        var id = TimeZoneInfo.TryConvertWindowsIdToIanaId(zone.Id, out var ianaId) ? ianaId : zone.Id;
+        ianaTimeZones[id] = FormatUtcOffset(zone.GetUtcOffset(now));
+    }
+    foreach (var id in new[] { "UTC", policy.TimeZone }.Concat(backupPage.Templates.Select(x => x.TimeZone)).Where(x => !string.IsNullOrWhiteSpace(x)))
+    {
+        try { ianaTimeZones[id] = FormatUtcOffset(TimeZoneInfo.FindSystemTimeZoneById(id).GetUtcOffset(now)); }
+        catch (TimeZoneNotFoundException) { }
+        catch (InvalidTimeZoneException) { }
+    }
 }
 
 @section Styles { <link rel="stylesheet" href="~/css/backups.css" asp-append-version="true" /> }
@@ -33,6 +51,7 @@
 </div>
 
 <form id="backup-antiforgery" class="hidden">@Html.AntiForgeryToken()</form>
+<datalist id="iana-timezones">@foreach (var timeZone in ianaTimeZones.OrderBy(x => x.Key, StringComparer.Ordinal)) { <option value="@timeZone.Key" label="@timeZone.Value"></option> }</datalist>
 <div id="backup-feedback" class="hidden notice" role="alert" tabindex="-1"></div>
 <div id="backup-live-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
@@ -46,107 +65,25 @@
 <section class="section-block">
     <div class="section-title">
         <div><h2>@T["Policy.Title"]</h2><p>@T["Policy.Help"]</p></div>
+        @if (canOperate) { <button class="btn btn-secondary" type="button" data-dialog-open="backup-policy-dialog"><i class="fa fa-cog" aria-hidden="true"></i>@T["Action.EditPolicy"]</button> }
     </div>
-    <form id="backup-policy" class="panel backup-policy" data-url="/api/clusters/@backupPage.Cluster.Id/backup-policy">
-        <fieldset @(canOperate ? null : "disabled")>
-            <legend class="sr-only">@T["Policy.Legend"]</legend>
-            <div class="backup-policy-top">
-                <label class="check-field backup-enabled"><input name="enabled" type="checkbox" checked="@policy.Enabled" /><span><strong>@T["Policy.Automatic"]</strong><small>@T["Policy.AutomaticHelp"]</small></span></label>
-                <div class="field"><label for="templateId">@T["Policy.Template"]</label><select id="templateId" name="templateId"><option value="">@T["Policy.Custom"]</option>@foreach (var template in backupPage.Templates) { <option value="@template.Id" selected="@(template.Id == policy.TemplateId)">@template.Name · v@template.Version</option> }</select></div>
+    <div class="panel backup-policy-summary">
+        <dl class="backup-summary-grid">
+            <div><dt>@T["Overview.Schedule"]</dt><dd>@T["Policy.ScheduleSummary", policy.Interval, T[$"Schedule.Unit.{policy.Unit}"]]</dd><small>@policy.TimeZone · @(policy.NextRunAt?.ToString("u") ?? T["Overview.NoNextRun"])</small></div>
+            <div><dt>@T["Policy.RetentionEncryption"]</dt><dd>@T["Overview.RetentionDays", policy.RetentionDays]</dd><small>@(policy.EncryptionEnabled ? T["Policy.Encrypted"] : T["Policy.Unencrypted"])</small></div>
+            <div><dt>@T["Profiles.StorageDestinations"]</dt><dd>@policy.StorageProfileIds.Count</dd><small>@string.Join(", ", backupPage.StorageProfiles.Where(x => policy.StorageProfileIds.Contains(x.Id)).Select(x => x.Name))</small></div>
+            <div><dt>@T["Profiles.Notifications"]</dt><dd>@policy.NotificationProfileIds.Count</dd><small>@(policy.NotificationProfileIds.Count == 0 ? T["Profiles.NoNotifications"] : string.Join(", ", backupPage.NotificationProfiles.Where(x => policy.NotificationProfileIds.Contains(x.Id)).Select(x => x.Name)))</small></div>
+        </dl>
+        @if (canOperate)
+        {
+            <div class="form-actions backup-summary-actions">
+                <button class="btn btn-secondary" type="button" data-dialog-open="template-dialog">@T["Action.ManageTemplates"]</button>
+                <button class="btn btn-secondary" type="button" data-dialog-open="storage-dialog">@T["Action.ManageStorage"]</button>
+                <button class="btn btn-secondary" type="button" data-dialog-open="notification-dialog">@T["Action.ManageNotifications"]</button>
             </div>
-
-            <div class="backup-form-grid">
-                <div class="field"><label for="interval">@T["Schedule.Every"]</label><input id="interval" name="interval" type="number" min="1" max="999" value="@policy.Interval" required /></div>
-                <div class="field"><label for="unit">@T["Schedule.Period"]</label><select id="unit" name="unit">@foreach (var unit in Enum.GetValues<CitusManager.Contracts.BackupScheduleUnit>()) { <option value="@unit" selected="@(unit == policy.Unit)">@T[$"Schedule.Unit.{unit}"]</option> }</select></div>
-                <div class="field" data-schedule-field="minute"><label for="minute">@T["Schedule.Minute"]</label><input id="minute" name="minute" type="number" min="0" max="59" value="@policy.Minute" required /></div>
-                <div class="field" data-schedule-field="hour"><label for="hour">@T["Schedule.Hour"]</label><input id="hour" name="hour" type="number" min="0" max="23" value="@policy.Hour" required /></div>
-                <div class="field" data-schedule-field="week"><label for="dayOfWeek">@T["Schedule.DayOfWeek"]</label><select id="dayOfWeek" name="dayOfWeek">@for (var day = 0; day < 7; day++) { <option value="@day" selected="@(policy.DayOfWeek == day)">@T[$"Day.{(DayOfWeek)day}"]</option> }</select></div>
-                <div class="field" data-schedule-field="month"><label for="dayOfMonth">@T["Schedule.DayOfMonth"]</label><input id="dayOfMonth" name="dayOfMonth" type="number" min="1" max="31" value="@(policy.DayOfMonth ?? 1)" /><small>@T["Schedule.MissingDate"]</small></div>
-                <div class="field"><label for="timeZone">@T["Schedule.TimeZone"]</label><input id="timeZone" name="timeZone" value="@policy.TimeZone" maxlength="100" required autocomplete="off" /></div>
-                <div class="field"><label for="retryCount">@T["Schedule.Retries"]</label><input id="retryCount" name="retryCount" type="number" min="0" max="20" value="@policy.RetryCount" required /></div>
-            </div>
-
-            <details class="backup-advanced">
-                <summary>@T["Policy.RetentionEncryption"]</summary>
-                <div class="backup-form-grid">
-                    <div class="field"><label for="retentionDays">@T["Policy.MaximumAge"]</label><input id="retentionDays" name="retentionDays" type="number" min="1" max="36500" value="@policy.RetentionDays" required /></div>
-                    <div class="field"><label for="retentionMinimum">@T["Policy.MinimumValid"]</label><input id="retentionMinimum" name="retentionMinimum" type="number" min="1" max="1000" value="@policy.RetentionMinimum" required /></div>
-                    <div class="field"><label for="retentionMaximum">@T["Policy.MaximumValid"]</label><input id="retentionMaximum" name="retentionMaximum" type="number" min="1" max="1000" value="@policy.RetentionMaximum" required /></div>
-                    <label class="check-field"><input name="encryptionEnabled" type="checkbox" checked="@policy.EncryptionEnabled" /><span><strong>@T["Policy.Encryption"]</strong><small>@T["Policy.EncryptionWarning"]</small></span></label>
-                </div>
-            </details>
-
-            <div class="backup-profile-grid">
-                <fieldset class="backup-profile-list"><legend>@T["Profiles.StorageDestinations"]</legend><p>@T["Profiles.StorageHelp"]</p>
-                    @if (backupPage.StorageProfiles.Count == 0) { <div class="backup-empty">@T["Profiles.NoStorage"]</div> }
-                    @foreach (var profile in backupPage.StorageProfiles)
-                    {
-                        <label class="profile-option"><input type="checkbox" name="storageProfileIds" value="@profile.Id" checked="@policy.StorageProfileIds.Contains(profile.Id)" /><span><strong>@profile.Name <span class="status-pill @(profile.IsHealthy ? "success" : "danger")">@T[$"StorageType.{profile.Type}"] · @(profile.IsHealthy ? T["Common.Ready"] : T["Common.Unhealthy"])</span></strong><small>@T[$"ProfileSummary.{profile.Type}"]</small></span></label>
-                    }
-                </fieldset>
-                <fieldset class="backup-profile-list"><legend>@T["Profiles.Notifications"]</legend><p>@T["Profiles.NotificationsHelp"]</p>
-                    @if (backupPage.NotificationProfiles.Count == 0) { <div class="backup-empty">@T["Profiles.NoNotifications"]</div> }
-                    @foreach (var profile in backupPage.NotificationProfiles)
-                    {
-                        <label class="profile-option"><input type="checkbox" name="notificationProfileIds" value="@profile.Id" checked="@policy.NotificationProfileIds.Contains(profile.Id)" /><span><strong>@profile.Name <span class="status-pill @(profile.IsHealthy ? "success" : "danger")">@T[$"NotificationType.{profile.Type}"] · @(profile.IsHealthy ? T["Common.Ready"] : T["Common.Unhealthy"])</span></strong><small>@T[$"ProfileSummary.{profile.Type}"]</small></span></label>
-                    }
-                </fieldset>
-            </div>
-        </fieldset>
-        @if (canOperate) { <div class="form-actions"><button class="btn btn-primary" type="submit"><i class="fa fa-save" aria-hidden="true"></i><span>@T["Action.SavePolicy"]</span></button></div> }
-    </form>
-</section>
-
-@if (canOperate)
-{
-<section class="section-block">
-    <div class="section-title"><div><h2>@T["Profiles.Title"]</h2><p>@T["Profiles.Help"]</p></div></div>
-    <div class="backup-profile-editor">
-        <details class="panel"><summary>@T["Profiles.AddStorage"]</summary>
-            <form data-profile-form data-url="/api/backup-storage-profiles" data-kind="storage" class="backup-editor-form">
-                <div class="backup-form-grid">
-                    <div class="field"><label>@T["Profiles.Name"]</label><input name="name" maxlength="120" required /></div>
-                    <div class="field"><label>@T["Profiles.Type"]</label><select name="type"><option value="Local">@T["StorageType.Local"]</option><option value="S3Compatible">@T["StorageType.S3Compatible"]</option><option value="GoogleDrive">@T["StorageType.GoogleDrive"]</option></select></div>
-                    <div class="field"><label>@T["Profiles.LocalSubdirectory"]</label><input name="localSubdirectory" maxlength="500" /></div>
-                    <div class="field"><label>@T["Profiles.Endpoint"]</label><input name="endpoint" maxlength="1000" /></div>
-                    <div class="field"><label>@T["Profiles.Bucket"]</label><input name="bucket" maxlength="255" /></div>
-                    <div class="field"><label>@T["Profiles.Region"]</label><input name="region" maxlength="100" /></div>
-                    <div class="field"><label>@T["Profiles.ObjectPrefix"]</label><input name="objectPrefix" maxlength="500" /></div>
-                    <div class="field"><label>@T["Profiles.AccessKey"]</label><input name="accessKey" autocomplete="off" /></div>
-                    <div class="field"><label>@T["Profiles.SecretKey"]</label><input name="secretKey" type="password" autocomplete="new-password" /></div>
-                    <div class="field"><label>@T["Profiles.DriveFolderId"]</label><input name="googleDriveFolderId" /></div>
-                    <div class="field"><label>@T["Profiles.GoogleClientId"]</label><input name="googleClientId" autocomplete="off" /></div>
-                    <div class="field"><label>@T["Profiles.GoogleClientSecret"]</label><input name="googleClientSecret" type="password" autocomplete="new-password" /></div>
-                    <div class="field"><label>@T["Profiles.GoogleRefreshToken"]</label><input name="googleRefreshToken" type="password" autocomplete="new-password" /></div>
-                </div>
-                <div class="form-actions"><button class="btn btn-primary" type="submit"><span>@T["Action.CreateStorage"]</span></button></div>
-            </form>
-        </details>
-        <details class="panel"><summary>@T["Profiles.AddNotification"]</summary>
-            <form data-profile-form data-url="/api/backup-notification-profiles" data-kind="notification" class="backup-editor-form">
-                <div class="backup-form-grid">
-                    <div class="field"><label>@T["Profiles.Name"]</label><input name="name" maxlength="120" required /></div>
-                    <div class="field"><label>@T["Profiles.Type"]</label><select name="type"><option value="Email">@T["NotificationType.Email"]</option><option value="Telegram">@T["NotificationType.Telegram"]</option></select></div>
-                    <div class="field"><label>@T["Profiles.SmtpHost"]</label><input name="smtpHost" maxlength="255" /></div>
-                    <div class="field"><label>@T["Profiles.SmtpPort"]</label><input name="smtpPort" type="number" min="1" max="65535" value="587" /></div>
-                    <label class="check-field"><input name="smtpUseTls" type="checkbox" checked /><span>@T["Profiles.SmtpTls"]</span></label>
-                    <div class="field"><label>@T["Profiles.From"]</label><input name="smtpFrom" maxlength="320" /></div>
-                    <div class="field"><label>@T["Profiles.SmtpUsername"]</label><input name="smtpUsername" autocomplete="username" /></div>
-                    <div class="field"><label>@T["Profiles.SmtpPassword"]</label><input name="smtpPassword" type="password" autocomplete="new-password" /></div>
-                    <div class="field"><label>@T["Profiles.EmailRecipients"]</label><input name="emailRecipients" placeholder="a@example.com, b@example.com" /></div>
-                    <div class="field"><label>@T["Profiles.TelegramToken"]</label><input name="telegramBotToken" type="password" autocomplete="new-password" /></div>
-                    <div class="field"><label>@T["Profiles.TelegramTargets"]</label><input name="telegramTargets" placeholder="@T["Profiles.TelegramTargetsPlaceholder"]" /></div>
-                </div>
-                <div class="form-actions"><button class="btn btn-primary" type="submit"><span>@T["Action.CreateNotification"]</span></button></div>
-            </form>
-        </details>
-    </div>
-    <div class="backup-profile-tests">
-        @foreach (var profile in backupPage.StorageProfiles) { <button class="btn btn-secondary" type="button" data-profile-test="/api/backup-storage-profiles/@profile.Id/test"><span>@T["Action.TestProfile", profile.Name]</span></button> @if (profile.Type == "GoogleDrive") { <a class="btn btn-secondary" href="/api/backup-storage-profiles/@profile.Id/google/authorize?returnUrl=@Uri.EscapeDataString($"/Backups/Cluster/{backupPage.Cluster.Id}")">@T["Action.AuthorizeProfile", profile.Name]</a> } }
-        @foreach (var profile in backupPage.NotificationProfiles) { <button class="btn btn-secondary" type="button" data-profile-test="/api/backup-notification-profiles/@profile.Id/test"><span>@T["Action.TestProfile", profile.Name]</span></button> }
+        }
     </div>
 </section>
-}
 
 <section class="section-block">
     <div class="section-title"><div><h2>@T["Runs.Title"]</h2><p>@T["Runs.Help"]</p></div></div>
@@ -163,11 +100,11 @@
             <td><div class="destination-stack" data-field="destinations">@foreach (var destination in run.Destinations) { <span><i class="status-dot @DotClass(destination.Status)"></i>@destination.Name <small>@T[$"Status.{destination.Status}"] · @FormatBytes(destination.BytesUploaded)</small></span> }</div></td>
             <td><span data-field="duration">@Duration(run.StartedAt, run.CompletedAt, T["Common.NotStarted"])</span><small data-field="retry">@(run.RetryAt is null ? "" : T["Runs.Retry", run.RetryAt.Value.ToString("g")])</small></td>
             <td><div class="backup-actions">
-                @if (active && canOperate) { <button type="button" class="btn btn-secondary" data-backup-action="cancel" data-url="/api/backup-runs/@run.Id/cancel">@T["Action.Cancel"]</button> }
-                @if (restorable && canOperate) { <button type="button" class="btn btn-primary" data-backup-action="restore" data-backup-id="@run.Id">@T["Action.Apply"]</button> }
-                @if (isAdmin && restorable) { <button type="button" class="btn btn-ghost" data-backup-action="pin" data-url="/api/backup-runs/@run.Id/pin" data-pinned="@run.IsPinned.ToString().ToLowerInvariant()">@(run.IsPinned ? T["Action.Unpin"] : T["Action.Pin"])</button> }
-                @if (isAdmin && !active) { <button type="button" class="btn btn-danger" data-backup-action="delete" data-url="/api/backup-runs/@run.Id">@T["Action.Delete"]</button> }
-                <details class="backup-run-details"><summary>@T["Runs.Details"]</summary><ol>@foreach (var step in run.Steps.OrderBy(x => x.Sequence)) { <li><span>@T[$"Phase.{step.Phase}"]</span><small>@T[$"Status.{step.Status}"]@(string.IsNullOrWhiteSpace(step.Detail) ? "" : $" · {step.Detail}")</small></li> }</ol><p>@T["Runs.ApplicationConsistent"] <strong>@(run.ApplicationConsistent ? T["Common.Yes"] : T["Common.No"])</strong> · <a href="/api/backup-runs/@run.Id/manifest" target="_blank" rel="noopener">@T["Runs.Manifest"]</a></p></details>
+                @if (active && canOperate) { <button type="button" class="btn btn-secondary backup-icon-action" data-backup-action="cancel" data-url="/api/backup-runs/@run.Id/cancel" title="@T["Action.Cancel"]" aria-label="@T["Action.Cancel"]"><i class="fa fa-stop" aria-hidden="true"></i><span class="sr-only">@T["Action.Cancel"]</span></button> }
+                @if (restorable && canOperate) { <button type="button" class="btn btn-primary backup-icon-action" data-backup-action="restore" data-backup-id="@run.Id" title="@T["Action.Apply"]" aria-label="@T["Action.Apply"]"><i class="fa fa-database" aria-hidden="true"></i><span class="sr-only">@T["Action.Apply"]</span></button> }
+                @if (isAdmin && restorable) { var pinLabel = run.IsPinned ? T["Action.Unpin"] : T["Action.Pin"]; <button type="button" class="btn btn-ghost backup-icon-action" data-backup-action="pin" data-url="/api/backup-runs/@run.Id/pin" data-pinned="@run.IsPinned.ToString().ToLowerInvariant()" title="@pinLabel" aria-label="@pinLabel"><i class="fa fa-thumb-tack" aria-hidden="true"></i><span class="sr-only">@pinLabel</span></button> }
+                @if (isAdmin && !active) { <button type="button" class="btn btn-danger backup-icon-action" data-backup-action="delete" data-url="/api/backup-runs/@run.Id" title="@T["Action.Delete"]" aria-label="@T["Action.Delete"]"><i class="fa fa-trash" aria-hidden="true"></i><span class="sr-only">@T["Action.Delete"]</span></button> }
+                <details class="backup-run-details"><summary class="backup-icon-action" title="@T["Runs.Details"]" aria-label="@T["Runs.Details"]"><i class="fa fa-ellipsis-h" aria-hidden="true"></i><span class="sr-only">@T["Runs.Details"]</span></summary><ol>@foreach (var step in run.Steps.OrderBy(x => x.Sequence)) { <li><span>@T[$"Phase.{step.Phase}"]</span><small>@T[$"Status.{step.Status}"]@(string.IsNullOrWhiteSpace(step.Detail) ? "" : $" · {step.Detail}")</small></li> }</ol><p>@T["Runs.ApplicationConsistent"] <strong>@(run.ApplicationConsistent ? T["Common.Yes"] : T["Common.No"])</strong> · <a href="/api/backup-runs/@run.Id/manifest" target="_blank" rel="noopener">@T["Runs.Manifest"]</a></p></details>
             </div></td>
         </tr>
     }
@@ -185,9 +122,14 @@
 
 @if (canOperate)
 {
+    <partial name="_BackupPolicyDialog" model="Model" />
+    <partial name="_TemplateDialog" model="Model" />
+    <partial name="_StorageDialog" model="Model" />
+    <partial name="_NotificationDialog" model="Model" />
     <dialog id="restore-dialog" class="backup-dialog" aria-labelledby="restore-title">
         <form id="restore-form" method="dialog" data-source-database="@backupPage.Cluster.Database">
             <div class="backup-dialog-head"><div><p class="eyebrow">@T["Restore.Destructive"]</p><h2 id="restore-title">@T["Restore.ApplyTitle"]</h2></div><button type="button" class="btn btn-ghost" data-dialog-close aria-label="@T["Restore.CloseDialog"]"><i class="fa fa-times" aria-hidden="true"></i></button></div>
+            <div class="hidden notice" role="alert" tabindex="-1" data-dialog-feedback></div>
             <p>@T["Restore.DefaultHelp"]</p>
             <input type="hidden" name="backupRunId" />
             <div class="field"><label for="targetKind">@T["Restore.Target"]</label><select id="targetKind" name="targetKind" required><option value="">@T["Restore.ChooseTarget"]</option>@foreach (var target in backupPage.RestoreTargets.Where(x => isAdmin || x.Id != backupPage.Cluster.Id)) { <option value="@target.Id" data-same-target="@(target.Id == backupPage.Cluster.Id ? "true" : "false")">@target.Name · @target.Host:@target.Port/@target.Database</option> }<option value="external">@T["Restore.OtherConnection"]</option></select></div>
@@ -211,7 +153,7 @@
         ["requestFailed"] = T["Js.RequestFailed"], ["destination"] = T["Js.Destination"], ["confirmUnencrypted"] = T["Js.ConfirmUnencrypted"],
         ["saving"] = T["Js.Saving"], ["policySaved"] = T["Js.PolicySaved"], ["queueing"] = T["Js.Queueing"], ["testing"] = T["Js.Testing"],
         ["profileTestSucceeded"] = T["Js.ProfileTestSucceeded"], ["confirmCancel"] = T["Js.ConfirmCancel"], ["cancelling"] = T["Js.Cancelling"],
-        ["confirmDelete"] = T["Js.ConfirmDelete"], ["deleting"] = T["Js.Deleting"],
+        ["confirmDelete"] = T["Js.ConfirmDelete"], ["deleting"] = T["Js.Deleting"], ["confirmDeleteTemplate"] = T["Js.ConfirmDeleteTemplate"],
         ["confirmMaintenance"] = T["Js.ConfirmMaintenance"], ["typeExactly"] = T["Js.TypeExactly"], ["validating"] = T["Js.Validating"],
         ["rawEstimateUnavailable"] = T["Runs.RawUnavailable"], ["rawEstimate"] = T["Js.RawEstimate"], ["archivePending"] = T["Runs.ArchivePending"],
         ["archive"] = T["Js.Archive"], ["waitingByteStream"] = T["Runs.WaitingStream"], ["objects"] = T["Js.Objects"], ["retry"] = T["Js.Retry"],
