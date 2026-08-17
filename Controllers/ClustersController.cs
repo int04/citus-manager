@@ -6,6 +6,7 @@ using CitusManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Localization;
+using Npgsql;
 
 namespace CitusManager.Controllers;
 
@@ -41,11 +42,9 @@ public sealed class ClustersController(
         {
             logger.LogWarning(exception, "Coordinator registration preflight failed.");
             if (IsAjaxRequest())
-                return Problem(
-                    statusCode: StatusCodes.Status422UnprocessableEntity,
-                    title: text["Controller.RegisterTitle"],
-                    detail: text["Controller.RegisterDetail"]);
-            ModelState.AddModelError(string.Empty, text["Controller.RegisterDetail"]);
+                return DatabaseProblem(text["Controller.RegisterTitle"], text["Controller.RegisterDetail"], exception);
+            ModelState.AddModelError(string.Empty,
+                $"{text["Controller.RegisterDetail"]}\n\n{DatabaseDiagnostic(exception)}");
             return View(request);
         }
     }
@@ -66,10 +65,7 @@ public sealed class ClustersController(
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Read-only coordinator connection test failed.");
-            return Problem(
-                statusCode: StatusCodes.Status422UnprocessableEntity,
-                title: text["Controller.ConnectTitle"],
-                detail: text["Controller.ConnectDetail"]);
+            return DatabaseProblem(text["Controller.ConnectTitle"], text["Controller.ConnectDetail"], exception);
         }
     }
 
@@ -106,4 +102,34 @@ public sealed class ClustersController(
     private Guid ActorId() => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private bool IsAjaxRequest() =>
         string.Equals(Request.Headers["X-Requested-With"], "XMLHttpRequest", StringComparison.OrdinalIgnoreCase);
+
+    private ObjectResult DatabaseProblem(string title, string fallback, Exception exception) =>
+        Problem(
+            statusCode: StatusCodes.Status422UnprocessableEntity,
+            title: title,
+            detail: $"{fallback}\n\n{DatabaseDiagnostic(exception)}");
+
+    private static string DatabaseDiagnostic(Exception exception)
+    {
+        var postgres = FindException<PostgresException>(exception);
+        if (postgres is not null)
+        {
+            var diagnostics = new List<string> { $"PostgreSQL [{postgres.SqlState}]: {postgres.MessageText}" };
+            if (!string.IsNullOrWhiteSpace(postgres.Detail)) diagnostics.Add($"Detail: {postgres.Detail}");
+            if (!string.IsNullOrWhiteSpace(postgres.Hint)) diagnostics.Add($"Hint: {postgres.Hint}");
+            return string.Join(Environment.NewLine, diagnostics);
+        }
+
+        var npgsql = FindException<NpgsqlException>(exception);
+        return npgsql is null
+            ? "Connection preflight failed before PostgreSQL returned a diagnostic."
+            : $"Npgsql: {npgsql.Message}";
+    }
+
+    private static TException? FindException<TException>(Exception exception) where TException : Exception
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            if (current is TException match) return match;
+        return null;
+    }
 }
