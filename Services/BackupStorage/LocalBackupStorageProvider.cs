@@ -95,10 +95,12 @@ public sealed class LocalBackupStorageProvider : IBackupStorageProvider
         var key = $".health/{Guid.NewGuid():N}";
         await using var payload = new MemoryStream([0x43, 0x4d]);
         await WriteAsync(key, payload, payload.Length, "application/octet-stream", cancellationToken);
-        await using var read = await OpenReadAsync(key, cancellationToken);
-        if (read.ReadByte() != 0x43)
         {
-            throw new IOException("Local backup storage read verification failed.");
+            await using var read = await OpenReadAsync(key, cancellationToken);
+            if (read.ReadByte() != 0x43)
+            {
+                throw new IOException("Local backup storage read verification failed.");
+            }
         }
 
         await DeleteAsync(key, cancellationToken);
