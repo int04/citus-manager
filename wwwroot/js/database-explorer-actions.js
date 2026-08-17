@@ -1034,6 +1034,9 @@
     refreshDesignerToolbar();
   }
   function closeDesignerContextMenu() { document.getElementById("database-designer-context-menu")?.remove(); }
+  function revealDesignerObject(row) {
+    requestAnimationFrame(() => row.scrollIntoView({ block: "nearest", inline: "nearest" }));
+  }
   function showDesignerContextMenu(event, section, row = null) {
     event.preventDefault(); event.stopPropagation(); closeDesignerContextMenu();
     const returnFocus = row || event.currentTarget;
@@ -1237,6 +1240,7 @@
       refreshColumnControls();
     }
     refreshColumnCount(); syncDistributionColumns(); updateAutoObjectNames(); updateTableSqlPreview();
+    revealDesignerObject(row);
   }
   function syncDistributionColumns() {
     const select = document.querySelector("[name=DistributionColumn]");
@@ -1468,7 +1472,7 @@
     wireDesignerObjectRow(row, "keys", selectKeyRow);
     document.getElementById("database-key-list").appendChild(row);
     selectKeyRow(row); refreshKeyCount(); updateTableSqlPreview();
-    requestAnimationFrame(() => row.scrollIntoView({ block: "nearest", inline: "nearest" }));
+    revealDesignerObject(row);
     document.getElementById("database-key-column-name").focus();
   }
   function removeActiveKey() {
@@ -1560,7 +1564,7 @@
     row.dataset.foreignKeyMappings = JSON.stringify(initial.mappings || tableColumnNames().slice(0, 1).map(local => ({ local, referenced: firstTarget?.columns?.[0] || "" })));
     if (row.dataset.foreignKeyAutoName !== "false") row.dataset.foreignKeyName = uniqueAutoObjectName(`${autoObjectBase(foreignKeyRowData(row).mappings.map(mapping => mapping.local))}_fk`, row);
     renderForeignKeySummary(row); wireDesignerObjectRow(row, "foreign-keys", selectForeignKeyRow); document.getElementById("database-foreign-key-list").appendChild(row);
-    selectForeignKeyRow(row); refreshForeignKeyCount(); updateTableSqlPreview(); document.getElementById("database-foreign-key-name").focus();
+    selectForeignKeyRow(row); refreshForeignKeyCount(); updateTableSqlPreview(); revealDesignerObject(row); document.getElementById("database-foreign-key-name").focus();
   }
   function removeActiveForeignKey() {
     const row = activeForeignKeyRow(); if (!row) return; const next = row.nextElementSibling || row.previousElementSibling; row.remove();
@@ -1677,7 +1681,7 @@
     if (row.dataset.indexAutoName !== "false") row.dataset.indexName = uniqueAutoObjectName(autoObjectBase(indexRowData(row).columns.map(column => column.name)), row);
     renderIndexSummary(row); wireDesignerObjectRow(row, "indexes", selectIndexRow); document.getElementById("database-index-list").appendChild(row);
     selectIndexRow(row); refreshIndexCount(); updateAutoObjectNames(); updateTableSqlPreview();
-    requestAnimationFrame(() => row.scrollIntoView({ block: "nearest", inline: "nearest" }));
+    revealDesignerObject(row);
     document.getElementById("database-index-column-name").focus();
   }
   function removeActiveIndex() {
@@ -1709,7 +1713,7 @@
     const row = document.createElement("button"); row.type = "button"; row.className = "dg-check-row dg-tree-object-row"; row.setAttribute("role", "option");
     const ordinal = document.querySelectorAll(".dg-check-row").length + 1; row.dataset.checkName = initial.name || `${form.elements.Name?.value.trim() || "table"}_check_${ordinal}`; row.dataset.checkExpression = initial.expression || "";
     renderCheckSummary(row); wireDesignerObjectRow(row, "checks", selectCheckRow); document.getElementById("database-check-list").appendChild(row);
-    selectCheckRow(row); refreshCheckCount(); updateTableSqlPreview(); document.getElementById("database-check-expression").focus();
+    selectCheckRow(row); refreshCheckCount(); updateTableSqlPreview(); revealDesignerObject(row); document.getElementById("database-check-expression").focus();
   }
   function removeActiveCheck() {
     const row = activeCheckRow(); if (!row) return; const next = row.nextElementSibling || row.previousElementSibling; row.remove();
