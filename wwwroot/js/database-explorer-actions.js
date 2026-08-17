@@ -1117,7 +1117,7 @@
   }
   function renderColumnSummary(row) {
     const column = columnRowData(row);
-    row.innerHTML = `<span class="dg-column-icon ${column.primaryKey ? "is-primary" : ""}" aria-hidden="true"></span><span><strong>${html(column.name || "column_name")}</strong><small>${html(column.dataType)}${column.nullable ? "" : " · not null"}${column.identity ? " · identity" : ""}</small></span>${column.primaryKey ? '<span class="dg-key-kind-badge">PK</span>' : ""}`;
+    row.innerHTML = `<i class="fa ${column.primaryKey ? "fa-key" : "fa-columns"} dg-column-icon ${column.primaryKey ? "is-primary" : ""}" aria-hidden="true"></i><span><strong>${html(column.name || "column_name")}</strong><small>${html(column.dataType)}${column.nullable ? "" : " · not null"}${column.identity ? " · identity" : ""}</small></span>${column.primaryKey ? '<span class="dg-key-kind-badge">PK</span>' : ""}`;
   }
   function refreshColumnCount() {
     document.getElementById("database-column-count")?.replaceChildren(document.createTextNode(String(tableColumnRows().length)));
@@ -1325,7 +1325,7 @@
   function renderKeySummary(row) {
     const key = keyRowData(row);
     const fallback = key.kind === "Primary" ? "primary_key" : "unique_key";
-    row.innerHTML = `<span class="dg-key-icon" aria-hidden="true"></span><span><strong>${html(key.name || fallback)}</strong><small>${html(key.columns.join(", ") || "No columns")}</small></span><span class="dg-key-kind-badge">${key.kind === "Primary" ? "PK" : "UQ"}</span>`;
+    row.innerHTML = `<i class="fa fa-key dg-key-icon" aria-hidden="true"></i><span><strong>${html(key.name || fallback)}</strong><small>${html(key.columns.join(", ") || "No columns")}</small></span><span class="dg-key-kind-badge">${key.kind === "Primary" ? "PK" : "UQ"}</span>`;
   }
   function refreshKeyCount() {
     const rows = [...document.querySelectorAll(".dg-key-row")];
@@ -1499,7 +1499,7 @@
   }
   function renderForeignKeySummary(row) {
     const fk = foreignKeyRowData(row), locals = fk.mappings.map(mapping => mapping.local).filter(Boolean);
-    row.innerHTML = `<span class="dg-foreign-key-icon" aria-hidden="true"></span><span><strong>${html(fk.name || "foreign_key")}</strong><small>${html(locals.join(", ") || "No columns")} → ${html(fk.referencedSchema)}.${html(fk.referencedTable || "table")}</small></span>`;
+    row.innerHTML = `<i class="fa fa-link dg-foreign-key-icon" aria-hidden="true"></i><span><strong>${html(fk.name || "foreign_key")}</strong><small>${html(locals.join(", ") || "No columns")} → ${html(fk.referencedSchema)}.${html(fk.referencedTable || "table")}</small></span>`;
   }
   function activeForeignKeyRow() { return document.querySelector(".dg-foreign-key-row.is-active"); }
   function refreshForeignKeyCount() { document.getElementById("database-foreign-key-count")?.replaceChildren(document.createTextNode(String(document.querySelectorAll(".dg-foreign-key-row").length))); }
@@ -1585,7 +1585,7 @@
   }
   function renderIndexSummary(row) {
     const index = indexRowData(row);
-    row.innerHTML = `<span class="dg-index-icon" aria-hidden="true"></span><span><strong>${html(index.name || "index")}</strong><small>${html(index.columns.map(column => column.name).join(", ") || "No columns")} · ${html(index.method.toLowerCase())}${index.condition ? " · partial" : ""}</small></span>${index.unique ? '<span class="dg-key-kind-badge">UQ</span>' : ""}`;
+    row.innerHTML = `<i class="fa fa-bolt dg-index-icon" aria-hidden="true"></i><span><strong>${html(index.name || "index")}</strong><small>${html(index.columns.map(column => column.name).join(", ") || "No columns")} · ${html(index.method.toLowerCase())}${index.condition ? " · partial" : ""}</small></span>${index.unique ? '<span class="dg-key-kind-badge">UQ</span>' : ""}`;
   }
   function activeIndexRow() { return document.querySelector(".dg-index-row.is-active"); }
   function refreshIndexCount() { document.getElementById("database-index-count")?.replaceChildren(document.createTextNode(String(document.querySelectorAll(".dg-index-row").length))); }
@@ -1693,7 +1693,7 @@
   function checkRowData(row) { return { name: row.dataset.checkName || "", expression: row.dataset.checkExpression || "" }; }
   function renderCheckSummary(row) {
     const check = checkRowData(row);
-    row.innerHTML = `<span class="dg-check-icon" aria-hidden="true"></span><span><strong>${html(check.name || "check")}</strong><small>${html(check.expression || "No expression")}</small></span>`;
+    row.innerHTML = `<i class="fa fa-check-square-o dg-check-icon" aria-hidden="true"></i><span><strong>${html(check.name || "check")}</strong><small>${html(check.expression || "No expression")}</small></span>`;
   }
   function activeCheckRow() { return document.querySelector(".dg-check-row.is-active"); }
   function refreshCheckCount() { document.getElementById("database-check-count")?.replaceChildren(document.createTextNode(String(document.querySelectorAll(".dg-check-row").length))); }
@@ -2024,27 +2024,27 @@
       description: t("designer.tableHelp"), variant: "table",
       body: `<div class="dg-table-designer">
         <aside class="dg-designer-sidebar" aria-label="Table object sections">
-          <div class="dg-designer-toolbar" role="toolbar" aria-label="${t("designer.objectActions")}"><button type="button" id="database-designer-add" aria-label="${t("designer.addObject")}" title="${t("common.add")}">+</button><button type="button" id="database-designer-remove" disabled aria-label="${t("designer.removeObject")}" title="${t("common.delete")}">−</button><span></span><button type="button" id="database-designer-move-up" disabled aria-label="${t("designer.moveUp")}" title="${t("designer.moveUp")}">↑</button><button type="button" id="database-designer-move-down" disabled aria-label="${t("designer.moveDown")}" title="${t("designer.moveDown")}">↓</button></div>
-          <button type="button" class="dg-designer-object is-active" role="tab" aria-selected="true" data-designer-section="table"><span class="dg-table-glyph" aria-hidden="true"></span><span><strong data-designer-table-name>table_name</strong><small><span data-designer-table-context>${html(schema)} · Local</span> · coordinator</small></span></button>
+          <div class="dg-designer-toolbar" role="toolbar" aria-label="${t("designer.objectActions")}"><button type="button" id="database-designer-add" aria-label="${t("designer.addObject")}" title="${t("common.add")}"><i class="fa fa-plus" aria-hidden="true"></i></button><button type="button" id="database-designer-remove" disabled aria-label="${t("designer.removeObject")}" title="${t("common.delete")}"><i class="fa fa-trash-o" aria-hidden="true"></i></button><span></span><button type="button" id="database-designer-move-up" disabled aria-label="${t("designer.moveUp")}" title="${t("designer.moveUp")}"><i class="fa fa-arrow-up" aria-hidden="true"></i></button><button type="button" id="database-designer-move-down" disabled aria-label="${t("designer.moveDown")}" title="${t("designer.moveDown")}"><i class="fa fa-arrow-down" aria-hidden="true"></i></button></div>
+          <button type="button" class="dg-designer-object is-active" role="tab" aria-selected="true" data-designer-section="table"><i class="fa fa-table dg-table-glyph" aria-hidden="true"></i><span><strong data-designer-table-name>table_name</strong><small><span data-designer-table-context>${html(schema)} · Local</span> · coordinator</small></span></button>
           <nav class="dg-designer-tree" role="tablist" aria-label="Table definition">
             <div class="dg-designer-tree-group">
-              <button type="button" role="tab" aria-selected="false" data-designer-section="columns"><span class="dg-folder-glyph"></span>Columns <span id="database-column-count" class="dg-tree-count">0</span></button>
+              <button type="button" role="tab" aria-selected="false" data-designer-section="columns"><i class="fa fa-columns dg-folder-glyph" aria-hidden="true"></i>Columns <span id="database-column-count" class="dg-tree-count">0</span></button>
               <div id="database-column-list" class="dg-object-tree-list dg-designer-tree-children" role="listbox" aria-label="Table columns"></div>
             </div>
             <div class="dg-designer-tree-group">
-              <button type="button" role="tab" aria-selected="false" data-designer-section="keys"><span class="dg-folder-glyph"></span>Keys <span id="database-key-count" class="dg-tree-count">0</span></button>
+              <button type="button" role="tab" aria-selected="false" data-designer-section="keys"><i class="fa fa-key dg-folder-glyph" aria-hidden="true"></i>Keys <span id="database-key-count" class="dg-tree-count">0</span></button>
               <div id="database-key-list" class="dg-key-list dg-designer-tree-children" role="listbox" aria-label="Table keys"></div>
             </div>
-            <div class="dg-designer-tree-group"><button type="button" role="tab" aria-selected="false" data-designer-section="foreign-keys"><span class="dg-folder-glyph"></span>Foreign keys <span id="database-foreign-key-count" class="dg-tree-count">0</span></button><div id="database-foreign-key-list" class="dg-object-tree-list dg-designer-tree-children" role="listbox" aria-label="Foreign keys"></div></div>
-            <div class="dg-designer-tree-group"><button type="button" role="tab" aria-selected="false" data-designer-section="indexes"><span class="dg-folder-glyph"></span>Indexes <span id="database-index-count" class="dg-tree-count">0</span></button><div id="database-index-list" class="dg-object-tree-list dg-designer-tree-children" role="listbox" aria-label="Indexes"></div></div>
-            <div class="dg-designer-tree-group"><button type="button" role="tab" aria-selected="false" data-designer-section="checks"><span class="dg-folder-glyph"></span>Checks <span id="database-check-count" class="dg-tree-count">0</span></button><div id="database-check-list" class="dg-object-tree-list dg-designer-tree-children" role="listbox" aria-label="Check constraints"></div></div>
+            <div class="dg-designer-tree-group"><button type="button" role="tab" aria-selected="false" data-designer-section="foreign-keys"><i class="fa fa-link dg-folder-glyph" aria-hidden="true"></i>Foreign keys <span id="database-foreign-key-count" class="dg-tree-count">0</span></button><div id="database-foreign-key-list" class="dg-object-tree-list dg-designer-tree-children" role="listbox" aria-label="Foreign keys"></div></div>
+            <div class="dg-designer-tree-group"><button type="button" role="tab" aria-selected="false" data-designer-section="indexes"><i class="fa fa-bolt dg-folder-glyph" aria-hidden="true"></i>Indexes <span id="database-index-count" class="dg-tree-count">0</span></button><div id="database-index-list" class="dg-object-tree-list dg-designer-tree-children" role="listbox" aria-label="Indexes"></div></div>
+            <div class="dg-designer-tree-group"><button type="button" role="tab" aria-selected="false" data-designer-section="checks"><i class="fa fa-check-square-o dg-folder-glyph" aria-hidden="true"></i>Checks <span id="database-check-count" class="dg-tree-count">0</span></button><div id="database-check-list" class="dg-object-tree-list dg-designer-tree-children" role="listbox" aria-label="Check constraints"></div></div>
           </nav>
         </aside>
         <section class="dg-designer-main">
           <div class="dg-designer-panels">
             <section data-designer-panel="table" class="dg-designer-panel">
               <div class="dg-table-root-editor">
-                <header class="dg-table-root-heading"><span class="dg-table-glyph" aria-hidden="true"></span><strong data-table-root-title>table_name</strong><span>table</span></header>
+                <header class="dg-table-root-heading"><i class="fa fa-table dg-table-glyph" aria-hidden="true"></i><strong data-table-root-title>table_name</strong><span>table</span></header>
                 <div class="dg-table-root-properties">
                   <label><span>Name</span>${input("Name", definition?.name || "table_name", "text", `required maxlength=63 autocomplete=off ${definition ? "readonly" : ""}`)}</label>
                   <label><span>Schema</span>${schemaSelect(metadata.schemas, schema)}</label>
@@ -2065,14 +2065,14 @@
                   <label><span>Tablespace</span><select name="Tablespace"><option value="">server default</option>${(metadata.tablespaces || []).map(item => `<option value="${html(item)}">${html(item)}</option>`).join("")}</select></label>
                   <label><span>Owner</span><select name="Owner"><option value="">current user</option>${(metadata.roles || []).map(role => `<option value="${html(role)}">${html(role)}</option>`).join("")}</select></label>
                 </div>
-                <section class="dg-table-grants"><header><div><strong>Grants</strong><small>Applied before optional owner transfer</small></div><button type="button" id="database-add-table-grant" aria-label="Add table grant">+ Add grant</button></header><div id="database-table-grants"><div class="dg-grants-empty">Nothing to show</div></div></section>
+                <section class="dg-table-grants"><header><div><strong>Grants</strong><small>Applied before optional owner transfer</small></div><button type="button" id="database-add-table-grant" aria-label="Add table grant"><i class="fa fa-plus" aria-hidden="true"></i> Add grant</button></header><div id="database-table-grants"><div class="dg-grants-empty">Nothing to show</div></div></section>
               </div>
             </section>
             <section data-designer-panel="columns" class="dg-designer-panel hidden">
               <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Column Designer</strong><small>PostgreSQL column properties</small></div></div>
-              <div id="database-column-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No column selected</strong><p>Add a column, then configure its name, catalog type, nullability and default.</p><button type="button" id="database-empty-add-column" class="dg-toolbar-button">+ Add column</button></div>
+              <div id="database-column-empty" class="dg-key-empty-state"><i class="fa fa-plus dg-key-empty-icon" aria-hidden="true"></i><strong>No column selected</strong><p>Add a column, then configure its name, catalog type, nullability and default.</p><button type="button" id="database-empty-add-column" class="dg-toolbar-button"><i class="fa fa-plus" aria-hidden="true"></i> Add column</button></div>
               <div id="database-column-editor" class="dg-object-editor hidden">
-                <header class="dg-key-editor-heading"><span class="dg-column-icon" aria-hidden="true"></span><strong data-column-editor-title>column_name</strong><span>column</span></header>
+                <header class="dg-key-editor-heading"><i class="fa fa-columns dg-column-icon" aria-hidden="true"></i><strong data-column-editor-title>column_name</strong><span>column</span></header>
                 <div class="dg-column-property-form">
                   <label class="dg-column-property-row"><span>Name</span><input id="database-column-name" required maxlength="63" autocomplete="off" placeholder="column_name"></label>
                   <label class="dg-column-property-row"><span>Comment</span><textarea id="database-column-comment" maxlength="4000" rows="2" placeholder="Optional column description"></textarea></label>
@@ -2096,13 +2096,13 @@
               <div class="database-column-toolbar dg-key-panel-toolbar"><div><strong>Key Designer</strong><small>${t("designer.keyHelp")}</small></div><select id="database-key-mobile-select" class="dg-key-mobile-select" aria-label="Selected key" disabled><option>No keys</option></select></div>
                 <section class="dg-key-detail dg-key-detail-standalone">
                   <div id="database-key-empty" class="dg-key-empty-state">
-                    <span class="dg-key-empty-icon" aria-hidden="true"></span>
+                    <i class="fa fa-plus dg-key-empty-icon" aria-hidden="true"></i>
                     <strong>No key selected</strong>
                     <p>Add a primary or unique key to configure its ordered columns.</p>
-                    <button type="button" id="database-empty-add-key" class="dg-toolbar-button">+ Add key</button>
+                    <button type="button" id="database-empty-add-key" class="dg-toolbar-button"><i class="fa fa-plus" aria-hidden="true"></i> Add key</button>
                   </div>
                   <div id="database-key-editor" class="dg-key-editor hidden">
-                    <header class="dg-key-editor-heading"><span class="dg-key-icon" aria-hidden="true"></span><strong data-key-editor-title>primary_key</strong><span>constraint</span></header>
+                    <header class="dg-key-editor-heading"><i class="fa fa-key dg-key-icon" aria-hidden="true"></i><strong data-key-editor-title>primary_key</strong><span>constraint</span></header>
                     <div class="dg-key-properties">
                       <label class="dg-key-name-field"><span>Name <span class="dg-auto-name-toggle"><input id="database-key-auto-name" type="checkbox" checked> Auto</span></span><input id="database-key-name" maxlength="63" autocomplete="off" placeholder="users_id_createdAt" readonly></label>
                       <fieldset class="dg-key-kind-control"><legend>Constraint type</legend>
@@ -2113,11 +2113,11 @@
                     <section class="dg-key-columns-section">
                       <div class="dg-key-columns-heading"><div><strong>Columns</strong><small>Order affects the generated constraint</small></div>
                         <div class="dg-key-column-toolbar" role="toolbar" aria-label="Key column actions">
-                          <button type="button" id="database-add-key-column" aria-label="Add column" title="Add column">+</button>
-                          <button type="button" id="database-remove-key-column" aria-label="Remove selected column" title="Remove column">−</button>
+                          <button type="button" id="database-add-key-column" aria-label="Add column" title="Add column"><i class="fa fa-plus" aria-hidden="true"></i></button>
+                          <button type="button" id="database-remove-key-column" aria-label="Remove selected column" title="Remove column"><i class="fa fa-trash-o" aria-hidden="true"></i></button>
                           <span></span>
-                          <button type="button" id="database-move-key-column-up" aria-label="Move column up" title="Move up">↑</button>
-                          <button type="button" id="database-move-key-column-down" aria-label="Move column down" title="Move down">↓</button>
+                          <button type="button" id="database-move-key-column-up" aria-label="Move column up" title="Move up"><i class="fa fa-arrow-up" aria-hidden="true"></i></button>
+                          <button type="button" id="database-move-key-column-down" aria-label="Move column down" title="Move down"><i class="fa fa-arrow-down" aria-hidden="true"></i></button>
                         </div>
                       </div>
                       <div class="dg-key-columns-workspace">
@@ -2130,29 +2130,29 @@
             </section>
             <section data-designer-panel="foreign-keys" class="dg-designer-panel hidden">
               <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Foreign Key Designer</strong><small>Map local columns to a referenced table</small></div></div>
-              <div id="database-foreign-key-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No foreign key selected</strong><p>Add a foreign key to configure its target and column mappings.</p><button type="button" id="database-empty-add-foreign-key" class="dg-toolbar-button">+ Add foreign key</button></div>
+              <div id="database-foreign-key-empty" class="dg-key-empty-state"><i class="fa fa-plus dg-key-empty-icon" aria-hidden="true"></i><strong>No foreign key selected</strong><p>Add a foreign key to configure its target and column mappings.</p><button type="button" id="database-empty-add-foreign-key" class="dg-toolbar-button"><i class="fa fa-plus" aria-hidden="true"></i> Add foreign key</button></div>
               <div id="database-foreign-key-editor" class="dg-object-editor hidden">
-                <header class="dg-key-editor-heading"><span class="dg-foreign-key-icon" aria-hidden="true"></span><strong data-foreign-key-editor-title>foreign_key</strong><span>constraint</span></header>
+                <header class="dg-key-editor-heading"><i class="fa fa-link dg-foreign-key-icon" aria-hidden="true"></i><strong data-foreign-key-editor-title>foreign_key</strong><span>constraint</span></header>
                 <div class="dg-fk-property-form">
                   <label class="dg-fk-property-row"><span>Name <span class="dg-auto-name-toggle"><input id="database-foreign-key-auto-name" type="checkbox" checked> Auto</span></span><input id="database-foreign-key-name" maxlength="63" placeholder="users_id_fk" readonly></label>
                   <label class="dg-fk-property-row"><span>Comment</span><textarea id="database-foreign-key-comment" maxlength="4000" rows="2" placeholder="Optional constraint description"></textarea></label>
                   <label class="dg-fk-property-row"><span>Target Table</span><select id="database-fk-target"><option value="">Select target table…</option>${(metadata.foreignKeyTargets || []).map((target, index) => `<option value="${index}">${html(target.schema)}.${html(target.name)}</option>`).join("")}</select></label>
                 </div>
-                <section class="dg-key-columns-section dg-fk-columns-section"><div class="dg-key-columns-heading"><div><strong>Columns</strong><small>Local column → target column</small></div><div class="dg-key-column-toolbar" role="toolbar" aria-label="Foreign key column actions"><button type="button" id="database-add-fk-mapping" aria-label="Add mapping">+</button><button type="button" id="database-remove-fk-mapping" aria-label="Remove mapping">−</button><span></span><button type="button" id="database-move-fk-mapping-up" aria-label="Move mapping up">↑</button><button type="button" id="database-move-fk-mapping-down" aria-label="Move mapping down">↓</button></div></div><div class="dg-fk-columns-workspace"><div id="database-fk-mapping-list" class="dg-fk-mapping-list" role="listbox"></div><div class="dg-fk-column-properties"><label><span>Column Name</span><select id="database-fk-local-column" disabled></select></label><label><span>Target Name</span><select id="database-fk-target-column" disabled></select></label></div></div></section>
+                <section class="dg-key-columns-section dg-fk-columns-section"><div class="dg-key-columns-heading"><div><strong>Columns</strong><small>Local column → target column</small></div><div class="dg-key-column-toolbar" role="toolbar" aria-label="Foreign key column actions"><button type="button" id="database-add-fk-mapping" aria-label="Add mapping"><i class="fa fa-plus" aria-hidden="true"></i></button><button type="button" id="database-remove-fk-mapping" aria-label="Remove mapping"><i class="fa fa-trash-o" aria-hidden="true"></i></button><span></span><button type="button" id="database-move-fk-mapping-up" aria-label="Move mapping up"><i class="fa fa-arrow-up" aria-hidden="true"></i></button><button type="button" id="database-move-fk-mapping-down" aria-label="Move mapping down"><i class="fa fa-arrow-down" aria-hidden="true"></i></button></div></div><div class="dg-fk-columns-workspace"><div id="database-fk-mapping-list" class="dg-fk-mapping-list" role="listbox"></div><div class="dg-fk-column-properties"><label><span>Column Name</span><select id="database-fk-local-column" disabled></select></label><label><span>Target Name</span><select id="database-fk-target-column" disabled></select></label></div></div></section>
                 <div class="dg-fk-action-properties"><div class="dg-fk-toggle-row"><label><input id="database-fk-deferrable" type="checkbox"> Deferrable</label><label><input id="database-fk-initially-deferred" type="checkbox" disabled> Initially Deferred</label></div><label><span>On Delete</span><select id="database-fk-on-delete">${referentialOptions()}</select></label><label><span>On Update</span><select id="database-fk-on-update">${referentialOptions()}</select></label></div>
               </div>
             </section>
             <section data-designer-panel="indexes" class="dg-designer-panel hidden">
               <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Index Designer</strong><small>Ordered columns and PostgreSQL access method</small></div></div>
-              <div id="database-index-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No index selected</strong><p>Add an index to configure method, uniqueness and ordered columns.</p><button type="button" id="database-empty-add-index" class="dg-toolbar-button">+ Add index</button></div>
+              <div id="database-index-empty" class="dg-key-empty-state"><i class="fa fa-plus dg-key-empty-icon" aria-hidden="true"></i><strong>No index selected</strong><p>Add an index to configure method, uniqueness and ordered columns.</p><button type="button" id="database-empty-add-index" class="dg-toolbar-button"><i class="fa fa-plus" aria-hidden="true"></i> Add index</button></div>
               <div id="database-index-editor" class="dg-object-editor hidden">
-                <header class="dg-key-editor-heading"><span class="dg-index-icon" aria-hidden="true"></span><strong data-index-editor-title>index</strong><span>index</span></header>
+                <header class="dg-key-editor-heading"><i class="fa fa-bolt dg-index-icon" aria-hidden="true"></i><strong data-index-editor-title>index</strong><span>index</span></header>
                 <div class="dg-index-property-form">
                   <label class="dg-index-property-row"><span>Name <span class="dg-auto-name-toggle"><input id="database-index-auto-name" type="checkbox" checked> Auto</span></span><input id="database-index-name" maxlength="63" placeholder="users_id_createdAt" readonly></label>
                   <label class="dg-index-property-row"><span>Comment</span><textarea id="database-index-comment" maxlength="4000" rows="2" placeholder="Optional index description"></textarea></label>
                   <div class="dg-index-toggle-row"><label><input id="database-index-unique" type="checkbox"> Unique</label><label><input id="database-index-nulls-not-distinct" type="checkbox" ${metadata.supportsNullsNotDistinct ? "" : "disabled"}> Nulls Not Distinct</label></div>
                 </div>
-                <section class="dg-key-columns-section dg-index-columns-section"><div class="dg-key-columns-heading"><div><strong>Columns</strong><small>Ordered index keys and per-column options</small></div><div class="dg-key-column-toolbar" role="toolbar" aria-label="Index column actions"><button type="button" id="database-add-index-column" aria-label="Add index column" title="Add column">+</button><button type="button" id="database-remove-index-column" aria-label="Remove selected index column" title="Remove column">−</button><span></span><button type="button" id="database-move-index-column-up" aria-label="Move index column up" title="Move up">↑</button><button type="button" id="database-move-index-column-down" aria-label="Move index column down" title="Move down">↓</button></div></div><div class="dg-index-columns-workspace"><div id="database-index-column-list" class="dg-key-column-list"></div><div class="dg-index-column-properties"><label><span>Column Name</span><select id="database-index-column-name" disabled></select></label><label><span>Order</span><select id="database-index-column-order" disabled><option value="None">NONE</option><option value="Ascending">ASC</option><option value="Descending">DESC</option></select></label><label><span>Collation</span><select id="database-index-column-collation" disabled></select></label><label><span>Operator Class</span><select id="database-index-column-operator-class" disabled></select></label></div></div></section>
+                <section class="dg-key-columns-section dg-index-columns-section"><div class="dg-key-columns-heading"><div><strong>Columns</strong><small>Ordered index keys and per-column options</small></div><div class="dg-key-column-toolbar" role="toolbar" aria-label="Index column actions"><button type="button" id="database-add-index-column" aria-label="Add index column" title="Add column"><i class="fa fa-plus" aria-hidden="true"></i></button><button type="button" id="database-remove-index-column" aria-label="Remove selected index column" title="Remove column"><i class="fa fa-trash-o" aria-hidden="true"></i></button><span></span><button type="button" id="database-move-index-column-up" aria-label="Move index column up" title="Move up"><i class="fa fa-arrow-up" aria-hidden="true"></i></button><button type="button" id="database-move-index-column-down" aria-label="Move index column down" title="Move down"><i class="fa fa-arrow-down" aria-hidden="true"></i></button></div></div><div class="dg-index-columns-workspace"><div id="database-index-column-list" class="dg-key-column-list"></div><div class="dg-index-column-properties"><label><span>Column Name</span><select id="database-index-column-name" disabled></select></label><label><span>Order</span><select id="database-index-column-order" disabled><option value="None">NONE</option><option value="Ascending">ASC</option><option value="Descending">DESC</option></select></label><label><span>Collation</span><select id="database-index-column-collation" disabled></select></label><label><span>Operator Class</span><select id="database-index-column-operator-class" disabled></select></label></div></div></section>
                 <div class="dg-index-advanced-properties">
                   <label><span>Condition</span><textarea id="database-index-condition" rows="2" maxlength="4000" spellcheck="false" placeholder="e.g. deleted_at IS NULL"></textarea></label>
                   <label><span>Include Columns</span><select id="database-index-include-columns" multiple size="3" aria-label="Included index columns"></select></label>
@@ -2163,9 +2163,9 @@
             </section>
             <section data-designer-panel="checks" class="dg-designer-panel hidden">
               <div class="database-column-toolbar dg-object-panel-toolbar"><div><strong>Check Designer</strong><small>One safe PostgreSQL boolean expression</small></div></div>
-              <div id="database-check-empty" class="dg-key-empty-state"><span class="dg-key-empty-icon" aria-hidden="true"></span><strong>No check selected</strong><p>Add a check constraint, then enter its boolean expression.</p><button type="button" id="database-empty-add-check" class="dg-toolbar-button">+ Add check</button></div>
+              <div id="database-check-empty" class="dg-key-empty-state"><i class="fa fa-plus dg-key-empty-icon" aria-hidden="true"></i><strong>No check selected</strong><p>Add a check constraint, then enter its boolean expression.</p><button type="button" id="database-empty-add-check" class="dg-toolbar-button"><i class="fa fa-plus" aria-hidden="true"></i> Add check</button></div>
               <div id="database-check-editor" class="dg-object-editor hidden">
-                <header class="dg-key-editor-heading"><span class="dg-check-icon" aria-hidden="true"></span><strong data-check-editor-title>check</strong><span>constraint</span></header>
+                <header class="dg-key-editor-heading"><i class="fa fa-check-square-o dg-check-icon" aria-hidden="true"></i><strong data-check-editor-title>check</strong><span>constraint</span></header>
                 <div class="dg-property-grid dg-check-properties"><label><span>Name <em>optional</em></span><input id="database-check-name" maxlength="63" placeholder="users_age_check"></label><label class="dg-wide-property"><span>Expression</span><textarea id="database-check-expression" rows="8" maxlength="4000" spellcheck="false" placeholder="age &gt;= 18"></textarea><small>No semicolon; expression is validated again by the server.</small></label></div>
               </div>
             </section>
