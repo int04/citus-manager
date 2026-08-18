@@ -22,6 +22,7 @@ Dự án phù hợp với DBA, platform engineer, SRE và đội phát triển �
 - [Ảnh chụp màn hình](#ảnh-chụp-màn-hình)
 - [Khả năng tương thích](#khả-năng-tương-thích)
 - [Khởi chạy nhanh bằng Docker](#khởi-chạy-nhanh-bằng-docker)
+- [Cập nhật ứng dụng](#cập-nhật-ứng-dụng)
 - [Checklist production](#checklist-production)
 - [Phát triển từ mã nguồn](#phát-triển-từ-mã-nguồn)
 - [API và OpenAPI](#api-và-openapi)
@@ -106,6 +107,13 @@ Các khả năng chính:
 - Cluster credential, storage secret và notification secret được mã hóa bằng ASP.NET Core Data Protection; không trả lại qua API, log hoặc audit.
 - Giao diện và validation hỗ trợ English (`en-US`) và Tiếng Việt (`vi-VN`).
 
+### Cập nhật ứng dụng
+
+- Sidebar Workspace hiển thị phiên bản ứng dụng đang chạy cho mọi user đã đăng nhập.
+- Admin có thể kiểm tra release timestamp mới trên GHCR và bắt đầu cập nhật riêng ứng dụng từ giao diện web.
+- Trước khi khởi động lại ứng dụng, updater của bộ Compose chính thức tạo logical backup cho control DB và archive Data Protection keyring.
+- Update bị từ chối khi cluster operation, backup, restore hoặc SQL execution đang chạy.
+
 ## Kiến trúc
 
 ```mermaid
@@ -119,6 +127,8 @@ flowchart LR
     A -.-> P["Prometheus tùy chọn"]
     A --> B["Backup storage<br/>Local / S3-compatible / Google Drive"]
     A --> N["Thông báo<br/>Webhook / SMTP / Telegram"]
+    A -->|request/status đã kiểm tra| UP["Updater sidecar"]
+    UP -->|Docker socket: chỉ service app| D["Docker Engine"]
 ```
 
 Control DB chỉ lưu cấu hình, trạng thái operation, metric, audit và metadata của Citus Manager. Nó không chứa dữ liệu ứng dụng trong cluster được quản lý. Mỗi cluster profile kết nối đến coordinator hoặc query endpoint bằng credential đã mã hóa; quyền PostgreSQL của credential đó vẫn là lớp kiểm soát cuối cùng.
@@ -195,6 +205,25 @@ Các named volume:
 | `app_keys` | Data Protection keyring dùng để giải mã secret |
 | `backup_data` | Artifact backup local |
 | `backup_spool` | Vùng tạm cho backup/restore |
+| `update_state` | Trạng thái trao đổi với updater |
+
+## Cập nhật ứng dụng
+
+Bản cài đặt một lệnh chính thức bao gồm updater sidecar. Bản cài cũ được tạo trước tính năng này cần chạy lại lệnh installer một lần để nhận Compose definition mới. Quá trình đồng bộ giữ nguyên mật khẩu control DB đã sinh và các persistent volume.
+
+Sidebar Workspace hiển thị phiên bản bên dưới nút **Đăng xuất**. Admin có thể làm mới kết quả kiểm tra release và chọn **Cập nhật ngay** khi có release timestamp mới tương thích. Updater tải đúng release tag, xác minh label update protocol và Compose generation, backup control DB cùng keyring, cập nhật `CITUS_MANAGER_IMAGE`, rồi chỉ tạo lại service `app`. Service PostgreSQL control DB không được nâng cấp.
+
+Cơ chế bảo vệ update:
+
+- Ứng dụng từ chối update đồng thời hoặc update khi cluster operation, backup, restore hay SQL execution đang chạy.
+- Backup trước update được lưu tại `~/citus-manager/update-backups`; chỉ giữ ba bộ mới nhất. Mỗi bộ gồm control DB dump, keyring archive và tham chiếu image trước đó.
+- Ứng dụng có thể tạm ngừng tối đa ba phút trong khi container mới đạt trạng thái healthy. EF Core migration chạy theo cấu hình migration khi khởi động.
+- Hệ thống không tự rollback sau health-check failure vì release mới có thể đã migrate control schema.
+- Release yêu cầu Compose generation khác sẽ bị chặn. Chạy lại installer một lệnh để cập nhật deployment definition.
+
+Updater bị cô lập khỏi network của ứng dụng nhưng mount `/var/run/docker.sock` để tạo lại application container. Vì vậy chỉ admin tin cậy được quyền truy cập host và thư mục cài đặt. Application container của Citus Manager vẫn chạy read-only, non-root và không có Docker socket.
+
+Nếu update thất bại, kiểm tra `docker compose logs updater app` và trạng thái trên sidebar. Giữ nguyên thư mục `update-backups/<request-id>` tương ứng. Control DB dump và Data Protection keyring phải được restore cùng nhau trong quy trình recovery có kiểm soát; không chạy image cũ với schema đã migrate nếu chưa xác minh compatibility.
 
 ### Cảnh báo an toàn
 
@@ -215,6 +244,7 @@ SQL console không phải sandbox. Database role trong cluster profile là ranh 
 - Immutable image tag và staging rehearsal trước production upgrade.
 - Monitoring cho log, metric, alert, spool/storage capacity và operation đang chạy.
 - GHCR package public và anonymous pull được xác minh trước automated deployment.
+- Giới hạn quyền truy cập host vì updater sidecar có quyền qua Docker socket.
 
 ## Phát triển từ mã nguồn
 
@@ -247,7 +277,7 @@ dotnet restore CitusManager.sln
 dotnet run --launch-profile http
 ```
 
-Development setup có tại <http://localhost:5115/Account/Setup>. Profile `http` dùng môi trường `Development`; `Database:AutoCreateSchema=true` tự động apply EF Core migration. Production mặc định tắt auto migration và áp dụng migration qua controlled deployment.
+Development setup có tại <http://localhost:5115/Account/Setup>. Profile `http` dùng môi trường `Development`; `Database__AutoCreateSchema=true` tự động apply EF Core migration. Bản triển khai Compose chính thức đặt giá trị này thành `true`, vì vậy migration cũng tự chạy khi ứng dụng khởi động sau update. Custom deployment chỉ nên tắt tùy chọn này khi migration được áp dụng riêng trong release procedure.
 
 Rebuild SQL editor khi sửa `ClientApp/query-console-editor.js`:
 
@@ -266,7 +296,7 @@ Citus Manager cung cấp Minimal API cho cluster, operation, monitoring, audit, 
 http://localhost:5115/openapi/v1.json
 ```
 
-[`CitusManager.http`](CitusManager.http) và [`QueryConsole.http`](QueryConsole.http) chứa request mẫu. API thay đổi trạng thái yêu cầu cookie/antiforgery flow hiện có; secret không được ghi vào log hoặc file request trong repository.
+[`CitusManager.http`](CitusManager.http), [`QueryConsole.http`](QueryConsole.http) và [`SystemUpdate.http`](SystemUpdate.http) chứa request mẫu. API thay đổi trạng thái yêu cầu cookie/antiforgery flow hiện có; secret không được ghi vào log hoặc file request trong repository.
 
 ## Kiểm thử
 

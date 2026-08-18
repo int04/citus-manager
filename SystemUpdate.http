@@ -1,0 +1,12 @@
+@baseUrl = http://localhost:5169
+
+### Check for an application update (Admin authentication cookie required)
+GET {{baseUrl}}/api/system/update
+
+### Bypass the 15-minute release cache
+GET {{baseUrl}}/api/system/update?refresh=true
+
+### Queue the latest release (Admin cookie and antiforgery header required)
+POST {{baseUrl}}/api/system/update
+RequestVerificationToken: {{antiforgeryToken}}
+

@@ -12,6 +12,7 @@ public enum SkipConsoleStatementResult
 
 public interface IQueryConsoleExecutionRegistry
 {
+    bool HasActiveExecutions { get; }
     void Register(Guid executionId, Guid actorId, Guid clusterId, IEnumerable<int> statementIndexes);
     bool TryStart(Guid executionId, int statementIndex);
     SkipConsoleStatementResult Skip(Guid executionId, Guid actorId, Guid clusterId, int statementIndex);
@@ -21,6 +22,8 @@ public interface IQueryConsoleExecutionRegistry
 public sealed class QueryConsoleExecutionRegistry : IQueryConsoleExecutionRegistry
 {
     private readonly ConcurrentDictionary<Guid, ExecutionState> executions = new();
+
+    public bool HasActiveExecutions => !executions.IsEmpty;
 
     public void Register(Guid executionId, Guid actorId, Guid clusterId, IEnumerable<int> statementIndexes)
     {

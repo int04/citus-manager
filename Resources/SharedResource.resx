@@ -23,6 +23,23 @@
   <data name="Layout.AddCoordinator" xml:space="preserve"><value>Add coordinator</value></data>
   <data name="Layout.Logout" xml:space="preserve"><value>Sign out</value></data>
   <data name="Layout.ThemeToggle" xml:space="preserve"><value>Toggle light or dark theme</value></data>
+  <data name="Update.Version" xml:space="preserve"><value>Version</value></data>
+  <data name="Update.Check" xml:space="preserve"><value>Check for updates</value></data>
+  <data name="Update.Now" xml:space="preserve"><value>Update now</value></data>
+  <data name="Update.RestartNotice" xml:space="preserve"><value>Citus Manager restarts during the update.</value></data>
+  <data name="Update.Checking" xml:space="preserve"><value>Checking for updates…</value></data>
+  <data name="Update.Current" xml:space="preserve"><value>Citus Manager is up to date.</value></data>
+  <data name="Update.Available" xml:space="preserve"><value>Version {0} is available.</value></data>
+  <data name="Update.Blocked" xml:space="preserve"><value>Update blocked by active work.</value></data>
+  <data name="Update.Queued" xml:space="preserve"><value>Update queued.</value></data>
+  <data name="Update.BackingUp" xml:space="preserve"><value>Backing up control data…</value></data>
+  <data name="Update.Pulling" xml:space="preserve"><value>Downloading the update…</value></data>
+  <data name="Update.Restarting" xml:space="preserve"><value>Restarting Citus Manager…</value></data>
+  <data name="Update.Succeeded" xml:space="preserve"><value>Update completed. Reloading…</value></data>
+  <data name="Update.Failed" xml:space="preserve"><value>Update failed.</value></data>
+  <data name="Update.Unavailable" xml:space="preserve"><value>Automatic updates are unavailable for this installation.</value></data>
+  <data name="Update.RequestFailed" xml:space="preserve"><value>Could not check for updates.</value></data>
+  <data name="Update.Retrying" xml:space="preserve"><value>Waiting for Citus Manager to restart…</value></data>
   <data name="Settings.Eyebrow" xml:space="preserve"><value>SETTINGS</value></data>
   <data name="Language.Title" xml:space="preserve"><value>Language</value></data>
   <data name="Language.Description" xml:space="preserve"><value>Choose the language used across Citus Manager.</value></data>

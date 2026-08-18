@@ -107,6 +107,13 @@ builder.Services.AddOptions<RequestLocalizationOptions>()
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+builder.Services.AddSingleton<IApplicationVersionProvider, ApplicationVersionProvider>();
+builder.Services.AddSingleton<ApplicationUpdateService>();
+builder.Services.AddSingleton<IApplicationUpdateService>(services =>
+    services.GetRequiredService<ApplicationUpdateService>());
+builder.Services.AddSingleton<IApplicationUpdateGate>(services =>
+    services.GetRequiredService<ApplicationUpdateService>());
+builder.Services.AddHttpClient("application-updates", client => client.Timeout = TimeSpan.FromSeconds(10));
 
 builder.Services.AddScoped<IClusterSecretProtector, ClusterSecretProtector>();
 builder.Services.AddScoped<ICitusConnectionFactory, CitusConnectionFactory>();
@@ -184,8 +191,10 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseRequestLocalization();
 app.UseAuthorization();
+app.UseMiddleware<ApplicationUpdateGateMiddleware>();
 
 app.MapStaticAssets().AllowAnonymous();
+app.MapSystemUpdateEndpoints();
 app.MapClusterEndpoints();
 app.MapOperationEndpoints();
 app.MapAuditEndpoints();

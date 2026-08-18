@@ -421,6 +421,7 @@ public sealed class BackupRunExecutor(
 public sealed class BackupRunWorker(
     IServiceScopeFactory scopes,
     IControlPlaneLeaseProvider leases,
+    IApplicationUpdateGate updateGate,
     Microsoft.Extensions.Options.IOptions<BackupExecutionOptions> configured,
     ILogger<BackupRunWorker> logger) : BackgroundService
 {
@@ -431,6 +432,11 @@ public sealed class BackupRunWorker(
         {
             try
             {
+                if (updateGate.IsClosed)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_options.WorkerIdleSeconds), stoppingToken);
+                    continue;
+                }
                 await using var queryScope = scopes.CreateAsyncScope();
                 var db = queryScope.ServiceProvider.GetRequiredService<ControlDbContext>();
                 var item = await db.BackupRuns.AsNoTracking().Where(x => x.Status == BackupRunStatus.Queued ||
@@ -451,6 +457,7 @@ public sealed class BackupRunWorker(
 public sealed class BackupSchedulerWorker(
     IServiceScopeFactory scopes,
     IControlPlaneLeaseProvider leases,
+    IApplicationUpdateGate updateGate,
     ILogger<BackupSchedulerWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -460,6 +467,7 @@ public sealed class BackupSchedulerWorker(
         {
             try
             {
+                if (updateGate.IsClosed) continue;
                 await using var scope = scopes.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
                 var service = (BackupService)scope.ServiceProvider.GetRequiredService<IBackupService>();

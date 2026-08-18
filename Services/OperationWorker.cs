@@ -2,6 +2,7 @@ namespace CitusManager.Services;
 
 public sealed class OperationWorker(
     IServiceScopeFactory scopes,
+    IApplicationUpdateGate updateGate,
     ILogger<OperationWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -10,6 +11,11 @@ public sealed class OperationWorker(
         {
             try
             {
+                if (updateGate.IsClosed)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                    continue;
+                }
                 using var scope = scopes.CreateScope();
                 var executor = scope.ServiceProvider.GetRequiredService<IOperationExecutor>();
                 var worked = await executor.ExecuteOneAsync(stoppingToken);
