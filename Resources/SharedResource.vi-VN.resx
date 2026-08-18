@@ -23,6 +23,23 @@
   <data name="Layout.AddCoordinator" xml:space="preserve"><value>Thêm coordinator</value></data>
   <data name="Layout.Logout" xml:space="preserve"><value>Đăng xuất</value></data>
   <data name="Layout.ThemeToggle" xml:space="preserve"><value>Đổi giao diện sáng hoặc tối</value></data>
+  <data name="Update.Version" xml:space="preserve"><value>Phiên bản</value></data>
+  <data name="Update.Check" xml:space="preserve"><value>Kiểm tra cập nhật</value></data>
+  <data name="Update.Now" xml:space="preserve"><value>Cập nhật ngay</value></data>
+  <data name="Update.RestartNotice" xml:space="preserve"><value>Citus Manager sẽ khởi động lại trong lúc cập nhật.</value></data>
+  <data name="Update.Checking" xml:space="preserve"><value>Đang kiểm tra bản cập nhật…</value></data>
+  <data name="Update.Current" xml:space="preserve"><value>Citus Manager đang ở phiên bản mới nhất.</value></data>
+  <data name="Update.Available" xml:space="preserve"><value>Đã có phiên bản {0}.</value></data>
+  <data name="Update.Blocked" xml:space="preserve"><value>Bản cập nhật bị chặn do tác vụ đang chạy.</value></data>
+  <data name="Update.Queued" xml:space="preserve"><value>Đã xếp hàng cập nhật.</value></data>
+  <data name="Update.BackingUp" xml:space="preserve"><value>Đang sao lưu dữ liệu điều khiển…</value></data>
+  <data name="Update.Pulling" xml:space="preserve"><value>Đang tải bản cập nhật…</value></data>
+  <data name="Update.Restarting" xml:space="preserve"><value>Đang khởi động lại Citus Manager…</value></data>
+  <data name="Update.Succeeded" xml:space="preserve"><value>Cập nhật hoàn tất. Đang tải lại…</value></data>
+  <data name="Update.Failed" xml:space="preserve"><value>Cập nhật thất bại.</value></data>
+  <data name="Update.Unavailable" xml:space="preserve"><value>Bản cài đặt này không hỗ trợ cập nhật tự động.</value></data>
+  <data name="Update.RequestFailed" xml:space="preserve"><value>Không thể kiểm tra bản cập nhật.</value></data>
+  <data name="Update.Retrying" xml:space="preserve"><value>Đang chờ Citus Manager khởi động lại…</value></data>
   <data name="Settings.Eyebrow" xml:space="preserve"><value>CÀI ĐẶT</value></data>
   <data name="Language.Title" xml:space="preserve"><value>Ngôn ngữ</value></data>
   <data name="Language.Description" xml:space="preserve"><value>Chọn ngôn ngữ sử dụng trên toàn bộ Citus Manager.</value></data>

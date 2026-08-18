@@ -386,6 +386,7 @@ public sealed class RestoreRunExecutor(
 public sealed class RestoreRunWorker(
     IServiceScopeFactory scopes,
     IControlPlaneLeaseProvider leases,
+    IApplicationUpdateGate updateGate,
     Microsoft.Extensions.Options.IOptions<BackupExecutionOptions> configured,
     ILogger<RestoreRunWorker> logger) : BackgroundService
 {
@@ -396,6 +397,11 @@ public sealed class RestoreRunWorker(
         {
             try
             {
+                if (updateGate.IsClosed)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_options.WorkerIdleSeconds), stoppingToken);
+                    continue;
+                }
                 await using var queryScope = scopes.CreateAsyncScope();
                 var db = queryScope.ServiceProvider.GetRequiredService<ControlDbContext>();
                 var item = await db.RestoreRuns.AsNoTracking().Where(x => x.Status == RestoreRunStatus.Queued)

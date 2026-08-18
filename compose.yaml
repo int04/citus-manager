@@ -14,12 +14,15 @@ services:
       Security__DataProtectionKeyPath: /var/lib/citus-manager/keys
       Backup__Storage__LocalRootPath: /var/lib/citus-manager/backup-data
       Backup__Execution__SpoolPath: /var/lib/citus-manager/backup-spool
+      Updates__StatePath: /var/lib/citus-manager/update
+      Updates__ExecutionEnabled: "true"
     ports:
       - "2706:8080"
     volumes:
       - app_keys:/var/lib/citus-manager/keys
       - backup_data:/var/lib/citus-manager/backup-data
       - backup_spool:/var/lib/citus-manager/backup-spool
+      - update_state:/var/lib/citus-manager/update
     tmpfs:
       - /tmp
     extra_hosts:
@@ -31,6 +34,30 @@ services:
     networks:
       - public
       - database
+
+  updater:
+    image: docker:28-cli
+    init: true
+    restart: unless-stopped
+    network_mode: none
+    environment:
+      CITUS_MANAGER_COMPOSE_FILE: /workspace/compose.yaml
+      CITUS_MANAGER_ENV_FILE: /workspace/.env
+      CITUS_MANAGER_PROJECT_DIRECTORY: /workspace
+      CITUS_MANAGER_STATE_DIRECTORY: /var/lib/citus-manager/update
+      CITUS_MANAGER_BACKUP_DIRECTORY: /var/lib/citus-manager/update-backups
+      CITUS_MANAGER_IMAGE_REPOSITORY: ghcr.io/int04/citus-manager
+      CITUS_MANAGER_UPDATE_PROTOCOL: "1"
+      CITUS_MANAGER_COMPOSE_GENERATION: "1"
+    depends_on:
+      app:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/workspace
+      - ./update-backups:/var/lib/citus-manager/update-backups
+      - update_state:/var/lib/citus-manager/update
+    command: ["/bin/sh", "/workspace/scripts/update-agent.sh"]
 
   postgres:
     image: postgres:18.4-alpine3.23
@@ -61,3 +88,4 @@ volumes:
   app_keys:
   backup_data:
   backup_spool:
+  update_state:

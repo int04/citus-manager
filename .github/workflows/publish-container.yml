@@ -89,6 +89,8 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
+            io.citus-manager.update-protocol=1
+            io.citus-manager.compose-generation=1
           provenance: mode=max
           sbom: true
           cache-from: type=gha

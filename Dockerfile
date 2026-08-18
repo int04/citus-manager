@@ -32,7 +32,9 @@ LABEL org.opencontainers.image.title="Citus Manager" \
       org.opencontainers.image.description="ASP.NET Core control plane for self-hosted Citus clusters" \
       org.opencontainers.image.source="${SOURCE_URL}" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.version="${APP_VERSION}"
+      org.opencontainers.image.version="${APP_VERSION}" \
+      io.citus-manager.update-protocol="1" \
+      io.citus-manager.compose-generation="1"
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates curl gnupg \
@@ -56,12 +58,14 @@ COPY --from=build /app/publish ./
 RUN install --directory --owner="${APP_UID}" --group="${APP_UID}" \
       /var/lib/citus-manager/keys \
       /var/lib/citus-manager/backup-data \
-      /var/lib/citus-manager/backup-spool
+      /var/lib/citus-manager/backup-spool \
+      /var/lib/citus-manager/update
 
 ENV ASPNETCORE_URLS=http://+:8080 \
     Security__DataProtectionKeyPath=/var/lib/citus-manager/keys \
     Backup__Storage__LocalRootPath=/var/lib/citus-manager/backup-data \
-    Backup__Execution__SpoolPath=/var/lib/citus-manager/backup-spool
+    Backup__Execution__SpoolPath=/var/lib/citus-manager/backup-spool \
+    Updates__StatePath=/var/lib/citus-manager/update
 
 USER ${APP_UID}
 EXPOSE 8080

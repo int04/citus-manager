@@ -48,4 +48,18 @@ public sealed class QueryConsoleExecutionRegistryTests
         Assert.Equal(SkipConsoleStatementResult.ExecutionNotFound,
             registry.Skip(executionId, actorId, Guid.NewGuid(), 0));
     }
+
+    [Fact]
+    public void Active_execution_indicator_tracks_register_and_complete()
+    {
+        var registry = new QueryConsoleExecutionRegistry();
+        var executionId = Guid.NewGuid();
+        Assert.False(registry.HasActiveExecutions);
+
+        registry.Register(executionId, Guid.NewGuid(), Guid.NewGuid(), [0]);
+        Assert.True(registry.HasActiveExecutions);
+
+        registry.Complete(executionId);
+        Assert.False(registry.HasActiveExecutions);
+    }
 }

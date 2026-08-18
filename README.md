@@ -23,6 +23,7 @@ Citus Manager is a self-hosted control plane for existing Citus deployments. It 
 - [Project status](#project-status)
 - [Compatibility](#compatibility)
 - [Quick start with Docker Compose](#quick-start-with-docker-compose)
+- [Application updates](#application-updates)
 - [Running from source](#running-from-source)
 - [API and OpenAPI](#api-and-openapi)
 - [Testing](#testing)
@@ -102,6 +103,13 @@ Logical dumps are not replacements for physical backup, WAL archiving, point-in-
 - `Admin`: user, profile, backup, and audit administration plus all permitted operations.
 - Cluster passwords, Prometheus tokens, storage credentials, and notification secrets are protected with ASP.NET Core Data Protection and never returned by the API.
 
+### Application updates
+
+- The Workspace sidebar displays the running application version for every authenticated user.
+- Administrators can check GHCR for a newer timestamped release and start an application-only update from the web interface.
+- Before restarting the application, the official Compose updater creates a logical backup of the control database and archives the Data Protection keyring.
+- An update is refused while a cluster operation, backup, restore, or SQL execution is active.
+
 ## Architecture
 
 ```mermaid
@@ -115,6 +123,8 @@ flowchart LR
     A -. optional metrics .-> P["Prometheus"]
     A --> B["Backup storage<br/>Local / S3-compatible / Google Drive"]
     A --> N["Notifications<br/>Webhook / SMTP / Telegram"]
+    A -->|validated request/status files| UP["Updater sidecar"]
+    UP -->|Docker socket: app service only| D["Docker Engine"]
 ```
 
 The separate control database stores users, encrypted connection profiles, plans, checkpoints, monitoring samples, alerts, and audit metadata. Citus Manager connects to cluster nodes using configured profiles; it does not become part of the Citus data path.
@@ -179,7 +189,25 @@ Production deployments can pin a published release instead of `latest` through `
 CITUS_MANAGER_IMAGE=ghcr.io/int04/citus-manager:<release-tag>
 ```
 
-Named volumes `postgres_data`, `app_keys`, `backup_data`, and `backup_spool` survive recreation and normal `docker compose down`.
+Named volumes `postgres_data`, `app_keys`, `backup_data`, `backup_spool`, and `update_state` survive recreation and normal `docker compose down`. Pre-update recovery artifacts are stored in the installation directory at `update-backups/`.
+
+## Application updates
+
+The official one-command installation includes an updater sidecar. Existing installations created before this feature must run the one-command installer once more to install the updated Compose definition. This reconciliation preserves the generated control-database password and persistent volumes.
+
+The Workspace sidebar shows the installed version below **Sign out**. Administrators can refresh the release check and select **Update now** when a newer compatible timestamped release is available. The updater pulls the exact release tag, validates its update-protocol and Compose-generation labels, backs up the control database and keyring, updates `CITUS_MANAGER_IMAGE`, and recreates only the `app` service. The control PostgreSQL service is not upgraded.
+
+Update safeguards:
+
+- The application rejects concurrent updates and updates attempted during active cluster operations, backups, restores, or SQL executions.
+- Update backups are stored under `~/citus-manager/update-backups`; the newest three sets are retained. Each set contains the control-database dump, keyring archive, and previous image reference.
+- The application may be unavailable for up to three minutes while the new container becomes healthy. EF Core migrations run through the configured startup migration behavior.
+- Automatic rollback is not attempted after a failed health check because the new release may already have migrated the control schema.
+- Releases that require a different Compose generation are blocked. Run the one-command installer again to update the deployment definition.
+
+The updater is intentionally isolated from application networking, but it mounts `/var/run/docker.sock` to recreate the application container. Access to the installation host and directory must therefore be restricted to trusted administrators. The Citus Manager application container remains read-only, non-root, and has no Docker socket.
+
+If an update fails, inspect `docker compose logs updater app` and the status shown in the sidebar. Preserve the corresponding `update-backups/<request-id>` directory. Restore the control-database dump and Data Protection keyring together as part of a controlled recovery; do not start an older image against a migrated schema unless its compatibility has been verified.
 
 > **Destructive command:** `docker compose down -v` deletes every named volume in this stack, including the control database, keyring, and local backups. Do not run it unless deletion is intended and recoverable from a verified backup.
 
@@ -194,6 +222,7 @@ Named volumes `postgres_data`, `app_keys`, `backup_data`, and `backup_spool` sur
 - Dedicated least-privilege cluster roles, with topology and DDL privileges granted only where required.
 - Secret injection through protected environment configuration or a secret manager.
 - Pinned releases and upgrade rehearsal in staging.
+- Restricted host access because the updater sidecar has Docker socket access.
 
 ## Running from source
 
@@ -212,7 +241,7 @@ dotnet restore
 dotnet run --launch-profile http
 ```
 
-The development setup endpoint is <http://localhost:5115/Account/Setup>. `Database__AutoCreateSchema=true` enables automatic local migrations. Production deployments disable this option and apply migrations as a controlled deployment step.
+The development setup endpoint is <http://localhost:5115/Account/Setup>. `Database__AutoCreateSchema=true` enables automatic migrations. The official Compose deployment sets this option to `true`, so migrations also run automatically when the application starts after an update. Custom deployments may disable it only when migrations are applied separately as part of their release procedure.
 
 Rebuild the SQL editor only when its client source changes:
 
@@ -223,7 +252,7 @@ npm run build:query-console
 
 ## API and OpenAPI
 
-Development OpenAPI is available at `/openapi/v1.json`. [`CitusManager.http`](CitusManager.http) covers principal API areas, while [`QueryConsole.http`](QueryConsole.http) contains query-console examples. Preserve authentication, authorization, anti-forgery, and secret-handling controls in integrations.
+Development OpenAPI is available at `/openapi/v1.json`. [`CitusManager.http`](CitusManager.http) covers principal API areas, [`QueryConsole.http`](QueryConsole.http) contains query-console examples, and [`SystemUpdate.http`](SystemUpdate.http) documents the update endpoints. Preserve authentication, authorization, anti-forgery, and secret-handling controls in integrations.
 
 ## Testing
 

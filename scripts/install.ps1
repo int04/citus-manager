@@ -10,6 +10,10 @@ $installDir = if ($env:CITUS_MANAGER_INSTALL_DIR) {
 $composeFile = Join-Path $installDir 'compose.yaml'
 $envFile = Join-Path $installDir '.env'
 $temporaryCompose = "$composeFile.tmp"
+$scriptsDir = Join-Path $installDir 'scripts'
+$agentFile = Join-Path $scriptsDir 'update-agent.sh'
+$temporaryAgent = "$agentFile.tmp"
+$updateBackupDir = Join-Path $installDir 'update-backups'
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker is required: https://docs.docker.com/get-docker/'
@@ -21,12 +25,17 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+New-Item -ItemType Directory -Path $updateBackupDir -Force | Out-Null
 
 try {
     Invoke-WebRequest -UseBasicParsing -Uri "$repositoryRawUrl/compose.yaml" -OutFile $temporaryCompose
+    Invoke-WebRequest -UseBasicParsing -Uri "$repositoryRawUrl/scripts/update-agent.sh" -OutFile $temporaryAgent
     Move-Item -LiteralPath $temporaryCompose -Destination $composeFile -Force
+    Move-Item -LiteralPath $temporaryAgent -Destination $agentFile -Force
 } finally {
     Remove-Item -LiteralPath $temporaryCompose -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $temporaryAgent -Force -ErrorAction SilentlyContinue
 }
 
 $environmentLines = if (Test-Path -LiteralPath $envFile) {
@@ -51,7 +60,7 @@ if (-not ($environmentLines -match '^CITUS_MANAGER_DB_PASSWORD=.')) {
     Add-Content -LiteralPath $envFile -Value "CITUS_MANAGER_DB_PASSWORD=$password" -Encoding ascii
 }
 
-& docker compose --project-directory $installDir --file $composeFile up -d
+& docker compose --project-directory $installDir --file $composeFile up -d --pull always
 if ($LASTEXITCODE -ne 0) {
     throw "Docker Compose failed with exit code $LASTEXITCODE."
 }

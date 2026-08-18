@@ -1,7 +1,9 @@
 @using System.Globalization
 @using CitusManager.Localization
+@using CitusManager.Services
 @using Microsoft.Extensions.Localization
 @inject IStringLocalizer<SharedResource> T
+@inject IApplicationVersionProvider ApplicationVersion
 @{
     var currentController = ViewContext.RouteData.Values["controller"]?.ToString();
     var isDatabaseExplorer = currentController == "Database";
@@ -16,6 +18,7 @@
     <link rel="stylesheet" href="~/lib/font-awesome/css/font-awesome.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/localization.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/update-manager.css" asp-append-version="true" />
     @await RenderSectionAsync("Styles", required: false)
     @* Tailwind source is kept beside the markup for maintainability. Runtime compilation is disabled;
        regenerate wwwroot/css/site.css after changing this block. *@
@@ -1052,6 +1055,50 @@ else if (User.Identity?.IsAuthenticated == true)
                 <form asp-controller="Account" asp-action="Logout" method="post">
                     <button class="btn btn-ghost w-100" type="submit"><svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 17l5-5-5-5M15 12H3M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>@T["Layout.Logout"]</button>
                 </form>
+                <section class="update-manager" aria-label="@T["Update.Version"]" @(User.IsInRole("Admin") ? "data-update-manager" : null) data-endpoint="/api/system/update">
+                    <div class="update-manager__version">
+                        <span class="update-manager__version-mark" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 13V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7"/><path d="m13 11 7 7M16 11h4v4"/></svg>
+                        </span>
+                        <span class="update-manager__version-copy">
+                            <span class="update-manager__version-label">@T["Update.Version"]</span>
+                            <strong class="update-manager__version-value" data-current-version>@ApplicationVersion.DisplayVersion</strong>
+                        </span>
+                        @if (User.IsInRole("Admin"))
+                        {
+                            <button class="update-manager__button update-manager__refresh" type="button" data-update-refresh aria-label="@T["Update.Check"]" title="@T["Update.Check"]">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 11a8.1 8.1 0 1 0 2 5.3"/><path d="M20 4v7h-7"/></svg>
+                            </button>
+                        }
+                    </div>
+                    @if (User.IsInRole("Admin"))
+                    {
+                        <div class="update-manager__admin">
+                            @Html.AntiForgeryToken()
+                            <p class="update-manager__status" data-update-status aria-live="polite" aria-atomic="true">@T["Update.Checking"]</p>
+                            <div class="update-manager__actions">
+                                <button class="update-manager__button update-manager__button--primary" type="button" data-update-start hidden>@T["Update.Now"]</button>
+                            </div>
+                            <p class="update-manager__restart-note" data-update-restart-note hidden>@T["Update.RestartNotice"]</p>
+                            <script type="application/json" data-update-messages>@Html.Raw(System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string>
+                            {
+                                ["checking"] = T["Update.Checking"].Value,
+                                ["current"] = T["Update.Current"].Value,
+                                ["available"] = T["Update.Available"].Value,
+                                ["blocked"] = T["Update.Blocked"].Value,
+                                ["queued"] = T["Update.Queued"].Value,
+                                ["backingup"] = T["Update.BackingUp"].Value,
+                                ["pulling"] = T["Update.Pulling"].Value,
+                                ["restarting"] = T["Update.Restarting"].Value,
+                                ["succeeded"] = T["Update.Succeeded"].Value,
+                                ["failed"] = T["Update.Failed"].Value,
+                                ["unavailable"] = T["Update.Unavailable"].Value,
+                                ["requestfailed"] = T["Update.RequestFailed"].Value,
+                                ["retrying"] = T["Update.Retrying"].Value
+                            }))</script>
+                        </div>
+                    }
+                </section>
             </div>
         </aside>
         <div class="workspace">
@@ -1077,6 +1124,7 @@ else
 <script src="~/lib/jquery/dist/jquery.min.js"></script>
 <partial name="_ClientLocalization" />
 <script src="~/js/site.js" asp-append-version="true"></script>
+<script src="~/js/update-manager.js" asp-append-version="true"></script>
 @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
