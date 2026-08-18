@@ -1,5 +1,7 @@
 # Citus Manager
 
+![Citus Manager](docs/assets/banner.png)
+
 > A self-hosted web control plane for operating existing PostgreSQL/Citus clusters with safer, observable workflows.
 
 [English](README.md) · [Tiếng Việt](README_VI.md)

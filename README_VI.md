@@ -1,5 +1,7 @@
 # Citus Manager
 
+![Citus Manager](docs/assets/banner.png)
+
 > Control plane web tự host để vận hành nhiều cụm PostgreSQL/Citus hiện có theo quy trình an toàn, có thể quan sát và kiểm toán.
 
 [English](README.md) | **Tiếng Việt**
