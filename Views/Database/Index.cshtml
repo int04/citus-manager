@@ -2,13 +2,18 @@
 @using CitusManager.Localization
 @using Microsoft.Extensions.Localization
 @inject IStringLocalizer<DatabaseResource> T
+@inject IAppLanguageCatalog Languages
+@inject ILanguagePreferenceAccessor LanguagePreference
 @{
     ViewData["Title"] = T["Page.Title", Model.Cluster.Name];
+    var selectedLanguage = LanguagePreference.GetExplicitCulture(Context) ?? "auto";
+    var returnUrl = Context.Request.PathBase + Context.Request.Path + Context.Request.QueryString;
 }
 
 @section Styles {
     <link rel="stylesheet" href="~/css/query-console.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/database-designer.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/database-preferences.css" asp-append-version="true" />
 }
 
 <div class="database-page pma-explorer" data-database-explorer
@@ -94,22 +99,12 @@
 
             <div id="database-tree-content"><partial name="_Tree" model="Model" /></div>
             <nav class="pma-navigation-footer" aria-label="@T["Navigation.Tools"]">
-                <a asp-controller="Settings" asp-action="Language" aria-label="@T["Navigation.Appearance"]">
-                    <i class="fa fa-language" aria-hidden="true"></i><span>@T["Navigation.Appearance"]</span>
-                </a>
+                <button type="button" id="database-preferences-open" aria-label="@T["Preferences.Open"]" aria-haspopup="dialog">
+                    <i class="fa fa-cog" aria-hidden="true"></i><span>@T["Preferences.Settings"]</span>
+                </button>
                 <a asp-controller="Clusters" asp-action="Details" asp-route-id="@Model.Cluster.Id" aria-label="@T["Navigation.BackCluster"] @Model.Cluster.Name">
                     <i class="fa fa-chevron-left" aria-hidden="true"></i><span>@T["Navigation.BackCluster"]</span>
                 </a>
-                <a asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id"
-                   asp-route-nodeId="@Model.NodeId" asp-route-showSystem="@(!Model.ShowSystem)"
-                   aria-label="@(Model.ShowSystem ? T["Navigation.HideSystem"] : T["Navigation.ShowSystem"])">
-                    <i class="fa @(Model.ShowSystem ? "fa-eye-slash" : "fa-eye")" aria-hidden="true"></i>
-                    <span>@(Model.ShowSystem ? T["Navigation.HideSystem"] : T["Navigation.ShowSystem"])</span>
-                </a>
-                <div class="pma-navigation-server" title="@Model.Cluster.Host:@Model.Cluster.Port · @Model.Cluster.Database · @Model.TargetLabel">
-                    <i class="fa fa-server" aria-hidden="true"></i>
-                    <span>Server</span><b class="status-dot ok" aria-hidden="true"></b>
-                </div>
             </nav>
         </aside>
 
@@ -151,6 +146,68 @@
     }
 
     <div id="database-context-menu" class="database-context-menu hidden" role="menu" aria-label="Database object actions"></div>
+    <div id="database-preferences-modal" class="database-modal database-preferences-modal hidden" role="dialog" aria-modal="true" data-saved-message="@T["Preferences.Saved"]" data-applying-message="@T["Preferences.Applying"]"
+         aria-labelledby="database-preferences-title" aria-describedby="database-preferences-description">
+        <div class="database-modal-card database-preferences-card" tabindex="-1">
+            <header>
+                <div><p class="eyebrow">@T["Preferences.Eyebrow"]</p><h2 id="database-preferences-title">@T["Preferences.Title"]</h2></div>
+                <button type="button" data-preferences-close aria-label="@T["Action.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button>
+            </header>
+            <p id="database-preferences-description" class="database-preferences-description">@T["Preferences.Description"]</p>
+            <div class="database-preferences-sections">
+                <section aria-labelledby="preferences-language-heading">
+                    <div class="database-preferences-section-heading"><i class="fa fa-language" aria-hidden="true"></i><div><h3 id="preferences-language-heading">@T["Preferences.Language"]</h3><p>@T["Preferences.LanguageHelp"]</p></div></div>
+                    <form class="database-preferences-language" asp-controller="Settings" asp-action="SetLanguage" method="post">
+                        <input type="hidden" name="returnUrl" value="@returnUrl" />
+                        <label for="database-preferences-language">@T["Preferences.LanguageLabel"]</label>
+                        <select id="database-preferences-language" name="Preference" onchange="this.form.requestSubmit()">
+                            <option value="auto" selected="@(selectedLanguage == "auto")">@T["Preferences.LanguageAuto"]</option>
+                            @foreach (var language in Languages.SupportedLanguages)
+                            {
+                                <option value="@language.Code" selected="@(selectedLanguage == language.Code)">@language.NativeName</option>
+                            }
+                        </select>
+                    </form>
+                </section>
+                <section aria-labelledby="preferences-theme-heading">
+                    <div class="database-preferences-section-heading"><i class="fa fa-adjust" aria-hidden="true"></i><div><h3 id="preferences-theme-heading">@T["Preferences.Theme"]</h3><p>@T["Preferences.ThemeHelp"]</p></div></div>
+                    <div class="database-preferences-choice-grid" role="radiogroup" aria-labelledby="preferences-theme-heading">
+                        <label><input type="radio" name="database-theme" value="light" /><span><i class="fa fa-sun-o" aria-hidden="true"></i><b>@T["Preferences.Light"]</b></span></label>
+                        <label><input type="radio" name="database-theme" value="dark" /><span><i class="fa fa-moon-o" aria-hidden="true"></i><b>@T["Preferences.Dark"]</b></span></label>
+                    </div>
+                </section>
+                <section aria-labelledby="preferences-system-heading">
+                    <div class="database-preferences-section-heading"><i class="fa fa-eye" aria-hidden="true"></i><div><h3 id="preferences-system-heading">@T["Preferences.SystemObjects"]</h3><p>@T["Preferences.SystemObjectsHelp"]</p></div></div>
+                    <label class="database-preferences-system-toggle">
+                        <span><b>@T["Preferences.ShowSystem"]</b><small>@T["Preferences.ShowSystemHelp"]</small></span>
+                        <input type="checkbox" role="switch" data-system-objects checked="@Model.ShowSystem"
+                               data-url="@Url.Action("Index", "Database", new { clusterId = Model.Cluster.Id, nodeId = Model.NodeId, showSystem = !Model.ShowSystem })"
+                               aria-label="@T["Preferences.ShowSystem"]" />
+                    </label>
+                </section>
+                <section aria-labelledby="preferences-time-heading">
+                    <div class="database-preferences-section-heading"><i class="fa fa-clock-o" aria-hidden="true"></i><div><h3 id="preferences-time-heading">@T["Preferences.Time"]</h3><p>@T["Preferences.TimeHelp"]</p></div></div>
+                    <div class="database-preferences-time-modes" role="radiogroup" aria-labelledby="preferences-time-heading">
+                        <label><input type="radio" name="database-time-mode" value="native" /><span><b>@T["Preferences.TimeNative"]</b><small>@T["Preferences.TimeNativeHelp"]</small></span></label>
+                        <label><input type="radio" name="database-time-mode" value="user" /><span><b>@T["Preferences.TimeUser"]</b><small>@T["Preferences.TimeUserHelp"]</small></span></label>
+                    </div>
+                    <div class="database-timezone-field" data-timezone-field>
+                        <label for="database-timezone-search">@T["Preferences.TimeZone"]</label>
+                        <div class="database-timezone-combobox">
+                            <button type="button" data-timezone-toggle aria-haspopup="listbox" aria-expanded="false"><span data-timezone-current></span><i class="fa fa-chevron-down" aria-hidden="true"></i></button>
+                            <div class="database-timezone-popover hidden" data-timezone-popover>
+                                <label class="database-timezone-search"><i class="fa fa-search" aria-hidden="true"></i><span class="sr-only">@T["Preferences.TimeZoneSearch"]</span><input id="database-timezone-search" type="search" placeholder="@T["Preferences.TimeZoneSearch"]" autocomplete="off" /></label>
+                                <div class="database-timezone-options" data-timezone-options role="listbox" tabindex="-1"></div>
+                                <p class="database-timezone-empty hidden" data-timezone-empty>@T["Preferences.TimeZoneEmpty"]</p>
+                            </div>
+                        </div>
+                        <small>@T["Preferences.TimeZoneBrowser"]</small>
+                    </div>
+                </section>
+            </div>
+            <footer><span data-preferences-status role="status" aria-live="polite"></span><button type="button" class="btn btn-primary" data-preferences-close>@T["Preferences.Done"]</button></footer>
+        </div>
+    </div>
     <div id="database-action-modal" class="database-modal hidden" role="dialog" aria-modal="true"
          aria-labelledby="database-action-title" aria-describedby="database-action-description">
         <div class="database-modal-card database-action-card" tabindex="-1">
