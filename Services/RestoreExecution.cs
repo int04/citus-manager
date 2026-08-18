@@ -42,6 +42,7 @@ public sealed class RestoreRunExecutor(
         var monitor = MonitorAsync(run.Id, linked);
         var mutated = false;
         string? archive = null;
+        string? restoreList = null;
         try
         {
             var backup = run.BackupRun ?? throw new InvalidOperationException("Backup is unavailable.");
@@ -71,7 +72,8 @@ public sealed class RestoreRunExecutor(
                     catch (Exception exception) { logger.LogWarning("Backup destination {ProfileId} unavailable for restore ({ErrorType}).", candidate.StorageProfileId, exception.GetType().Name); }
                 }
                 if (sourceCopy is null) throw new InvalidDataException("No complete backup destination passed manifest verification.");
-                await metadata.ValidateCompatibleTargetAsync(sourceTopology, target, linked.Token);
+                await metadata.ValidateCompatibleTargetAsync(
+                    sourceTopology, target, run.IsSameTarget, linked.Token);
                 if (!run.IsSameTarget && !await IsEmptyTargetAsync(target, linked.Token))
                     throw new InvalidOperationException("Restore target is not empty. Use a new/empty database or explicit Admin same-target restore.");
                 var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(_options.SpoolPath))!);
@@ -84,6 +86,8 @@ public sealed class RestoreRunExecutor(
             await PhaseAsync(run, "Download/Decrypt", 2, async () =>
             {
                 Exception? lastFailure = null;
+                var listPath = Path.Combine(_options.SpoolPath, $"restore-{run.Id:N}.list");
+                restoreList = listPath;
                 var candidates = backup.DestinationCopies.Where(x => x.Status == BackupCopyStatus.Succeeded && x.ManifestCommitted)
                     .OrderByDescending(x => x.Id == sourceCopy.Id).ToList();
                 sourceCopy = null!; sourceProvider = null!;
@@ -98,15 +102,19 @@ public sealed class RestoreRunExecutor(
                         if (cacheArchive)
                         {
                             archive = Path.Combine(_options.SpoolPath, $"restore-{run.Id:N}.dump");
-                            await using var output = new FileStream(archive, FileMode.Create, FileAccess.Write, FileShare.None,
-                                1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                            await artifacts.ReadToAsync($"{candidate.ObjectPrefix}/manifest.v1.json", candidateProvider, output, _options.SpoolPath, linked.Token);
-                            run.ProcessedBytes = output.Length;
-                            await postgres.ListAsync(toolMajor, archive, linked.Token);
+                            run.ProcessedBytes = await CacheAndValidateArchiveAsync(
+                                archive,
+                                async output => await artifacts.ReadToAsync(
+                                    $"{candidate.ObjectPrefix}/manifest.v1.json", candidateProvider, output,
+                                    _options.SpoolPath, linked.Token),
+                                path => postgres.CreateRestoreListAsync(
+                                    toolMajor, path, listPath, run.IsSameTarget, linked.Token));
                         }
                         else
                         {
-                            await StreamArtifactAsync(candidate, candidateProvider, stream => postgres.ListStreamAsync(toolMajor, stream, linked.Token), linked.Token);
+                            await StreamArtifactAsync(candidate, candidateProvider,
+                                stream => postgres.CreateRestoreListStreamAsync(
+                                    toolMajor, stream, listPath, run.IsSameTarget, linked.Token), linked.Token);
                             run.ProcessedBytes = candidateManifest.ArchivePlaintextLength;
                         }
                         sourceCopy = candidate; sourceProvider = candidateProvider; manifest = candidateManifest;
@@ -116,6 +124,7 @@ public sealed class RestoreRunExecutor(
                     {
                         lastFailure = exception;
                         if (archive is not null && File.Exists(archive)) File.Delete(archive);
+                        if (restoreList is not null && File.Exists(restoreList)) File.Delete(restoreList);
                         archive = null;
                     }
                 }
@@ -127,13 +136,17 @@ public sealed class RestoreRunExecutor(
                 mutated = true;
                 if (run.IsSameTarget)
                     await DropBlockingForeignKeysAsync(target, linked.Token);
-                await RestorePhaseAsync(target, toolMajor, archive, sourceCopy, sourceProvider, "pre-data", run.IsSameTarget, 1, linked.Token);
+                await RestorePhaseAsync(target, toolMajor, archive, restoreList, sourceCopy, sourceProvider,
+                    "pre-data", run.IsSameTarget, 1, linked.Token);
             }, linked.Token);
-            await PhaseAsync(run, "CitusTopology", 4, () => metadata.ApplyTopologyAsync(sourceTopology, target, linked.Token), linked.Token);
+            await PhaseAsync(run, "CitusTopology", 4,
+                () => metadata.ApplyTopologyAsync(sourceTopology, target, run.IsSameTarget, linked.Token), linked.Token);
             await PhaseAsync(run, "Data", 5, async () =>
-                await RestorePhaseAsync(target, toolMajor, archive, sourceCopy, sourceProvider, "data", false, Math.Clamp(run.ParallelJobs, 1, 32), linked.Token), linked.Token);
+                await RestorePhaseAsync(target, toolMajor, archive, restoreList, sourceCopy, sourceProvider,
+                    "data", false, Math.Clamp(run.ParallelJobs, 1, 32), linked.Token), linked.Token);
             await PhaseAsync(run, "PostData", 6, async () =>
-                await RestorePhaseAsync(target, toolMajor, archive, sourceCopy, sourceProvider, "post-data", false, Math.Clamp(run.ParallelJobs, 1, 32), linked.Token), linked.Token);
+                await RestorePhaseAsync(target, toolMajor, archive, restoreList, sourceCopy, sourceProvider,
+                    "post-data", false, Math.Clamp(run.ParallelJobs, 1, 32), linked.Token), linked.Token);
             await PhaseAsync(run, "Validation", 7, () => metadata.ValidateRestoredTopologyAsync(sourceTopology, target, linked.Token), linked.Token);
 
             run.Status = RestoreRunStatus.Succeeded; run.CurrentPhase = "Succeeded"; run.CompletedAt = DateTimeOffset.UtcNow;
@@ -153,7 +166,8 @@ public sealed class RestoreRunExecutor(
             logger.LogError(exception, "Restore run {RunId} failed ({ErrorType}).", run.Id, exception.GetType().Name);
             run.Status = mutated ? RestoreRunStatus.RecoveryRequired : RestoreRunStatus.Failed;
             run.SafeError = Safe(exception);
-            if (exception is PostgresToolException toolFailure) run.DiagnosticTail = toolFailure.Diagnostic;
+            if (FindPostgresToolFailure(exception) is { } toolFailure)
+                run.DiagnosticTail = toolFailure.Diagnostic;
             await FinishAsync(run);
             try { await NotifyAsync(run, NotificationEvent.RestoreFailed, CancellationToken.None); } catch { }
         }
@@ -162,6 +176,7 @@ public sealed class RestoreRunExecutor(
             linked.Cancel();
             try { await monitor; } catch (OperationCanceledException) { }
             if (archive is not null && File.Exists(archive)) File.Delete(archive);
+            if (restoreList is not null && File.Exists(restoreList)) File.Delete(restoreList);
         }
     }
 
@@ -225,11 +240,14 @@ public sealed class RestoreRunExecutor(
         }
     }
 
-    private Task<PostgresToolResult> RestorePhaseAsync(ClusterProfile target, int postgresMajor, string? archive,
+    private Task<PostgresToolResult> RestorePhaseAsync(
+        ClusterProfile target, int postgresMajor, string? archive, string? restoreList,
         BackupDestinationCopy copy, IBackupStorageProvider provider, string section, bool clean, int jobs, CancellationToken ct) =>
         archive is not null
-            ? postgres.RestoreFileAsync(target, postgresMajor, archive, section, clean, jobs, null, ct)
-            : StreamArtifactAsync(copy, provider, stream => postgres.RestoreStreamAsync(target, postgresMajor, stream, section, clean, null, ct), ct);
+            ? postgres.RestoreFileAsync(target, postgresMajor, archive, section, clean, jobs, restoreList, null, ct)
+            : StreamArtifactAsync(copy, provider,
+                stream => postgres.RestoreStreamAsync(
+                    target, postgresMajor, stream, section, clean, restoreList, null, ct), ct);
 
     private async Task<PostgresToolResult> StreamArtifactAsync(
         BackupDestinationCopy copy, IBackupStorageProvider provider,
@@ -259,6 +277,32 @@ public sealed class RestoreRunExecutor(
         var profile = JsonSerializer.Deserialize<StorageProfileVersion>(backupSecrets.Unprotect(copy.ProtectedStorageSnapshot), JsonOptions)
             ?? throw new InvalidOperationException("Storage snapshot is invalid.");
         return storageFactory.Create(profile);
+    }
+
+    internal static async Task<long> CacheAndValidateArchiveAsync(
+        string archivePath,
+        Func<Stream, Task> writeArchive,
+        Func<string, Task> validateArchive)
+    {
+        long length;
+        await using (var output = new FileStream(
+                         archivePath, FileMode.Create, FileAccess.Write, FileShare.None,
+                         1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            await writeArchive(output);
+            length = output.Length;
+        }
+
+        await validateArchive(archivePath);
+        return length;
+    }
+
+    internal static PostgresToolException? FindPostgresToolFailure(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+            if (current is PostgresToolException toolFailure)
+                return toolFailure;
+        return null;
     }
 
     private async Task MonitorAsync(Guid id, CancellationTokenSource cancellation)

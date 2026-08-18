@@ -8,7 +8,9 @@ using Npgsql;
 namespace CitusManager.Services;
 
 public sealed record CitusBackupCapability(string Name, string Arguments);
-public sealed record CitusBackupNode(string Host, int Port, string Role, bool Active, bool HasMetadata, bool MetadataSynced);
+public sealed record CitusBackupNode(
+    string Host, int Port, string Role, bool Active, bool HasMetadata, bool MetadataSynced,
+    int? GroupId = null, bool? ShouldHaveShards = null, string? NodeCluster = null);
 public sealed record CitusBackupTable(
     string Schema, string Name, string Type, string? DistributionColumn, int? ColocationId,
     int? ShardCount, string? AccessMethod, bool IsPartition, bool IsPartitionRoot);
@@ -29,13 +31,19 @@ public sealed record CitusBackupTopology(
 public interface ICitusBackupMetadataCollector
 {
     Task<CitusBackupTopology> CollectAsync(ClusterProfile cluster, CancellationToken cancellationToken);
-    Task ValidateCompatibleTargetAsync(CitusBackupTopology source, ClusterProfile target, CancellationToken cancellationToken);
-    Task ApplyTopologyAsync(CitusBackupTopology source, ClusterProfile target, CancellationToken cancellationToken);
+    Task ValidateCompatibleTargetAsync(
+        CitusBackupTopology source, ClusterProfile target, bool allowSameTargetNodeRecovery,
+        CancellationToken cancellationToken);
+    Task ApplyTopologyAsync(
+        CitusBackupTopology source, ClusterProfile target, bool recoverSameTargetNodes,
+        CancellationToken cancellationToken);
     Task ValidateRestoredTopologyAsync(CitusBackupTopology source, ClusterProfile target, CancellationToken cancellationToken);
 }
 
 public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connections) : ICitusBackupMetadataCollector
 {
+    internal const string SchemaDistributeSql = "SELECT citus_schema_distribute($1::regnamespace)";
+
     public async Task<CitusBackupTopology> CollectAsync(ClusterProfile cluster, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create(cluster);
@@ -51,7 +59,9 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
             SELECT p.proname, pg_get_function_identity_arguments(p.oid)
             FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE p.proname = ANY(ARRAY['create_distributed_table','create_reference_table',
-              'citus_add_local_table_to_metadata','citus_schema_distribute'])
+              'citus_add_local_table_to_metadata','citus_schema_distribute',
+              'citus_set_coordinator_host','citus_add_node','citus_activate_node',
+              'citus_set_node_property','start_metadata_sync_to_node'])
             ORDER BY p.proname, 2
             """, connection))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -59,12 +69,16 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
 
         var nodes = new List<CitusBackupNode>();
         await using (var command = new NpgsqlCommand("""
-            SELECT nodename, nodeport, noderole::text, isactive, hasmetadata, metadatasynced
+            SELECT nodename, nodeport, noderole::text, isactive, hasmetadata, metadatasynced,
+                   groupid, shouldhaveshards, nodecluster
             FROM pg_dist_node ORDER BY groupid, nodeid
             """, connection))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             while (await reader.ReadAsync(cancellationToken))
-                nodes.Add(new(reader.GetString(0), reader.GetInt32(1), reader.GetString(2), reader.GetBoolean(3), reader.GetBoolean(4), reader.GetBoolean(5)));
+                nodes.Add(new(
+                    reader.GetString(0), reader.GetInt32(1), reader.GetString(2), reader.GetBoolean(3),
+                    reader.GetBoolean(4), reader.GetBoolean(5), reader.GetInt32(6), reader.GetBoolean(7),
+                    reader.GetString(8)));
 
         var distributedSchemas = new List<string>();
         if (await RelationExistsAsync(connection, "citus_schemas", cancellationToken))
@@ -128,7 +142,8 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
     }
 
     public async Task ValidateCompatibleTargetAsync(
-        CitusBackupTopology source, ClusterProfile target, CancellationToken cancellationToken)
+        CitusBackupTopology source, ClusterProfile target, bool allowSameTargetNodeRecovery,
+        CancellationToken cancellationToken)
     {
         var current = await CollectAsync(target, cancellationToken);
         if (ParsePostgresMajor(current.PostgreSqlVersion) < ParsePostgresMajor(source.PostgreSqlVersion))
@@ -138,14 +153,30 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
         var required = source.Tables.Select(x => x.Type).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         RequireCapability(current, required.Contains("distributed", StringComparer.OrdinalIgnoreCase), "create_distributed_table");
         RequireCapability(current, required.Contains("reference", StringComparer.OrdinalIgnoreCase), "create_reference_table");
-        RequireCapability(current, required.Contains("schema", StringComparer.OrdinalIgnoreCase), "citus_schema_distribute");
+        RequireCapability(current,
+            source.DistributedSchemas.Count > 0 || required.Contains("schema", StringComparer.OrdinalIgnoreCase),
+            "citus_schema_distribute", "regnamespace");
         RequireCapability(current, required.Any(x => x.Contains("local", StringComparison.OrdinalIgnoreCase) && x != "local"), "citus_add_local_table_to_metadata");
-        if (current.Nodes.Any(x => !x.Active || x.HasMetadata && !x.MetadataSynced))
-            throw new InvalidOperationException("Target contains inactive or unsynchronized Citus nodes.");
         var sourceWorkers = source.Nodes.Count(x => x.Active && x.Role.Equals("primary", StringComparison.OrdinalIgnoreCase));
         var targetWorkers = current.Nodes.Count(x => x.Active && x.Role.Equals("primary", StringComparison.OrdinalIgnoreCase));
-        if (targetWorkers < sourceWorkers)
-            throw new InvalidOperationException($"Target has fewer active primary Citus nodes ({targetWorkers}) than source ({sourceWorkers}).");
+        var unhealthyTargetNodes = current.Nodes.Any(x => !x.Active || x.HasMetadata && !x.MetadataSynced);
+        if (targetWorkers < sourceWorkers || unhealthyTargetNodes)
+        {
+            if (!allowSameTargetNodeRecovery || !CanRecoverSameTargetNodes(source, target))
+            {
+                if (unhealthyTargetNodes)
+                    throw new InvalidOperationException("Target contains inactive or unsynchronized Citus nodes.");
+                throw new InvalidOperationException($"Target has fewer active primary Citus nodes ({targetWorkers}) than source ({sourceWorkers}).");
+            }
+            RequireCapability(current, true, "citus_set_coordinator_host");
+            RequireCapability(current, true, "citus_add_node");
+            if (current.Nodes.Any(x => !x.Active))
+                RequireCapability(current, true, "citus_activate_node");
+            if (source.Nodes.Any(x => x.ShouldHaveShards.HasValue))
+                RequireCapability(current, true, "citus_set_node_property");
+            if (source.Nodes.Any(x => x.Active && x.HasMetadata))
+                RequireCapability(current, true, "start_metadata_sync_to_node");
+        }
         await using var targetConnection = connections.Create(target);
         await targetConnection.OpenAsync(cancellationToken);
         foreach (var extension in source.Extensions.Where(x => x.Name is not ("plpgsql" or "citus")))
@@ -158,10 +189,13 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
     }
 
     public async Task ApplyTopologyAsync(
-        CitusBackupTopology source, ClusterProfile target, CancellationToken cancellationToken)
+        CitusBackupTopology source, ClusterProfile target, bool recoverSameTargetNodes,
+        CancellationToken cancellationToken)
     {
         await using var connection = connections.Create(target);
         await connection.OpenAsync(cancellationToken);
+        if (recoverSameTargetNodes)
+            await EnsureSameTargetNodesAsync(connection, source, target, cancellationToken);
         // Older manifests could miss citus_schemas because the collector looked for
         // the view in pg_catalog. Table type "schema" remains sufficient to recover it.
         var distributedSchemas = source.DistributedSchemas
@@ -170,7 +204,7 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
             .Order(StringComparer.Ordinal)
             .ToList();
         foreach (var schema in distributedSchemas)
-            await ExecuteAsync(connection, "SELECT citus_schema_distribute($1)", [schema], cancellationToken);
+            await ExecuteAsync(connection, SchemaDistributeSql, [schema], cancellationToken);
 
         var eligible = source.Tables.Where(x => !x.IsPartition && !distributedSchemas.Contains(x.Schema, StringComparer.Ordinal)).ToList();
         foreach (var table in eligible.Where(x => x.Type.Equals("reference", StringComparison.OrdinalIgnoreCase)))
@@ -239,10 +273,116 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
                 throw new InvalidOperationException($"Restored extension mismatch: {expected.Name} {expected.Version}.");
     }
 
-    private static void RequireCapability(CitusBackupTopology target, bool needed, string name)
+    internal static bool CanRecoverSameTargetNodes(CitusBackupTopology source, ClusterProfile target) =>
+        ResolveSourceCoordinator(source, target) is not null &&
+        source.Nodes.Where(IsActivePrimary)
+            .Select(x => (x.Host, x.Port))
+            .Distinct()
+            .Count() == source.Nodes.Count(IsActivePrimary);
+
+    internal static CitusBackupNode? ResolveSourceCoordinator(CitusBackupTopology source, ClusterProfile target)
     {
-        if (needed && !target.Capabilities.Any(x => x.Name == name))
-            throw new InvalidOperationException($"Target Citus lacks required capability {name}.");
+        var activePrimary = source.Nodes.Where(IsActivePrimary).ToList();
+        var explicitCoordinator = activePrimary.Where(x => x.GroupId == 0).ToList();
+        if (explicitCoordinator.Count == 1) return explicitCoordinator[0];
+        var endpointPortMatch = activePrimary.Where(x => x.Port == target.Port).ToList();
+        return endpointPortMatch.Count == 1 ? endpointPortMatch[0] : null;
+    }
+
+    private async Task EnsureSameTargetNodesAsync(
+        NpgsqlConnection connection, CitusBackupTopology source, ClusterProfile target, CancellationToken ct)
+    {
+        var expected = source.Nodes.Where(IsActivePrimary).ToList();
+        if (expected.Count == 0) return;
+        var current = await ReadNodesAsync(connection, ct);
+        if (current.Count(x => IsActivePrimary(x)) >= expected.Count &&
+            current.All(x => x.Active && (!x.HasMetadata || x.MetadataSynced)))
+            return;
+
+        var sourceCoordinator = ResolveSourceCoordinator(source, target)
+            ?? throw new InvalidOperationException(
+                "Backup topology cannot identify the coordinator safely; automatic same-target node recovery is blocked.");
+        var currentCoordinator = current.SingleOrDefault(x => x.GroupId == 0);
+        if (currentCoordinator is null)
+        {
+            await ExecuteAsync(connection, "SELECT citus_set_coordinator_host($1, $2)",
+                [sourceCoordinator.Host, sourceCoordinator.Port], ct);
+            current = await ReadNodesAsync(connection, ct);
+        }
+
+        foreach (var sourceNode in expected.Where(x => !ReferenceEquals(x, sourceCoordinator)))
+        {
+            var actual = current.SingleOrDefault(x =>
+                x.Host.Equals(sourceNode.Host, StringComparison.OrdinalIgnoreCase) && x.Port == sourceNode.Port);
+            if (actual is null)
+            {
+                await ExecuteAsync(connection, "SELECT citus_add_node($1, $2)", [sourceNode.Host, sourceNode.Port], ct);
+                current = await ReadNodesAsync(connection, ct);
+                actual = current.Single(x =>
+                    x.Host.Equals(sourceNode.Host, StringComparison.OrdinalIgnoreCase) && x.Port == sourceNode.Port);
+            }
+            else if (!actual.Active)
+            {
+                await ExecuteAsync(connection, "SELECT citus_activate_node($1, $2)", [sourceNode.Host, sourceNode.Port], ct);
+                current = await ReadNodesAsync(connection, ct);
+                actual = current.Single(x =>
+                    x.Host.Equals(sourceNode.Host, StringComparison.OrdinalIgnoreCase) && x.Port == sourceNode.Port);
+            }
+
+            if (sourceNode.ShouldHaveShards is { } shouldHaveShards && actual.ShouldHaveShards != shouldHaveShards)
+                await ExecuteAsync(connection,
+                    "SELECT citus_set_node_property($1, $2, 'shouldhaveshards', $3)",
+                    [sourceNode.Host, sourceNode.Port, shouldHaveShards], ct);
+            if (sourceNode.HasMetadata && (!actual.HasMetadata || !actual.MetadataSynced))
+                await ExecuteAsync(connection, "SELECT start_metadata_sync_to_node($1, $2)",
+                    [sourceNode.Host, sourceNode.Port], ct);
+        }
+
+        current = await ReadNodesAsync(connection, ct);
+        var activePrimaryCount = current.Count(IsActivePrimary);
+        if (activePrimaryCount < expected.Count || current.Any(x => !x.Active || x.HasMetadata && !x.MetadataSynced))
+            throw new InvalidOperationException(
+                $"Same-target Citus node recovery incomplete: expected {expected.Count} active primary nodes, found {activePrimaryCount}.");
+    }
+
+    private static async Task<List<CitusBackupNode>> ReadNodesAsync(NpgsqlConnection connection, CancellationToken ct)
+    {
+        var nodes = new List<CitusBackupNode>();
+        await using var command = new NpgsqlCommand("""
+            SELECT nodename, nodeport, noderole::text, isactive, hasmetadata, metadatasynced,
+                   groupid, shouldhaveshards, nodecluster
+            FROM pg_dist_node ORDER BY groupid, nodeid
+            """, connection);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            nodes.Add(new(
+                reader.GetString(0), reader.GetInt32(1), reader.GetString(2), reader.GetBoolean(3),
+                reader.GetBoolean(4), reader.GetBoolean(5), reader.GetInt32(6), reader.GetBoolean(7),
+                reader.GetString(8)));
+        return nodes;
+    }
+
+    private static bool IsActivePrimary(CitusBackupNode node) =>
+        node.Active && node.Role.Equals("primary", StringComparison.OrdinalIgnoreCase);
+
+    private static void RequireCapability(
+        CitusBackupTopology target, bool needed, string name, string? singleArgumentType = null)
+    {
+        if (!needed || HasCapability(target.Capabilities, name, singleArgumentType)) return;
+        var signature = singleArgumentType is null ? name : $"{name}({singleArgumentType})";
+        throw new InvalidOperationException($"Target Citus lacks required capability {signature}.");
+    }
+
+    internal static bool HasCapability(
+        IReadOnlyList<CitusBackupCapability> capabilities, string name, string? singleArgumentType = null) =>
+        capabilities.Any(capability => capability.Name == name &&
+            (singleArgumentType is null || HasSingleArgumentType(capability.Arguments, singleArgumentType)));
+
+    private static bool HasSingleArgumentType(string arguments, string expectedType)
+    {
+        if (arguments.Contains(',', StringComparison.Ordinal)) return false;
+        var tokens = arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return tokens.Length > 0 && tokens[^1].Equals(expectedType, StringComparison.OrdinalIgnoreCase);
     }
     private static async Task<string> ScalarAsync(NpgsqlConnection connection, string sql, CancellationToken ct) =>
         Convert.ToString(await new NpgsqlCommand(sql, connection).ExecuteScalarAsync(ct), CultureInfo.InvariantCulture)

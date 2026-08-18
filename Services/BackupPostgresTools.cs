@@ -26,12 +26,18 @@ public interface IPostgresToolRunner
         CancellationToken cancellationToken);
     Task<PostgresToolResult> RestoreFileAsync(
         ClusterProfile target, int postgresMajor, string archivePath, string section, bool clean, int jobs,
-        Func<long, ValueTask>? progress, CancellationToken cancellationToken);
+        string? restoreListPath, Func<long, ValueTask>? progress, CancellationToken cancellationToken);
     Task<PostgresToolResult> RestoreStreamAsync(
         ClusterProfile target, int postgresMajor, Stream archive, string section, bool clean,
-        Func<long, ValueTask>? progress, CancellationToken cancellationToken);
+        string? restoreListPath, Func<long, ValueTask>? progress, CancellationToken cancellationToken);
     Task<PostgresToolResult> ListAsync(int postgresMajor, string archivePath, CancellationToken cancellationToken);
     Task<PostgresToolResult> ListStreamAsync(int postgresMajor, Stream archive, CancellationToken cancellationToken);
+    Task<PostgresToolResult> CreateRestoreListAsync(
+        int postgresMajor, string archivePath, string restoreListPath, bool preserveCitusExtension,
+        CancellationToken cancellationToken);
+    Task<PostgresToolResult> CreateRestoreListStreamAsync(
+        int postgresMajor, Stream archive, string restoreListPath, bool preserveCitusExtension,
+        CancellationToken cancellationToken);
 }
 
 public sealed class PostgresToolchainOptions
@@ -140,7 +146,8 @@ public sealed class PostgresToolRunner(
         var selectedCompression = string.IsNullOrWhiteSpace(compression) ? "gzip:5" : compression.Trim();
         var args = new List<string>
         {
-            "--format=custom", $"--compress={selectedCompression}", "--verbose", "--no-password",
+            "--format=custom", $"--compress={selectedCompression}", "--exclude-extension=citus",
+            "--verbose", "--no-password",
             "--host", source.Host, "--port", source.Port.ToString(CultureInfo.InvariantCulture),
             "--dbname", source.Database
         };
@@ -150,19 +157,9 @@ public sealed class PostgresToolRunner(
 
     public async Task<PostgresToolResult> RestoreFileAsync(
         ClusterProfile target, int postgresMajor, string archivePath, string section, bool clean, int jobs,
-        Func<long, ValueTask>? progress, CancellationToken cancellationToken)
+        string? restoreListPath, Func<long, ValueTask>? progress, CancellationToken cancellationToken)
     {
-        if (section is not ("pre-data" or "data" or "post-data"))
-            throw new ArgumentException("Restore section must be pre-data, data, or post-data.", nameof(section));
-        var args = new List<string>
-        {
-            "--format=custom", "--exit-on-error", "--verbose", "--no-password",
-            "--section", section, "--host", target.Host,
-            "--port", target.Port.ToString(CultureInfo.InvariantCulture), "--dbname", target.Database,
-            "--jobs", Math.Clamp(jobs, 1, 32).ToString(CultureInfo.InvariantCulture)
-        };
-        if (clean && section == "pre-data") args.AddRange(["--clean", "--if-exists"]);
-        if (!string.IsNullOrWhiteSpace(target.Username)) args.AddRange(["--username", target.Username]);
+        var args = BuildRestoreArguments(target, section, clean, jobs, restoreListPath);
         args.Add(archivePath);
         var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
         return await WithCredentialsAsync(target, (environment, token) =>
@@ -182,21 +179,88 @@ public sealed class PostgresToolRunner(
             drainInputAfterConsumerCloses: true);
     }
 
+    public async Task<PostgresToolResult> CreateRestoreListAsync(
+        int postgresMajor, string archivePath, string restoreListPath, bool preserveCitusExtension,
+        CancellationToken cancellationToken)
+    {
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
+        return await CreateRestoreListCoreAsync(
+            output => RunAsync(toolchain.PgRestorePath, ["--list", archivePath], null, output, null, cancellationToken),
+            restoreListPath, preserveCitusExtension, cancellationToken);
+    }
+
+    public async Task<PostgresToolResult> CreateRestoreListStreamAsync(
+        int postgresMajor, Stream archive, string restoreListPath, bool preserveCitusExtension,
+        CancellationToken cancellationToken)
+    {
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
+        return await CreateRestoreListCoreAsync(
+            output => RunAsync(toolchain.PgRestorePath, ["--list"], null, output, null, cancellationToken,
+                archive, drainInputAfterConsumerCloses: true),
+            restoreListPath, preserveCitusExtension, cancellationToken);
+    }
+
     public Task<PostgresToolResult> RestoreStreamAsync(
         ClusterProfile target, int postgresMajor, Stream archive, string section, bool clean,
-        Func<long, ValueTask>? progress, CancellationToken cancellationToken)
+        string? restoreListPath, Func<long, ValueTask>? progress, CancellationToken cancellationToken)
+    {
+        var args = BuildRestoreArguments(target, section, clean, 1, restoreListPath);
+        return RestoreStreamCoreAsync(target, postgresMajor, archive, args, progress, cancellationToken);
+    }
+
+    internal static List<string> BuildRestoreArguments(
+        ClusterProfile target, string section, bool clean, int jobs, string? restoreListPath)
     {
         if (section is not ("pre-data" or "data" or "post-data"))
             throw new ArgumentException("Restore section must be pre-data, data, or post-data.", nameof(section));
         var args = new List<string>
         {
-            "--format=custom", "--exit-on-error", "--verbose", "--no-password", "--jobs", "1",
-            "--section", section, "--host", target.Host, "--port", target.Port.ToString(CultureInfo.InvariantCulture),
-            "--dbname", target.Database
+            "--format=custom", "--exit-on-error", "--verbose", "--no-password",
+            "--section", section, "--host", target.Host,
+            "--port", target.Port.ToString(CultureInfo.InvariantCulture), "--dbname", target.Database,
+            "--jobs", Math.Clamp(jobs, 1, 32).ToString(CultureInfo.InvariantCulture)
         };
         if (clean && section == "pre-data") args.AddRange(["--clean", "--if-exists"]);
+        if (!string.IsNullOrWhiteSpace(restoreListPath)) args.AddRange(["--use-list", restoreListPath]);
         if (!string.IsNullOrWhiteSpace(target.Username)) args.AddRange(["--username", target.Username]);
-        return RestoreStreamCoreAsync(target, postgresMajor, archive, args, progress, cancellationToken);
+        return args;
+    }
+
+    private async Task<PostgresToolResult> CreateRestoreListCoreAsync(
+        Func<Stream, Task<PostgresToolResult>> writeRawList, string restoreListPath,
+        bool preserveCitusExtension, CancellationToken cancellationToken)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(restoreListPath))!;
+        Directory.CreateDirectory(directory);
+        var rawPath = Path.Combine(directory, $".{Path.GetFileName(restoreListPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            PostgresToolResult result;
+            await using (var output = new FileStream(rawPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                             64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                result = await writeRawList(output);
+            var lines = await File.ReadAllLinesAsync(rawPath, cancellationToken);
+            await File.WriteAllLinesAsync(
+                restoreListPath, FilterRestoreList(lines, preserveCitusExtension), new UTF8Encoding(false), cancellationToken);
+            return result;
+        }
+        finally
+        {
+            if (File.Exists(rawPath)) File.Delete(rawPath);
+        }
+    }
+
+    internal static IReadOnlyList<string> FilterRestoreList(
+        IReadOnlyList<string> lines, bool preserveCitusExtension) =>
+        preserveCitusExtension
+            ? lines.Select(line => IsCitusExtensionEntry(line) ? $";{line}" : line).ToList()
+            : lines.ToList();
+
+    internal static bool IsCitusExtensionEntry(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith(';')) return false;
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            line, @"^\d+;\s+\d+\s+\d+\s+EXTENSION\s+-\s+citus\s*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     }
 
     private async Task<PostgresToolResult> RestoreStreamCoreAsync(ClusterProfile target, int postgresMajor,

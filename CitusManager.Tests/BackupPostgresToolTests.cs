@@ -21,6 +21,7 @@ public sealed class BackupPostgresToolTests
         var arguments = PostgresToolRunner.BuildDumpArguments(source, new PostgresToolOptions().Compression);
 
         Assert.Contains("--compress=gzip:5", arguments);
+        Assert.Contains("--exclude-extension=citus", arguments);
         Assert.DoesNotContain(arguments, argument => argument.Contains("zstd", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -55,6 +56,42 @@ public sealed class BackupPostgresToolTests
 
         Assert.Equal(source.Length, source.Position);
         Assert.True(activityCount >= 3);
+    }
+
+    [Fact]
+    public void Same_target_restore_list_excludes_only_citus_extension_entry()
+    {
+        string[] lines =
+        [
+            "; Archive created at 2026-08-18",
+            "1; 3079 16385 EXTENSION - citus ",
+            "4378; 0 0 COMMENT - EXTENSION citus ",
+            "9; 2615 17799 SCHEMA - app postgres"
+        ];
+
+        var filtered = PostgresToolRunner.FilterRestoreList(lines, preserveCitusExtension: true);
+
+        Assert.Equal(";1; 3079 16385 EXTENSION - citus ", filtered[1]);
+        Assert.Equal(lines[2], filtered[2]);
+        Assert.Equal(lines[3], filtered[3]);
+    }
+
+    [Fact]
+    public void Same_target_restore_uses_filtered_toc_for_clean_pre_data()
+    {
+        var target = new ClusterProfile
+        {
+            Name = "target", Host = "coordinator", Port = 5432, Database = "app", Username = "restore"
+        };
+
+        var arguments = PostgresToolRunner.BuildRestoreArguments(
+            target, "pre-data", clean: true, jobs: 2, restoreListPath: "restore.list");
+
+        Assert.Contains("--clean", arguments);
+        Assert.Contains("--if-exists", arguments);
+        var listIndex = arguments.IndexOf("--use-list");
+        Assert.True(listIndex >= 0);
+        Assert.Equal("restore.list", arguments[listIndex + 1]);
     }
 
     private sealed class BrokenPipeStream : MemoryStream
