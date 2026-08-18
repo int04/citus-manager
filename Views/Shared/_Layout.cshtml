@@ -15,6 +15,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
     <title>@ViewData["Title"] · Citus Manager</title>
+    <link rel="icon" href="~/favicon.ico" sizes="any" asp-append-version="true" />
+    <link rel="icon" type="image/png" href="~/icons/icon-16.png" sizes="16x16" asp-append-version="true" />
+    <link rel="icon" type="image/png" href="~/icons/icon-32.png" sizes="32x32" asp-append-version="true" />
+    <link rel="icon" type="image/png" href="~/icons/icon-192.png" sizes="192x192" asp-append-version="true" />
+    <link rel="apple-touch-icon" href="~/icons/icon-180.png" sizes="180x180" asp-append-version="true" />
     <link rel="stylesheet" href="~/lib/font-awesome/css/font-awesome.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/localization.css" asp-append-version="true" />
@@ -1030,9 +1035,7 @@ else if (User.Identity?.IsAuthenticated == true)
     <div class="app-shell">
         <aside class="sidebar" aria-label="@T["Layout.MainNavigation"]">
             <a class="brand" asp-controller="Home" asp-action="Index" aria-label="@T["Layout.HomeLabel"]">
-                <span class="brand-mark" aria-hidden="true">
-                    <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
-                </span>
+                <img class="size-10 shrink-0 rounded-xl shadow-lg shadow-indigo-600/20 ring-1 ring-white/20" src="~/images/brand/logo.png" width="40" height="40" alt="" aria-hidden="true" />
                 <span><strong>Citus Manager</strong><small>Distributed DB control</small></span>
             </a>
             <p class="mt-6 hidden px-3 text-[10px] font-bold uppercase tracking-[.16em] text-slate-400 lg:block dark:text-slate-600">Workspace</p>

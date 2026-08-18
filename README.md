@@ -1,5 +1,7 @@
 # Citus Manager
 
+![Citus Manager](docs/assets/banner.png)
+
 > A self-hosted web control plane for operating existing PostgreSQL/Citus clusters with safer, observable workflows.
 
 [English](README.md) · [Tiếng Việt](README_VI.md)
@@ -131,7 +133,59 @@ The separate control database stores users, encrypted connection profiles, plans
 
 ## Screenshots
 
-**Coming soon.**
+### Fleet operations
+
+Fleet overview with cluster health, active operations, and recovery attention.
+
+![Fleet overview](docs/assets/screenshots/fleet-overview.webp)
+
+Cluster topology displays query coordinators, workers, placements, and distributed-table inventory.
+
+![Cluster topology](docs/assets/screenshots/cluster-topology.webp)
+
+Worker actions make destructive paths explicit and keep drain/removal separate.
+
+![Worker actions](docs/assets/screenshots/worker-actions.webp)
+
+Adding a worker requires an explicit safety confirmation before creating a rebalance plan.
+
+![Add worker safety confirmation](docs/assets/screenshots/add-worker-safety.webp)
+
+### Backup and restore
+
+Backup policy, completed backup records, and restore history in one operational view.
+
+![Backup and restore](docs/assets/screenshots/backup-restore.webp)
+
+### Database workbench
+
+Browse table data directly through the database workspace.
+
+![Database data grid](docs/assets/screenshots/database-grid.webp)
+
+Write and run SQL with schema-aware autocomplete and retained history.
+
+![SQL console editor](docs/assets/screenshots/sql-console-editor.webp)
+
+Inspect query results with paging, filtering, and object actions.
+
+![SQL console results](docs/assets/screenshots/sql-console-results.webp)
+
+Design tables visually with a generated, read-only SQL preview before saving.
+
+![Table designer](docs/assets/screenshots/table-designer.webp)
+
+Inspect distribution, partitioning, and exact physical size for a Citus table.
+
+![Table inspector](docs/assets/screenshots/table-inspector.webp)
+
+Create future range partitions from a guarded workflow.
+
+![Create range partitions](docs/assets/screenshots/create-range-partitions.webp)
+
+Merge closed range partitions through an explicit confirmation step.
+
+![Merge range partitions](docs/assets/screenshots/merge-range-partitions.webp)
 
 ## Project status
 

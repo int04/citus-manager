@@ -1,5 +1,7 @@
 # Citus Manager
 
+![Citus Manager](docs/assets/banner.png)
+
 > Control plane web tự host để vận hành nhiều cụm PostgreSQL/Citus hiện có theo quy trình an toàn, có thể quan sát và kiểm toán.
 
 [English](README.md) | **Tiếng Việt**
@@ -135,7 +137,59 @@ Control DB chỉ lưu cấu hình, trạng thái operation, metric, audit và me
 
 ## Ảnh chụp màn hình
 
-**Sắp cập nhật.**
+### Vận hành fleet
+
+Tổng quan fleet với sức khỏe cluster, operation đang chạy và trạng thái cần xử lý.
+
+![Tổng quan fleet](docs/assets/screenshots/fleet-overview.webp)
+
+Topology cluster hiển thị query coordinator, worker, placement và inventory bảng phân tán.
+
+![Topology cluster](docs/assets/screenshots/cluster-topology.webp)
+
+Thao tác worker tách biệt rõ drain và remove để nhấn mạnh đường đi có tác động.
+
+![Thao tác worker](docs/assets/screenshots/worker-actions.webp)
+
+Thêm worker yêu cầu xác nhận an toàn trước khi tạo rebalance plan.
+
+![Xác nhận an toàn khi thêm worker](docs/assets/screenshots/add-worker-safety.webp)
+
+### Backup và restore
+
+Backup policy, bản ghi backup hoàn thành và lịch sử restore trong một màn hình vận hành.
+
+![Backup và restore](docs/assets/screenshots/backup-restore.webp)
+
+### Database workbench
+
+Duyệt dữ liệu bảng trực tiếp trong database workspace.
+
+![Lưới dữ liệu](docs/assets/screenshots/database-grid.webp)
+
+Viết và chạy SQL với autocomplete theo schema cùng lịch sử truy vấn.
+
+![SQL console](docs/assets/screenshots/sql-console-editor.webp)
+
+Xem kết quả truy vấn với paging, filter và object action.
+
+![Kết quả SQL console](docs/assets/screenshots/sql-console-results.webp)
+
+Thiết kế bảng trực quan, có SQL preview chỉ đọc trước khi lưu.
+
+![Table designer](docs/assets/screenshots/table-designer.webp)
+
+Kiểm tra distribution, partitioning và kích thước vật lý chính xác của bảng Citus.
+
+![Table inspector](docs/assets/screenshots/table-inspector.webp)
+
+Tạo range partition tương lai qua workflow có guardrail.
+
+![Tạo range partition](docs/assets/screenshots/create-range-partitions.webp)
+
+Gộp range partition đã đóng qua bước xác nhận rõ ràng.
+
+![Gộp range partition](docs/assets/screenshots/merge-range-partitions.webp)
 
 ## Trạng thái dự án
 
