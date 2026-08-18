@@ -3,15 +3,53 @@
 @using Microsoft.Extensions.Localization
 @inject IStringLocalizer<AccountResource> T
 @{ ViewData["Title"] = T["Login.Title"]; }
-<section class="auth-card">
-    <div class="brand auth-brand"><span class="brand-mark">CM</span><span><strong>Citus Manager</strong><small>Distributed DB control</small></span></div>
-    <p class="eyebrow">@T["Login.Eyebrow"]</p><h1>@T["Login.Title"]</h1><p>@T["Login.Description"]</p>
-    <form asp-action="Login" asp-route-returnUrl="@ViewData["ReturnUrl"]" method="post">
+<section class="auth-card login-card" aria-labelledby="login-title">
+    <div class="login-brand" aria-label="Citus Manager">
+        <span class="login-brand-mark" aria-hidden="true">CM</span>
+        <strong>Citus Manager</strong>
+    </div>
+
+    <form asp-action="Login" asp-route-returnUrl="@ViewData["ReturnUrl"]" method="post" class="login-form">
         <div asp-validation-summary="ModelOnly" class="validation-summary" role="alert"></div>
-        <div class="field"><label asp-for="Email">Email</label><input asp-for="Email" autocomplete="email" /><span asp-validation-for="Email"></span></div>
-        <div class="field"><label asp-for="Password">@T["Field.Password"]</label><input asp-for="Password" autocomplete="current-password" /><span asp-validation-for="Password"></span></div>
-        <label class="check-field"><input asp-for="RememberMe" /><span>@T["Login.RememberMe"]</span></label>
+        <div class="field"><label asp-for="Email">Email</label><input asp-for="Email" autocomplete="email" inputmode="email" autofocus /><span asp-validation-for="Email" aria-live="polite"></span></div>
+        <div class="field"><label asp-for="Password">@T["Field.Password"]</label><input asp-for="Password" autocomplete="current-password" /><span asp-validation-for="Password" aria-live="polite"></span></div>
+        <label class="check-field"><input asp-for="RememberMe" /><span><strong>@T["Login.RememberMe"]</strong></span></label>
         <button class="btn btn-primary w-100" type="submit">@T["Login.Submit"]</button>
     </form>
 </section>
+
+@section Styles {
+    <style>
+        .auth-shell:has(.login-card) { background: #111827; }
+        .auth-shell:has(.login-card)::before,
+        .auth-shell:has(.login-card)::after { display: none; }
+
+        .login-card {
+            max-width: 25rem;
+            padding: 2rem;
+            background: #161d27;
+            border-color: rgba(255, 255, 255, .12);
+            border-radius: .75rem;
+            box-shadow: none;
+            backdrop-filter: none;
+        }
+
+        .login-brand { align-items: center; display: flex; gap: .65rem; font-size: .875rem; letter-spacing: -.01em; }
+        .login-brand-mark { align-items: center; border: 1px solid rgba(255, 255, 255, .22); border-radius: .35rem; color: #e2e8f0; display: inline-flex; font-family: var(--font-mono); font-size: .68rem; font-weight: 700; height: 1.8rem; justify-content: center; letter-spacing: .04em; width: 1.8rem; }
+        .login-form { display: block; margin-top: 1.75rem; }
+        .login-form .field { display: grid; gap: .35rem; margin: 0 0 1rem; }
+        .login-form .field label { color: #cbd5e1; font-size: .78rem; font-weight: 600; margin-bottom: .35rem; }
+        .login-form .field input { background: #0f1520; border-color: rgba(255, 255, 255, .14); border-radius: .45rem; min-height: 2.75rem; }
+        .login-form .field input:focus { border-color: #818cf8; }
+        .login-form .check-field { align-items: center; background: #101722; border-color: rgba(255, 255, 255, .14); color: #e2e8f0; font-size: .78rem; margin: 0 0 1rem; min-height: 2.75rem; padding: .65rem .75rem; }
+        .login-form .check-field > span { color: inherit; }
+        .login-form .btn { border-radius: .45rem; box-shadow: none; display: inline-flex; min-height: 2.75rem; width: 100%; }
+        .login-form .validation-summary { border-radius: .45rem; margin: 0; }
+
+        @@media (max-width: 639px) {
+            .auth-shell:has(.login-card) { align-items: start; padding-top: 5.5rem; }
+            .login-card { padding: 1.5rem; }
+        }
+    </style>
+}
 @section Scripts { <partial name="_ValidationScriptsPartial" /> }
