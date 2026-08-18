@@ -1,0 +1,63 @@
+name: citus-manager
+
+services:
+  app:
+    image: "${CITUS_MANAGER_IMAGE:-ghcr.io/int04/citus-manager:latest}"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__ControlDatabase: "Host=postgres;Port=5432;Database=citus_manager;Username=citus_manager;Password=${CITUS_MANAGER_DB_PASSWORD:-Cm!4c15dd34a2974c15911e1}"
+      Database__AutoCreateSchema: "true"
+      Security__DataProtectionKeyPath: /var/lib/citus-manager/keys
+      Backup__Storage__LocalRootPath: /var/lib/citus-manager/backup-data
+      Backup__Execution__SpoolPath: /var/lib/citus-manager/backup-spool
+    ports:
+      - "2706:8080"
+    volumes:
+      - app_keys:/var/lib/citus-manager/keys
+      - backup_data:/var/lib/citus-manager/backup-data
+      - backup_spool:/var/lib/citus-manager/backup-spool
+    tmpfs:
+      - /tmp
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+    networks:
+      - public
+      - database
+
+  postgres:
+    image: postgres:18.4-alpine3.23
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: citus_manager
+      POSTGRES_USER: citus_manager
+      POSTGRES_PASSWORD: "${CITUS_MANAGER_DB_PASSWORD:-Cm!4c15dd34a2974c15911e1}"
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - database
+
+networks:
+  public:
+  database:
+    internal: true
+
+volumes:
+  postgres_data:
+  app_keys:
+  backup_data:
+  backup_spool:

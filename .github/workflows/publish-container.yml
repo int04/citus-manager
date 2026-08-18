@@ -1,0 +1,106 @@
+name: Publish container
+run-name: Publish container from ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-container
+  cancel-in-progress: false
+
+jobs:
+  test-build-publish:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      TZ: Asia/Ho_Chi_Minh
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore CitusManager.sln
+
+      - name: Test
+        run: dotnet test CitusManager.sln --configuration Release --no-restore
+
+      - name: Generate image metadata
+        id: image
+        shell: bash
+        run: |
+          version="$(date +'%y.%m.%d.%H%M')"
+          repository="${GITHUB_REPOSITORY,,}"
+          image="${REGISTRY}/${repository}"
+          {
+            echo "version=${version}"
+            echo "image=${image}"
+            echo "version_tag=${image}:${version}"
+            echo "latest_tag=${image}:latest"
+            echo "created=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject duplicate minute tag
+        shell: bash
+        run: |
+          if docker buildx imagetools inspect "${{ steps.image.outputs.version_tag }}" >/dev/null 2>&1; then
+            echo "Image tag ${{ steps.image.outputs.version_tag }} already exists." >&2
+            exit 1
+          fi
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.version_tag }}
+            ${{ steps.image.outputs.latest_tag }}
+          build-args: |
+            APP_VERSION=${{ steps.image.outputs.version }}
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+          labels: |
+            org.opencontainers.image.created=${{ steps.image.outputs.created }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.image.outputs.version }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Write summary
+        shell: bash
+        run: |
+          {
+            echo "## Container published"
+            echo
+            echo "- Version: \`${{ steps.image.outputs.version }}\`"
+            echo "- Image: \`${{ steps.image.outputs.version_tag }}\`"
+            echo "- Latest: \`${{ steps.image.outputs.latest_tag }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

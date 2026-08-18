@@ -2,6 +2,67 @@
 
 Control-plane ASP.NET Core cho nhiều self-hosted Citus database. UI thay lệnh thủ công cho inventory, add worker, rebalance, drain và remove worker với preflight, auto-queue theo quyền, checkpoint và audit.
 
+## Chạy bằng Docker
+
+Yêu cầu Docker Engine/Desktop có Docker Compose. Từ thư mục chứa `compose.yaml`, chạy đúng một lệnh:
+
+```bash
+docker compose up -d
+```
+
+Mở <http://localhost:2706/Account/Setup> để tạo Admin đầu tiên. Compose tự chạy Citus Manager và PostgreSQL control DB, chờ DB healthy rồi tự apply EF Core migrations. PostgreSQL không publish port ra host hoặc LAN.
+
+Compose chỉ tạo **control DB của Citus Manager**. Coordinator và worker Citus cần tồn tại sẵn; đăng ký chúng trong UI sau khi tạo Admin. Với Citus chạy ngay trên Docker host, dùng `host.docker.internal`; với cluster từ xa, dùng DNS/IP mà Docker host truy cập được.
+
+Image mặc định:
+
+```text
+ghcr.io/int04/citus-manager:latest
+```
+
+Để khóa một bản phát hành, đặt tag timestamp trước khi chạy Compose:
+
+```bash
+CITUS_MANAGER_IMAGE=ghcr.io/int04/citus-manager:26.08.18.0940 docker compose up -d
+```
+
+PowerShell:
+
+```powershell
+$env:CITUS_MANAGER_IMAGE='ghcr.io/int04/citus-manager:26.08.18.0940'
+docker compose up -d
+```
+
+Các lệnh vận hành:
+
+```bash
+docker compose logs -f app
+docker compose pull
+docker compose up -d
+docker compose down
+```
+
+`postgres_data`, `app_keys`, `backup_data` và `backup_spool` là named volumes, tồn tại qua restart/recreate container. Sao lưu cả control DB, keyring và backup volumes. Mất `app_keys` sẽ làm credentials cluster đã mã hóa không thể giải mã.
+
+> **Cảnh báo:** `docker compose down -v` xóa toàn bộ named volumes của stack, gồm control DB, keyring và backup local. Không chạy nếu chưa có backup đã kiểm chứng.
+
+Có thể override mật khẩu control DB bằng biến `CITUS_MANAGER_DB_PASSWORD`; app và PostgreSQL nhận cùng giá trị.
+
+## Phát hành container
+
+Workflow **Publish container** chỉ có trigger thủ công. Vào GitHub **Actions → Publish container → Run workflow**. Push/PR không tự build hoặc publish image.
+
+Mỗi lần chạy tạo tag theo giờ `Asia/Ho_Chi_Minh` dạng `yy.MM.dd.HHmm`, ví dụ `26.08.18.0940`, đồng thời cập nhật `latest`. Tag cùng phút đã tồn tại sẽ bị từ chối để không ghi đè bản phát hành.
+
+Image được push tới GitHub Container Registry:
+
+```text
+ghcr.io/int04/citus-manager:<yy.MM.dd.HHmm>
+ghcr.io/int04/citus-manager:latest
+```
+
+Sau lần publish đầu, owner vào package settings và đổi visibility thành **Public**. Việc chuyển source repository sang public không tự động đổi visibility package.
+
 ## Yêu cầu
 
 - .NET SDK 10
