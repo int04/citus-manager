@@ -20,31 +20,41 @@
 
 @section Styles {
     <style>
-        .auth-shell:has(.login-card) { background: #111827; }
+        .auth-shell:has(.login-card) { background: #f1f5f9; }
         .auth-shell:has(.login-card)::before,
         .auth-shell:has(.login-card)::after { display: none; }
 
         .login-card {
+            --login-surface: #fff;
+            --login-input: #fff;
+            --login-checkbox: #f8fafc;
+            --login-border: #d8e1ea;
+            --login-text: #172033;
+            --login-muted: #475569;
+            --login-focus: #4f46e5;
             max-width: 25rem;
             padding: 2rem;
-            background: #161d27;
-            border-color: rgba(255, 255, 255, .12);
+            background: var(--login-surface);
+            border-color: var(--login-border);
             border-radius: .75rem;
             box-shadow: none;
             backdrop-filter: none;
+            color: var(--login-text);
         }
 
         .login-brand { align-items: center; display: flex; gap: .65rem; font-size: .875rem; letter-spacing: -.01em; }
-        .login-brand-mark { align-items: center; border: 1px solid rgba(255, 255, 255, .22); border-radius: .35rem; color: #e2e8f0; display: inline-flex; font-family: var(--font-mono); font-size: .68rem; font-weight: 700; height: 1.8rem; justify-content: center; letter-spacing: .04em; width: 1.8rem; }
+        .login-brand-mark { align-items: center; border: 1px solid var(--login-border); border-radius: .35rem; color: var(--login-text); display: inline-flex; font-family: var(--font-mono); font-size: .68rem; font-weight: 700; height: 1.8rem; justify-content: center; letter-spacing: .04em; width: 1.8rem; }
         .login-form { display: block; margin-top: 1.75rem; }
         .login-form .field { display: grid; gap: .35rem; margin: 0 0 1rem; }
-        .login-form .field label { color: #cbd5e1; font-size: .78rem; font-weight: 600; margin-bottom: .35rem; }
-        .login-form .field input { background: #0f1520; border-color: rgba(255, 255, 255, .14); border-radius: .45rem; min-height: 2.75rem; }
-        .login-form .field input:focus { border-color: #818cf8; }
-        .login-form .check-field { align-items: center; background: #101722; border-color: rgba(255, 255, 255, .14); color: #e2e8f0; font-size: .78rem; margin: 0 0 1rem; min-height: 2.75rem; padding: .65rem .75rem; }
+        .login-form .field label { color: var(--login-text); font-size: .78rem; font-weight: 600; margin-bottom: .35rem; }
+        .login-form .field input { background: var(--login-input); border-color: var(--login-border); border-radius: .45rem; color: var(--login-text); min-height: 2.75rem; }
+        .login-form .field input:focus { border-color: var(--login-focus); }
+        .login-form .check-field { align-items: center; background: var(--login-checkbox); border-color: var(--login-border); color: var(--login-text); font-size: .78rem; margin: 0 0 1rem; min-height: 2.75rem; padding: .65rem .75rem; }
         .login-form .check-field > span { color: inherit; }
         .login-form .btn { border-radius: .45rem; box-shadow: none; display: inline-flex; min-height: 2.75rem; width: 100%; }
         .login-form .validation-summary { border-radius: .45rem; margin: 0; }
+        [data-theme="dark"] .auth-shell:has(.login-card) { background: #111827; }
+        [data-theme="dark"] .login-card { --login-surface: #161d27; --login-input: #0f1520; --login-checkbox: #101722; --login-border: rgba(255, 255, 255, .14); --login-text: #f1f5f9; --login-muted: #94a3b8; --login-focus: #818cf8; }
 
         @@media (max-width: 639px) {
             .auth-shell:has(.login-card) { align-items: start; padding-top: 5.5rem; }
