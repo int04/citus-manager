@@ -44,3 +44,7 @@
     <div class="section-title"><div><h2>@T["Home.RecentOps"]</h2><p>Plan → queue → runner → validation.</p></div></div>
     <partial name="~/Views/Clusters/_OperationTable.cshtml" model="Model.Operations.Take(10).ToList()" />
 </section>
+
+@section Styles {
+    <link rel="stylesheet" href="~/css/clusters.css" asp-append-version="true" />
+}
