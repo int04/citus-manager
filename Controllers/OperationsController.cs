@@ -52,6 +52,40 @@ public sealed class OperationsController(IOperationService operations, IStringLo
         return RedirectToAction(nameof(Details), new { id });
     }
 
+    [HttpPost, Authorize(Policy = "Admin"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> PlanCoordinatorMigration(
+        Guid clusterId, PlanCoordinatorMigrationRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var operation = await operations.PlanCoordinatorMigrationAsync(
+                clusterId, request, ActorId(), cancellationToken);
+            TempData["Notice"] = text["Controller.Created"].Value;
+            return RedirectToAction(nameof(Details), new { id = operation.Id });
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            TempData["Error"] = exception.Message;
+            return RedirectToAction("Details", "Clusters", new { id = clusterId });
+        }
+    }
+
+    [HttpPost, Authorize(Policy = "Admin"), ValidateAntiForgeryToken]
+    public async Task<IActionResult> ApproveCoordinatorMigration(
+        Guid id, ApproveCoordinatorMigrationRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await operations.ApproveCoordinatorMigrationAsync(id, request, ActorId(), cancellationToken);
+            TempData["Notice"] = text["Controller.Approved"].Value;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            TempData["Error"] = exception.Message;
+        }
+        return RedirectToAction(nameof(Details), new { id });
+    }
+
     [HttpPost, Authorize(Policy = "Operator"), ValidateAntiForgeryToken]
     public async Task<IActionResult> Cancel(Guid id, CancellationToken cancellationToken)
     {

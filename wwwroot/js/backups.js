@@ -4,7 +4,7 @@
   const feedback = document.getElementById("backup-feedback");
   const live = document.getElementById("backup-live-status");
   const headers = { "Content-Type": "application/json", "RequestVerificationToken": token || "" };
-  const terminal = new Set(["Succeeded", "PartialSucceeded", "Failed", "Cancelled", "RecoveryRequired"]);
+  const terminal = new Set(["Succeeded", "PartialSucceeded", "Failed", "Cancelled", "RecoveryRequired", "RecoveryResolved"]);
   const i18nNode = document.getElementById("backup-i18n-data");
   let i18n = {};
   try { i18n = JSON.parse(i18nNode?.textContent || "{}"); } catch { /* Resource JSON is optional. */ }
@@ -77,7 +77,7 @@
     button.setAttribute("aria-busy", String(busy));
     label.textContent = busy ? busyLabel : button.dataset.idleLabel;
   };
-  const statusClass = status => status === "Succeeded" ? "success" :
+  const statusClass = status => ["Succeeded", "RecoveryResolved"].includes(status) ? "success" :
     ["PartialSucceeded", "RetryScheduled", "RecoveryRequired"].includes(status) ? "warning" :
       ["Failed", "Cancelled"].includes(status) ? "danger" : "neutral";
   const updateText = (row, field, text) => { const node = row.querySelector(`[data-field="${field}"]`); if (node) node.textContent = text || ""; };
@@ -275,6 +275,8 @@
 
   const restoreDialog = document.getElementById("restore-dialog");
   const restoreForm = document.getElementById("restore-form");
+  const recoveryDialog = document.getElementById("resolve-restore-recovery-dialog");
+  const recoveryForm = document.getElementById("resolve-restore-recovery-form");
   const targetKind = document.getElementById("targetKind");
   const syncRestoreTarget = () => {
     if (!targetKind) return;
@@ -294,6 +296,38 @@
   }));
   document.querySelectorAll("[data-dialog-close]").forEach(button => button.addEventListener("click", () => button.closest("dialog")?.close()));
   document.querySelectorAll("dialog.backup-dialog").forEach(dialog => dialog.addEventListener("click", event => { if (event.target === dialog) dialog.close(); }));
+
+  document.querySelectorAll("[data-resolve-restore-recovery]").forEach(button => button.addEventListener("click", () => {
+    if (!recoveryDialog || !recoveryForm) return;
+    recoveryForm.reset();
+    recoveryForm.elements.url.value = button.dataset.url;
+    recoveryForm.dataset.restoreId = button.dataset.restoreId;
+    recoveryDialog.querySelector("[data-recovery-id]").textContent = button.dataset.restoreId;
+    recoveryDialog.showModal();
+    recoveryForm.elements.manualRecoveryCompleted.focus();
+  }));
+
+  recoveryForm?.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!recoveryForm.reportValidity()) return;
+    const data = new FormData(recoveryForm);
+    if (data.get("typedConfirmation") !== recoveryForm.dataset.restoreId) {
+      showFeedback(message("recoveryConfirmationMismatch"), true);
+      recoveryForm.elements.typedConfirmation.focus();
+      return;
+    }
+    const submit = recoveryForm.querySelector("button[type=submit]");
+    setBusy(submit, true, message("resolvingRecovery"));
+    try {
+      await request(data.get("url"), "POST", {
+        manualRecoveryCompleted: data.has("manualRecoveryCompleted"),
+        typedConfirmation: data.get("typedConfirmation"),
+        resolutionNote: data.get("resolutionNote")
+      });
+      recoveryDialog.close();
+      window.location.reload();
+    } catch (error) { showFeedback(error.message, true); setBusy(submit, false); }
+  });
 
   document.addEventListener("click", async event => {
     const button = event.target.closest("[data-backup-action]");

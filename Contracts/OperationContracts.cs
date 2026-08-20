@@ -51,6 +51,23 @@ public sealed record RetireWorkerRequest
     [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
 }
 
+/// <summary>Creates an immutable, manually approved control-coordinator migration plan.</summary>
+public sealed record PlanCoordinatorMigrationRequest
+{
+    [Required, MaxLength(255)] public required string TargetHost { get; init; }
+    [Range(1, 65535)] public int TargetPort { get; init; } = 5432;
+    public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
+    [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
+    [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
+}
+
+/// <summary>Attests that external fencing and physical-standby promotion completed.</summary>
+public sealed record ApproveCoordinatorMigrationRequest
+{
+    public bool SourceFencedAndTargetPromotedAcknowledged { get; init; }
+    [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
+}
+
 public sealed record RebalanceMoveSummary(
     string? SourceHost, int? SourcePort, string? TargetHost, int? TargetPort,
     string? Table, long? ShardId, long? Bytes);

@@ -19,6 +19,51 @@
     </form>
 </dialog>
 
+<dialog class="operation-dialog" data-operation-dialog="change-coordinator" aria-labelledby="change-coordinator-title" aria-describedby="change-coordinator-help change-coordinator-risk">
+    <form method="dialog" class="operation-dialog-shell" data-operation-form data-operation="change-coordinator" novalidate>
+        <header>
+            <div>
+                <span class="dialog-kicker danger">@T["Cluster.ChangeCoordinatorKicker"]</span>
+                <h2 id="change-coordinator-title">@T["Cluster.ChangeCoordinator"]</h2>
+                <p id="change-coordinator-help">@T["Cluster.ChangeCoordinatorHelp"]</p>
+            </div>
+            <button class="dialog-close" value="cancel" aria-label="@T["Cluster.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button>
+        </header>
+        <div class="operation-dialog-body">
+            <div class="warning-callout coordinator-plan-only"><strong>@T["Cluster.ChangeCoordinatorPlanOnlyTitle"]</strong> @T["Cluster.ChangeCoordinatorPlanOnly"]</div>
+            <div id="change-coordinator-risk" class="danger-callout">
+                <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+                <p><strong>@T["Cluster.ChangeCoordinatorRiskTitle"]</strong><br />@T["Cluster.ChangeCoordinatorRisk"]</p>
+            </div>
+            <fieldset class="coordinator-inline-recovery" data-coordinator-recovery hidden disabled>
+                <legend>@T["Cluster.CoordinatorRecoveryTitle"]</legend>
+                <div class="warning-callout"><strong>@T["Cluster.CoordinatorRecoveryBlocker"]</strong> <span data-coordinator-recovery-message></span></div>
+                <p>@T["Cluster.CoordinatorRecoveryHelp"]</p>
+                <p><strong>@T["Cluster.CoordinatorRecoveryAutoCancel"]</strong></p>
+                <label class="check-field"><input type="checkbox" name="recoveryCompleted" required disabled /><span>@T["Cluster.CoordinatorRecoveryAck"]</span></label>
+                <div class="field"><label for="change-coordinator-recovery-note">@T["Cluster.CoordinatorRecoveryNote"]</label><textarea id="change-coordinator-recovery-note" name="recoveryNote" required maxlength="2000" rows="4" disabled></textarea></div>
+                <div class="field"><label for="change-coordinator-recovery-confirmation">@T["Cluster.CoordinatorRecoveryType"] <code data-coordinator-recovery-id></code></label><input id="change-coordinator-recovery-confirmation" name="recoveryConfirmation" required maxlength="36" autocomplete="off" autocapitalize="none" spellcheck="false" disabled /></div>
+            </fieldset>
+            <dl class="coordinator-cutover-summary">
+                <div><dt>@T["Cluster.CurrentCoordinator"]</dt><dd><code data-current-coordinator></code></dd></div>
+                <div><dt>@T["Cluster.TargetCoordinator"]</dt><dd><code data-target-coordinator>@T["Cluster.NotSpecified"]</code></dd></div>
+            </dl>
+            <div class="form-grid">
+                <div class="field"><label for="change-coordinator-host">@T["Cluster.TargetHost"] *</label><input id="change-coordinator-host" name="targetHost" required maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" /></div>
+                <div class="field"><label for="change-coordinator-port">@T["Cluster.TargetPort"] *</label><input id="change-coordinator-port" name="targetPort" type="number" min="1" max="65535" value="5432" required inputmode="numeric" /></div>
+            </div>
+            <p class="coordinator-credential-note"><i class="fa fa-key" aria-hidden="true"></i> @T["Cluster.ChangeCoordinatorSameCredentials"]</p>
+            <div class="field">
+                <label for="change-coordinator-confirmation">@T["Cluster.TypeTargetEndpointToConfirm"] <code data-confirm-label></code></label>
+                <input id="change-coordinator-confirmation" name="typedConfirmation" required maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" data-confirm-input aria-describedby="change-coordinator-risk" />
+            </div>
+            <label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.CoordinatorPlanAck"]</span></label>
+            <div class="dialog-feedback" data-dialog-feedback role="alert" aria-live="assertive" tabindex="-1" hidden></div>
+        </div>
+        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-danger" type="submit" value="submit">@T["Cluster.CreateCoordinatorPlan"]</button></footer>
+    </form>
+</dialog>
+
 <dialog class="operation-dialog" data-operation-dialog="rebalance" aria-labelledby="rebalance-title">
     <form method="dialog" class="operation-dialog-shell" data-operation-form data-operation="rebalance" novalidate>
         <header><div><span class="dialog-kicker">@T["Cluster.DataMovement"]</span><h2 id="rebalance-title">@T["Cluster.RebalanceCluster"]</h2><p>@T["Cluster.RebalanceHelp"]</p></div><button class="dialog-close" value="cancel" aria-label="@T["Cluster.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>

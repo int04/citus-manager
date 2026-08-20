@@ -16,9 +16,12 @@ public sealed class OperationExecutor(
     ControlDbContext db,
     ICitusInspector inspector,
     ICitusMutator mutator,
+    ICoordinatorMigrationService coordinatorMigrations,
     IDatabaseMaintenanceService maintenance,
     IDatabaseObjectService objects,
     IControlPlaneLeaseProvider leases,
+    ICitusConnectionFactory connections,
+    IClusterTopologyCache topologyCache,
     ILogger<OperationExecutor> logger) : IOperationExecutor
 {
     public async Task<bool> ExecuteOneAsync(CancellationToken hostStoppingToken)
@@ -46,6 +49,14 @@ public sealed class OperationExecutor(
             var plan = JsonSerializer.Deserialize<OperationPlan>(operation.PlanJson)
                 ?? throw new InvalidOperationException("Operation plan is invalid.");
             var cluster = operation.Cluster ?? throw new InvalidOperationException("Cluster profile is missing.");
+
+            // The approved migration is executed only after infrastructure has promoted B and fenced A.
+            // Inspecting the old source first would make a successful external handoff look like a connection failure.
+            if (operation.Kind == OperationKind.MigrateControlCoordinator)
+            {
+                await ExecuteCoordinatorMigrationAsync(operation, cluster, plan, hostStoppingToken);
+                return true;
+            }
 
             var current = await inspector.CollectAsync(cluster, hostStoppingToken);
             EnsureSameMajorVersion(plan.CitusVersion, current.Capability.CitusVersion);
@@ -109,7 +120,8 @@ public sealed class OperationExecutor(
         {
             logger.LogError(exception, "Operation {OperationId} failed ({ErrorType}, SQLSTATE {SqlState}).",
                 operation.Id, exception.GetType().Name, (exception as PostgresException)?.SqlState);
-            operation.Status = operation.Kind is OperationKind.RemoveWorker or OperationKind.RetireWorker ||
+            operation.Status = operation.Kind is OperationKind.RemoveWorker or OperationKind.RetireWorker or
+                               OperationKind.MigrateControlCoordinator ||
                                (operation.Kind == OperationKind.ConvertTable && HasStep(operation, "table-preflight")) ||
                                (operation.Kind == OperationKind.MergeRangePartitions && HasStep(operation, "merge-cutover-started")) ||
                                (operation.Kind == OperationKind.RebuildIndex &&
@@ -143,6 +155,115 @@ public sealed class OperationExecutor(
                 operation.SafeError, CancellationToken.None);
             return true;
         }
+    }
+
+    private async Task ExecuteCoordinatorMigrationAsync(
+        ClusterOperation operation, ClusterProfile cluster, OperationPlan operationPlan,
+        CancellationToken cancellationToken)
+    {
+        var plan = operationPlan.CoordinatorMigration
+            ?? throw new InvalidOperationException("Coordinator migration plan is missing.");
+        var sourceProfile = CoordinatorMigrationService.CopyWithEndpoint(cluster, plan.SourceHost, plan.SourcePort);
+        var targetProfile = CoordinatorMigrationService.CopyWithEndpoint(cluster, plan.TargetHost, plan.TargetPort);
+        var cutoverAlreadySaved = HasStep(operation, "control-profile-cutover");
+        var profileAtSource = SameNode(cluster.Host, cluster.Port, plan.SourceHost, plan.SourcePort);
+        var profileAtTarget = SameNode(cluster.Host, cluster.Port, plan.TargetHost, plan.TargetPort);
+        if (profileAtSource && cluster.Version != plan.SourceProfileVersion)
+            throw new InvalidOperationException(
+                "Control coordinator profile version changed after migration planning.");
+        if (!profileAtSource && !(profileAtTarget && cutoverAlreadySaved))
+            throw new InvalidOperationException(
+                "Control coordinator profile and durable cutover checkpoint are inconsistent; manual recovery is required.");
+
+        var validation = await coordinatorMigrations.ValidateExternalPromotionAsync(
+            sourceProfile, plan, cancellationToken);
+        await SaveStepAsync(operation, "external-promotion-validated", "Succeeded",
+            validation.Detail, cancellationToken);
+
+        await coordinatorMigrations.PrepareTargetCoordinatorAsync(targetProfile, plan, cancellationToken);
+        await SaveStepAsync(operation, "coordinator-address-prepared", "Succeeded",
+            $"Citus group 0 now advertises {plan.TargetHost}:{plan.TargetPort}.", cancellationToken);
+
+        await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
+        {
+            cluster.Host = plan.TargetHost;
+            cluster.Port = plan.TargetPort;
+            cluster.LastError = null;
+            cluster.Version++;
+
+            var possibleEndpoints = await db.ClusterQueryEndpoints
+                .Where(x => x.ClusterId == cluster.Id && x.Port == plan.TargetPort)
+                .ToListAsync(cancellationToken);
+            var matchingEndpoints = possibleEndpoints.Where(x =>
+                string.Equals(x.Host, plan.TargetHost, StringComparison.OrdinalIgnoreCase)).ToList();
+            db.ClusterQueryEndpoints.RemoveRange(matchingEndpoints);
+
+            var cutoverStep = operation.Steps.FirstOrDefault(x => x.Name == "control-profile-cutover");
+            if (cutoverStep is null)
+            {
+                cutoverStep = new OperationStep
+                {
+                    OperationId = operation.Id,
+                    Sequence = operation.Steps.Count == 0 ? 1 : operation.Steps.Max(x => x.Sequence) + 1,
+                    Name = "control-profile-cutover",
+                    Status = "Succeeded",
+                    Detail = $"Control profile switched from {plan.SourceHost}:{plan.SourcePort} to {plan.TargetHost}:{plan.TargetPort}; stale query endpoint registrations removed.",
+                    CompletedAt = DateTimeOffset.UtcNow
+                };
+                operation.Steps.Add(cutoverStep);
+            }
+            else
+            {
+                cutoverStep.Status = "Succeeded";
+                cutoverStep.Detail = $"Control profile switched from {plan.SourceHost}:{plan.SourcePort} to {plan.TargetHost}:{plan.TargetPort}; stale query endpoint registrations removed.";
+                cutoverStep.CompletedAt = DateTimeOffset.UtcNow;
+            }
+
+            if (!cutoverAlreadySaved)
+                db.AuditEvents.Add(ClusterService.Audit(operation.ApprovedBy, "cluster.coordinator-cutover",
+                    "cluster", cluster.Id, new
+                    {
+                        operationId = operation.Id,
+                        sourceHost = plan.SourceHost,
+                        sourcePort = plan.SourcePort,
+                        targetHost = plan.TargetHost,
+                        targetPort = plan.TargetPort,
+                        validation.SourceFenceEvidence,
+                        plan.SystemIdentifier,
+                        plan.SourceFlushLsn
+                    }));
+            operation.Version++;
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        topologyCache.Remove(cluster.Id);
+        await ClearEndpointPoolAsync(sourceProfile);
+        await ClearEndpointPoolAsync(targetProfile);
+
+        var current = await inspector.CollectAsync(cluster, cancellationToken);
+        var coordinator = current.Nodes.SingleOrDefault(x => x.GroupId == 0 &&
+            x.Role.Equals("primary", StringComparison.OrdinalIgnoreCase));
+        if (coordinator is null || !SameNode(coordinator.Host, coordinator.Port, plan.TargetHost, plan.TargetPort) ||
+            !coordinator.IsActive || !coordinator.HasMetadata || !coordinator.MetadataSynced)
+            throw new InvalidOperationException("Fresh control-profile validation did not find the promoted target as active synchronized coordinator group 0.");
+
+        await CompleteAsync(operation, new
+        {
+            Source = $"{plan.SourceHost}:{plan.SourcePort}",
+            Target = $"{plan.TargetHost}:{plan.TargetPort}",
+            validation.SourceFenceEvidence,
+            validation.TargetWalLsn,
+            plan.SystemIdentifier,
+            current.Capability.CitusVersion,
+            note = "External promotion adopted. The former primary remains fenced; no automatic rollback was attempted."
+        }, cancellationToken);
+    }
+
+    private async Task ClearEndpointPoolAsync(ClusterProfile profile)
+    {
+        await using var connection = connections.Create(profile);
+        NpgsqlConnection.ClearPool(connection);
     }
 
     private async Task ExecuteAddWorkerAsync(

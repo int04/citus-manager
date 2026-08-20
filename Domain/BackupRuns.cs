@@ -20,7 +20,8 @@ public enum RestoreRunStatus
     Failed,
     RecoveryRequired,
     Cancelling,
-    Cancelled
+    Cancelled,
+    RecoveryResolved
 }
 
 public enum BackupTrigger
@@ -170,6 +171,9 @@ public sealed class RestoreRun
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? HeartbeatAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+    public Guid? RecoveryResolvedBy { get; set; }
+    public DateTimeOffset? RecoveryResolvedAt { get; set; }
+    public string? RecoveryResolutionNote { get; set; }
     public int Version { get; set; }
     public List<RestoreRunStep> Steps { get; set; } = [];
     public List<NotificationDelivery> NotificationDeliveries { get; set; } = [];

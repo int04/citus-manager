@@ -44,6 +44,7 @@ public sealed class ControlDbContext(DbContextOptions<ControlDbContext> options)
             entity.Property(x => x.Database).HasMaxLength(63);
             entity.Property(x => x.Username).HasMaxLength(128);
             entity.Property(x => x.PrometheusBaseUrl).HasMaxLength(500);
+            entity.Property(x => x.Version).IsConcurrencyToken();
         });
 
         builder.Entity<ClusterQueryEndpoint>(entity =>
@@ -202,6 +203,7 @@ public sealed class ControlDbContext(DbContextOptions<ControlDbContext> options)
             entity.HasIndex(x => new { x.BackupRunId, x.CreatedAt });
             entity.Property(x => x.CurrentPhase).HasMaxLength(64);
             entity.Property(x => x.TargetIdentityHash).HasMaxLength(64);
+            entity.Property(x => x.RecoveryResolutionNote).HasMaxLength(2000);
             entity.Property(x => x.Version).IsConcurrencyToken();
             entity.HasOne(x => x.BackupRun).WithMany(x => x.RestoreRuns).HasForeignKey(x => x.BackupRunId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.SourceCluster).WithMany().HasForeignKey(x => x.SourceClusterId).OnDelete(DeleteBehavior.Restrict);

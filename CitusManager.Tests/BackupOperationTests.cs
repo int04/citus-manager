@@ -1,5 +1,6 @@
 using CitusManager.Domain;
 using CitusManager.Services;
+using CitusManager.Contracts;
 using Xunit;
 
 namespace CitusManager.Tests;
@@ -57,5 +58,44 @@ public sealed class BackupOperationTests
         Assert.Equal(OperationKind.Restore, operation.Kind);
         Assert.Equal(OperationRisk.Destructive, operation.Risk);
         Assert.Equal(OperationStatus.RecoveryRequired, operation.Status);
+    }
+
+    [Fact]
+    public void Restore_recovery_resolution_requires_ack_note_and_exact_restore_id()
+    {
+        var id = Guid.NewGuid();
+        var request = new ResolveRestoreRecoveryRequest
+        {
+            ManualRecoveryCompleted = true,
+            TypedConfirmation = id.ToString(),
+            ResolutionNote = "Validated application rows and Citus topology."
+        };
+
+        RestoreService.ValidateRecoveryResolutionRequest(id, request);
+        Assert.Throws<ArgumentException>(() => RestoreService.ValidateRecoveryResolutionRequest(id,
+            request with { ManualRecoveryCompleted = false }));
+        Assert.Throws<ArgumentException>(() => RestoreService.ValidateRecoveryResolutionRequest(id,
+            request with { TypedConfirmation = id.ToString().ToUpperInvariant() }));
+        Assert.Throws<ArgumentException>(() => RestoreService.ValidateRecoveryResolutionRequest(id,
+            request with { ResolutionNote = " " }));
+    }
+
+    [Fact]
+    public void Resolved_restore_recovery_is_terminal_and_no_longer_requires_recovery()
+    {
+        var run = new RestoreRun
+        {
+            BackupRunId = Guid.NewGuid(),
+            SourceClusterId = Guid.NewGuid(),
+            Status = RestoreRunStatus.RecoveryResolved,
+            RequestedBy = Guid.NewGuid(),
+            RecoveryResolvedAt = DateTimeOffset.UtcNow,
+            RecoveryResolvedBy = Guid.NewGuid(),
+            RecoveryResolutionNote = "Manually reconciled."
+        };
+
+        var operation = OperationService.MapRestore(run);
+
+        Assert.Equal(OperationStatus.Cancelled, operation.Status);
     }
 }

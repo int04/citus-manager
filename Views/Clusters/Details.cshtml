@@ -40,7 +40,9 @@
              data-i18n-shard="@T["Cluster.Shards"]"
              data-i18n-bytes="@T["Cluster.Bytes"]"
              data-i18n-snapshot="@T["Cluster.Snapshot"]"
-             data-i18n-confirmation-mismatch="@T["Cluster.ConfirmationMismatch"]"
+              data-i18n-confirmation-mismatch="@T["Cluster.ConfirmationMismatch"]"
+              data-i18n-target-confirmation-mismatch="@T["Cluster.TargetEndpointConfirmationMismatch"]"
+             data-i18n-recovery-confirmation-mismatch="@T["Cluster.CoordinatorRecoveryConfirmationMismatch"]"
              data-i18n-missing-operation-id="@T["Cluster.MissingOperationId"]"
              data-i18n-preparing-operation="@T["Cluster.PreparingOperation"]"
              data-i18n-active-conflict="@T["Cluster.ActiveConflict"]"
@@ -77,7 +79,19 @@
                         <div class="node-card-actions">
                             @if (node.IsActive) { <a class="btn btn-secondary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id" asp-route-nodeId="@node.NodeId">@T["Cluster.NodeData"]</a> }
                             else { <button class="btn btn-secondary" type="button" disabled title="@T["Cluster.Inactive"]">@T["Cluster.NodeData"]</button> }
-                            @if (canOperate && node.GroupId != 0)
+                            @if (User.IsInRole("Admin") && node.GroupId == 0)
+                            {
+                                <details class="node-action-menu">
+                                    <summary class="btn btn-ghost" aria-label="@T["Cluster.ControlCoordinatorActions", node.Host]"><i class="fa fa-ellipsis-h" aria-hidden="true"></i><span>@T["Cluster.Actions"]</span></summary>
+                                    <div class="node-action-popover">
+                                        <button type="button" data-open-operation="change-coordinator" data-current-host="@node.Host" data-current-port="@node.Port">
+                                            <i class="fa fa-exchange" aria-hidden="true"></i>
+                                            <span><strong>@T["Cluster.ChangeCoordinator"]</strong><small>@T["Cluster.ChangeCoordinatorShort"]</small></span>
+                                        </button>
+                                    </div>
+                                </details>
+                            }
+                            else if (canOperate && node.GroupId != 0)
                             {
                                 <details class="node-action-menu"><summary class="btn btn-ghost" aria-label="@T["Cluster.QueryNodeActions", node.Host]"><i class="fa fa-ellipsis-h" aria-hidden="true"></i><span>@T["Cluster.Actions"]</span></summary><div class="node-action-popover"><button class="danger" type="button" data-open-operation="retire" data-node-kind="query" data-host="@node.Host" data-port="@node.Port"><i class="fa fa-trash-o" aria-hidden="true"></i><span><strong>@T["Cluster.RemoveQueryNode"]</strong><small>@T["Cluster.RemoveQueryNodeShort"]</small></span></button></div></details>
                             }

@@ -18,14 +18,17 @@
     while (bytes >= 1024 && unit < units.length - 1) { bytes /= 1024; unit += 1; }
     return `${new Intl.NumberFormat(document.documentElement.lang || undefined, { maximumFractionDigits: unit ? 1 : 0 }).format(bytes)} ${units[unit]}`;
   };
-  const problemText = async response => {
+  const readProblem = async response => {
     let body = null;
     try { body = await response.json(); } catch { /* non-JSON response */ }
-    if (body?.errors) return Object.values(body.errors).flat().join(" ");
-    return body?.detail || body?.title || `Request failed (${response.status}).`;
+    const message = body?.errors ? Object.values(body.errors).flat().join(" ") :
+      body?.detail || body?.title || `Request failed (${response.status}).`;
+    return { body: body || {}, message };
   };
+  const problemText = async response => (await readProblem(response)).message;
   const operationId = body => body?.operationId || body?.id || body?.operation?.id;
   const newIdempotencyKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const endpointText = (host, port) => host && port ? `${host}:${port}` : "";
 
   const showFeedback = (form, message) => {
     const feedback = form.querySelector("[data-dialog-feedback]");
@@ -121,13 +124,48 @@
     const host = trigger.dataset.host || "", port = trigger.dataset.port || "5432";
     if (form.elements.host) form.elements.host.value = host;
     if (form.elements.port) form.elements.port.value = port;
+    if (form.dataset.operation === "change-coordinator") {
+      const currentHost = trigger.dataset.currentHost || "";
+      const currentPort = trigger.dataset.currentPort || "5432";
+      dialog.querySelectorAll("[data-current-coordinator]").forEach(node => node.textContent = endpointText(currentHost, currentPort));
+      dialog.dataset.confirmValue = "";
+      dialog.querySelectorAll("[data-confirm-label]").forEach(node => node.textContent = "");
+      configureCoordinatorRecovery(form);
+      updateCoordinatorTarget(form);
+    }
     dialog.querySelectorAll("[data-target-node]").forEach(node => node.textContent = `${host}:${port}`);
-    dialog.querySelectorAll("[data-confirm-label]").forEach(node => node.textContent = host);
-    dialog.dataset.confirmValue = host;
+    if (form.dataset.operation !== "change-coordinator") {
+      dialog.querySelectorAll("[data-confirm-label]").forEach(node => node.textContent = host);
+      dialog.dataset.confirmValue = host;
+    }
     dialog._trigger = trigger;
     dialog.showModal();
     requestAnimationFrame(() => form.querySelector("input:not([type='hidden']), button[type='submit']")?.focus());
     if (form.querySelector("[data-preview]")) loadPreview(form);
+  };
+
+  const updateCoordinatorTarget = form => {
+    const dialog = form.closest("dialog");
+    const host = form.elements.targetHost?.value.trim() || "";
+    const port = form.elements.targetPort?.value || "";
+    const endpoint = endpointText(host, port);
+    dialog.dataset.confirmValue = endpoint;
+    dialog.querySelectorAll("[data-confirm-label]").forEach(node => node.textContent = endpoint);
+    dialog.querySelectorAll("[data-target-coordinator]").forEach(node => node.textContent = endpoint || "—");
+  };
+
+  const configureCoordinatorRecovery = (form, problem = null) => {
+    const panel = form.querySelector("[data-coordinator-recovery]");
+    if (!panel) return;
+    const enabled = Boolean(problem?.restoreRecoveryId && problem?.remediationEndpoint);
+    panel.hidden = !enabled;
+    panel.disabled = !enabled;
+    panel.querySelectorAll("input,textarea").forEach(input => { input.disabled = !enabled; });
+    form.dataset.recoveryRestoreId = enabled ? problem.restoreRecoveryId : "";
+    form.dataset.recoveryEndpoint = enabled ? problem.remediationEndpoint : "";
+    panel.querySelector("[data-coordinator-recovery-message]").textContent = enabled ? problem.detail || "" : "";
+    panel.querySelector("[data-coordinator-recovery-id]").textContent = enabled ? problem.restoreRecoveryId : "";
+    if (enabled) panel.querySelector("input")?.focus();
   };
 
   const requestFor = form => {
@@ -138,6 +176,14 @@
     };
     if (kind === "add-worker" || kind === "add-query") return {
       path: "add-node", body: { ...common, role: kind === "add-worker" ? "Worker" : "QueryCoordinator", host: form.elements.host.value.trim(), port: Number(form.elements.port.value), rebalanceAfterAdd: kind === "add-worker" && Boolean(form.elements.rebalanceAfterAdd?.checked) }
+    };
+    if (kind === "change-coordinator") return {
+      path: "coordinator-migrations", body: {
+        ...common,
+        targetHost: form.elements.targetHost.value.trim(),
+        targetPort: Number(form.elements.targetPort.value),
+        typedConfirmation: form.elements.typedConfirmation.value
+      }
     };
     if (kind === "rebalance") return { path: "rebalance", body: common };
     const node = { ...common, host: form.elements.host.value, port: Number(form.elements.port.value) };
@@ -167,20 +213,51 @@
     event.preventDefault();
     if (!form.reportValidity()) return;
     const dialog = form.closest("dialog");
-    if (form.dataset.operation === "retire" && form.elements.typedConfirmation.value !== dialog.dataset.confirmValue) {
-      showFeedback(form, t("ConfirmationMismatch", "Confirmation must exactly match worker host."));
-      form.elements.typedConfirmation.focus();
+    const confirmation = form.querySelector("[data-confirm-input]");
+    if (confirmation && confirmation.value !== dialog.dataset.confirmValue) {
+      const message = form.dataset.operation === "change-coordinator"
+        ? t("TargetConfirmationMismatch", "Confirmation must exactly match the target endpoint.")
+        : t("ConfirmationMismatch", "Confirmation must exactly match worker host.");
+      showFeedback(form, message);
+      confirmation.focus();
       return;
     }
     setBusy(form, true); showFeedback(form, "");
     try {
+      if (form.dataset.operation === "change-coordinator" && form.dataset.recoveryRestoreId) {
+        if (form.elements.recoveryConfirmation.value !== form.dataset.recoveryRestoreId) {
+          showFeedback(form, t("RecoveryConfirmationMismatch", "Confirmation must exactly match the restore ID."));
+          form.elements.recoveryConfirmation.focus();
+          return;
+        }
+        const recoveryResponse = await fetch(form.dataset.recoveryEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json", RequestVerificationToken: token, "X-CSRF-TOKEN": token },
+          body: JSON.stringify({
+            manualRecoveryCompleted: Boolean(form.elements.recoveryCompleted.checked),
+            typedConfirmation: form.elements.recoveryConfirmation.value,
+            resolutionNote: form.elements.recoveryNote.value
+          })
+        });
+        if (!recoveryResponse.ok) throw new Error(await problemText(recoveryResponse));
+        configureCoordinatorRecovery(form);
+      }
       const request = requestFor(form);
       const response = await fetch(`${apiRoot}/${request.path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json", RequestVerificationToken: token, "X-CSRF-TOKEN": token },
         body: JSON.stringify(request.body)
       });
-      if (!response.ok) throw new Error(await problemText(response));
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        if (form.dataset.operation === "change-coordinator" &&
+            problem.body.blockerKind === "RestoreRecoveryRequired") {
+          showFeedback(form, problem.message);
+          configureCoordinatorRecovery(form, { ...problem.body, detail: problem.message });
+          return;
+        }
+        throw new Error(problem.message);
+      }
       const body = await response.json();
       const id = operationId(body);
       if (!id) throw new Error(t("MissingOperationId", "Operation queued, but response did not include its identifier."));
@@ -190,6 +267,13 @@
       showFeedback(form, error.message);
     } finally { setBusy(form, false); }
   }, { capture: true }));
+
+  root.querySelectorAll('[data-operation-form][data-operation="change-coordinator"]').forEach(form => {
+    [form.elements.targetHost, form.elements.targetPort].forEach(input => input?.addEventListener("input", () => {
+      form.elements.typedConfirmation.value = "";
+      updateCoordinatorTarget(form);
+    }));
+  });
 
   // Compact active-only polling: one request, pauses in hidden tabs, backs off on failure.
   const live = document.querySelector("#topology-live-status");

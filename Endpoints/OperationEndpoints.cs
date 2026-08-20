@@ -83,6 +83,26 @@ public static class OperationEndpoints
             .RequireAuthorization("Operator")
             .WithName("RetireTopologyWorker").WithSummary("Drain then safely remove a worker from Citus metadata");
 
+        group.MapPost("/clusters/{clusterId:guid}/coordinator-migrations", async Task<Accepted<OperationResponse>> (
+                Guid clusterId, PlanCoordinatorMigrationRequest request, ClaimsPrincipal user,
+                IOperationService service, CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var operation = await service.PlanCoordinatorMigrationAsync(
+                        clusterId, request, EndpointUser.Id(user), cancellationToken);
+                    return TypedResults.Accepted($"/api/operations/{operation.Id}", operation);
+                }
+                catch (InvalidOperationException exception)
+                    when (exception is not CoordinatorMigrationRejectedException)
+                {
+                    throw new CoordinatorMigrationRejectedException(exception.Message, exception);
+                }
+            })
+            .RequireAuthorization("Admin")
+            .WithName("PlanControlCoordinatorMigration")
+            .WithSummary("Plan a manually approved cutover to a BYO physical standby");
+
         group.MapGet("/clusters/{clusterId:guid}/previews/rebalance", async Task<Ok<RebalancePreviewResponse>> (
                 Guid clusterId, bool? drainOnly, string? workerHost, int? workerPort,
                 IOperationService service, CancellationToken cancellationToken) =>
@@ -112,6 +132,25 @@ public static class OperationEndpoints
                 TypedResults.Ok(await service.ApproveAsync(id, EndpointUser.Id(user), cancellationToken)))
             .RequireAuthorization("Operator")
             .WithName("ApproveOperation").WithSummary("Queue a legacy operation awaiting approval");
+
+        group.MapPost("/{id:guid}/approve-coordinator-migration", async Task<Ok<OperationResponse>> (
+                Guid id, ApproveCoordinatorMigrationRequest request, ClaimsPrincipal user,
+                IOperationService service, CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    return TypedResults.Ok(await service.ApproveCoordinatorMigrationAsync(
+                        id, request, EndpointUser.Id(user), cancellationToken));
+                }
+                catch (InvalidOperationException exception)
+                    when (exception is not CoordinatorMigrationRejectedException)
+                {
+                    throw new CoordinatorMigrationRejectedException(exception.Message, exception);
+                }
+            })
+            .RequireAuthorization("Admin")
+            .WithName("ApproveControlCoordinatorMigration")
+            .WithSummary("Approve cutover after externally fencing the source and promoting the standby");
 
         group.MapPost("/{id:guid}/cancel", async Task<Ok<OperationResponse>> (
                 Guid id, ClaimsPrincipal user, IOperationService service, CancellationToken cancellationToken) =>
