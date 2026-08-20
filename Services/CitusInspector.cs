@@ -21,7 +21,7 @@ public sealed class CitusInspector(ICitusConnectionFactory connections) : ICitus
         "citus_add_node", "citus_add_inactive_node", "citus_activate_node",
         "citus_set_node_property", "get_rebalance_table_shards_plan",
         "citus_rebalance_start", "citus_rebalance_status", "get_rebalance_progress", "citus_rebalance_stop",
-        "citus_drain_node", "citus_disable_node", "citus_remove_node", "alter_distributed_table",
+        "citus_drain_node", "citus_disable_node", "citus_remove_node", "stop_metadata_sync_to_node", "alter_distributed_table",
         "create_distributed_table", "create_reference_table", "citus_schema_distribute",
         "citus_schema_move", "citus_schema_undistribute", "isolate_tenant_to_new_shard",
         "citus_move_shard_placement", "get_shard_id_for_distribution_column"
