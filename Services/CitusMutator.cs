@@ -17,6 +17,7 @@ public interface ICitusMutator
     Task<RebalanceStatusSnapshot> ReadRebalanceStatusAsync(ClusterProfile cluster, long? jobId, CancellationToken cancellationToken);
     Task<bool> StopRebalanceAsync(ClusterProfile cluster, long? jobId, CancellationToken cancellationToken);
     Task DisableNodeAsync(ClusterProfile cluster, string host, int port, CancellationToken cancellationToken);
+    Task StopMetadataSyncAsync(ClusterProfile cluster, string host, int port, CancellationToken cancellationToken);
     Task RemoveWorkerAsync(ClusterProfile cluster, string host, int port, CancellationToken cancellationToken);
     Task<TableConversionState> ReadTableConversionStateAsync(
         ClusterProfile cluster, string schema, string table, CancellationToken cancellationToken);
@@ -75,13 +76,20 @@ public sealed class CitusMutator(
         {
             await endpoint.OpenAsync(cancellationToken);
             await using var preflight = new NpgsqlCommand(
-                "SELECT current_database(), citus_version(), current_setting('server_version_num')::int", endpoint);
+                """
+                SELECT current_database(),
+                       COALESCE((SELECT extversion FROM pg_extension WHERE extname='citus'), ''),
+                       current_setting('server_version_num')::int
+                """, endpoint);
             await using var reader = await preflight.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken) ||
                 !string.Equals(reader.GetString(0), cluster.Database, StringComparison.Ordinal))
                 throw new InvalidOperationException("Query node preflight returned the wrong database.");
-            var remoteMajor = reader.GetString(1).Split('.', '-', StringSplitOptions.RemoveEmptyEntries)[0];
-            var controlMajor = plan.CitusVersion.Split('.', '-', StringSplitOptions.RemoveEmptyEntries)[0];
+            var remoteVersion = reader.GetString(1);
+            if (string.IsNullOrWhiteSpace(remoteVersion))
+                throw new InvalidOperationException("Citus extension is not installed in the query node database.");
+            var remoteMajor = MajorVersion(remoteVersion);
+            var controlMajor = MajorVersion(plan.CitusVersion);
             if (!string.Equals(remoteMajor, controlMajor, StringComparison.Ordinal))
                 throw new InvalidOperationException("Query node Citus major version differs from the control coordinator.");
             remotePostgresVersion = reader.GetInt32(2);
@@ -89,29 +97,52 @@ public sealed class CitusMutator(
         await using (var control = connections.Create(cluster))
         {
             await control.OpenAsync(cancellationToken);
-            await using (var version = new NpgsqlCommand("SELECT current_setting('server_version_num')::int", control))
+            await using var transaction = await control.BeginTransactionAsync(cancellationToken);
+            try
             {
-                var controlPostgresVersion = Convert.ToInt32(await version.ExecuteScalarAsync(cancellationToken));
-                if (remotePostgresVersion / 10_000 != controlPostgresVersion / 10_000)
-                    throw new InvalidOperationException("Query node PostgreSQL major version differs from the control coordinator.");
+                await using (var version = new NpgsqlCommand(
+                                 "SELECT current_setting('server_version_num')::int", control, transaction))
+                {
+                    var controlPostgresVersion = Convert.ToInt32(await version.ExecuteScalarAsync(cancellationToken));
+                    if (remotePostgresVersion / 10_000 != controlPostgresVersion / 10_000)
+                        throw new InvalidOperationException("Query node PostgreSQL major version differs from the control coordinator.");
+                }
+                await using var state = new NpgsqlCommand(
+                    "SELECT isactive FROM pg_dist_node WHERE nodename=$1 AND nodeport=$2", control, transaction);
+                state.Parameters.AddWithValue(plan.WorkerHost!);
+                state.Parameters.AddWithValue(plan.WorkerPort!.Value);
+                var activeValue = await state.ExecuteScalarAsync(cancellationToken);
+                if (activeValue is null or DBNull)
+                {
+                    await using var add = new NpgsqlCommand(
+                        "SELECT citus_add_inactive_node($1, $2)", control, transaction);
+                    add.Parameters.AddWithValue(plan.WorkerHost!);
+                    add.Parameters.AddWithValue(plan.WorkerPort.Value);
+                    await add.ExecuteScalarAsync(cancellationToken);
+                    activeValue = false;
+                }
+                await using (var ineligible = new NpgsqlCommand(
+                                 "SELECT citus_set_node_property($1, $2, 'shouldhaveshards', false)", control, transaction))
+                {
+                    ineligible.Parameters.AddWithValue(plan.WorkerHost!);
+                    ineligible.Parameters.AddWithValue(plan.WorkerPort.Value);
+                    await ineligible.ExecuteScalarAsync(cancellationToken);
+                }
+                if (!Convert.ToBoolean(activeValue))
+                {
+                    await using var activate = new NpgsqlCommand(
+                        "SELECT citus_activate_node($1, $2)", control, transaction);
+                    activate.Parameters.AddWithValue(plan.WorkerHost!);
+                    activate.Parameters.AddWithValue(plan.WorkerPort.Value);
+                    await activate.ExecuteScalarAsync(cancellationToken);
+                }
+                await transaction.CommitAsync(cancellationToken);
             }
-            await using var state = new NpgsqlCommand(
-                "SELECT isactive FROM pg_dist_node WHERE nodename=$1 AND nodeport=$2", control);
-            state.Parameters.AddWithValue(plan.WorkerHost!);
-            state.Parameters.AddWithValue(plan.WorkerPort!.Value);
-            var activeValue = await state.ExecuteScalarAsync(cancellationToken);
-            if (activeValue is null or DBNull)
+            catch
             {
-                await using var add = new NpgsqlCommand("SELECT citus_add_inactive_node($1, $2)", control);
-                add.Parameters.AddWithValue(plan.WorkerHost!);
-                add.Parameters.AddWithValue(plan.WorkerPort.Value);
-                await add.ExecuteScalarAsync(cancellationToken);
-                activeValue = false;
+                await transaction.RollbackAsync(CancellationToken.None);
+                throw;
             }
-            await SetShardEligibilityAsync(cluster, plan.WorkerHost!, plan.WorkerPort.Value, false, cancellationToken);
-            if (!Convert.ToBoolean(activeValue))
-                await ExecuteAsync(cluster, "SELECT citus_activate_node($1, $2)",
-                    plan.WorkerHost!, plan.WorkerPort.Value, cancellationToken);
         }
         await SetShardEligibilityAsync(cluster, plan.WorkerHost!, plan.WorkerPort.Value, false, cancellationToken);
         await using var smoke = connections.Create(cluster, plan.WorkerHost!, plan.WorkerPort.Value);
@@ -203,6 +234,10 @@ public sealed class CitusMutator(
     public Task DisableNodeAsync(
         ClusterProfile cluster, string host, int port, CancellationToken cancellationToken) =>
         ExecuteAsync(cluster, "SELECT citus_disable_node($1, $2, true)", host, port, cancellationToken);
+
+    public Task StopMetadataSyncAsync(
+        ClusterProfile cluster, string host, int port, CancellationToken cancellationToken) =>
+        ExecuteAsync(cluster, "SELECT stop_metadata_sync_to_node($1, $2, true)", host, port, cancellationToken);
 
     public async Task<TableConversionState> ReadTableConversionStateAsync(
         ClusterProfile cluster, string schema, string table, CancellationToken cancellationToken)
@@ -319,6 +354,14 @@ public sealed class CitusMutator(
 
     private static HashSet<string> Names(IEnumerable<FunctionCapabilityResponse> capabilities) =>
         capabilities.Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
+
+    internal static string MajorVersion(string version)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(version, @"(?<!\d)(\d+)\.\d+");
+        if (!match.Success)
+            throw new InvalidOperationException("Citus version format is not recognized.");
+        return match.Groups[1].Value;
+    }
 
     internal static RebalanceStatusSnapshot ParseRebalanceStatus(string raw, long? requestedJobId)
     {

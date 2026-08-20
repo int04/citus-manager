@@ -18,7 +18,7 @@ public sealed class CitusConnectionFactory(IClusterSecretProtector secrets) : IC
     {
         var builder = new NpgsqlConnectionStringBuilder
         {
-            Host = host,
+            Host = ResolveConnectionHost(host),
             Port = port,
             Database = profile.Database,
             ApplicationName = "CitusManager",
@@ -44,4 +44,10 @@ public sealed class CitusConnectionFactory(IClusterSecretProtector secrets) : IC
 
         return new NpgsqlConnection(builder.ConnectionString);
     }
+
+    internal static string ResolveConnectionHost(string advertisedHost) =>
+        OperatingSystem.IsWindows() &&
+        advertisedHost.Equals("host.docker.internal", StringComparison.OrdinalIgnoreCase)
+            ? "localhost"
+            : advertisedHost;
 }

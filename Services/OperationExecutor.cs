@@ -131,6 +131,8 @@ public sealed class OperationExecutor(
                           "and every Citus placement; drop only the proven transient INVALID artifact, never the original valid index, then retry.",
                 PostgresException postgres =>
                     $"Citus/PostgreSQL command failed (SQLSTATE {postgres.SqlState}): {SafeMessage(postgres.MessageText)}",
+                NpgsqlException =>
+                    "Database connection failed while executing the operation. Check endpoint, port, TLS, credentials, and server logs.",
                 InvalidOperationException invalid => $"Operation preflight failed: {SafeMessage(invalid.Message)}",
                 _ => "Operation failed. Review preflight and checkpoints."
             };
@@ -268,6 +270,9 @@ public sealed class OperationExecutor(
         ClusterOperation operation, ClusterProfile cluster, OperationPlan plan,
         Contracts.ClusterInventoryResponse current, CancellationToken cancellationToken)
     {
+        var isQueryEndpoint = await db.ClusterQueryEndpoints.AnyAsync(x =>
+            x.ClusterId == cluster.Id && x.Host == plan.WorkerHost && x.Port == plan.WorkerPort,
+            cancellationToken);
         var target = current.Nodes.SingleOrDefault(x => SameNode(x.Host, x.Port, plan.WorkerHost!, plan.WorkerPort!.Value));
         if (target is null)
         {
@@ -298,6 +303,17 @@ public sealed class OperationExecutor(
             throw new InvalidOperationException("Mandatory zero-distributed-placement checkpoint failed; worker removal was not dispatched.");
         await SaveStepAsync(operation, "zero-distributed-placement-check", "Succeeded",
             "distributed_placements_left=0", cancellationToken);
+        if (isQueryEndpoint && target.HasMetadata && !HasStep(operation, "metadata-sync-stopped"))
+        {
+            if (!current.Capability.Functions.Any(x => x.Name == "stop_metadata_sync_to_node"))
+                throw new InvalidOperationException(
+                    "Installed Citus cannot clear query-node metadata before removal; removal was not dispatched.");
+            await SaveStepAsync(operation, "metadata-sync-stopped", "Running",
+                "Stopping metadata sync and clearing synchronized Citus metadata on the query node.", cancellationToken);
+            await mutator.StopMetadataSyncAsync(cluster, target.Host, target.Port, cancellationToken);
+            await SaveStepAsync(operation, "metadata-sync-stopped", "Succeeded",
+                "Metadata sync stopped and query-node metadata cleared before removal.", cancellationToken);
+        }
         var placements = await inspector.CountPlacementsAsync(cluster, target.Host, target.Port, cancellationToken);
         if (!HasStep(operation, "disable-node") && placements > 0)
         {
@@ -773,7 +789,7 @@ public sealed class OperationExecutor(
 
     private static bool HasTopologyMutationStep(ClusterOperation operation) =>
         operation.Steps.Any(x => x.Name is "add-worker" or "add-query-node" or "mark-draining" or
-            "rebalance-started" or "remove-dispatched");
+            "rebalance-started" or "metadata-sync-stopped" or "remove-dispatched");
 
     private static string TopologyFingerprint(Contracts.ClusterInventoryResponse inventory)
     {
