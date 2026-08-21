@@ -28,4 +28,5 @@ public sealed class ClusterProfile
     public string? CitusVersion { get; set; }
     public string? CapabilityJson { get; set; }
     public string? LastError { get; set; }
+    public int Version { get; set; }
 }

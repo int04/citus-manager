@@ -26,6 +26,6 @@ else
     </div>
 }
 @functions {
-    static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled or OperationStatus.Cancelling => "warning", _ => "neutral" };
-    static string KindIcon(string kind) => kind switch { "AddWorker" or "AddQueryNode" => "fa-plus", "Rebalance" => "fa-random", "DrainWorker" => "fa-exchange", "RetireWorker" or "RemoveWorker" => "fa-trash-o", _ => "fa-tasks" };
+    static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.AwaitingApproval or OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled or OperationStatus.Cancelling => "warning", _ => "neutral" };
+    static string KindIcon(string kind) => kind switch { "AddWorker" or "AddQueryNode" => "fa-plus", "Rebalance" => "fa-random", "DrainWorker" or "MigrateControlCoordinator" => "fa-exchange", "RetireWorker" or "RemoveWorker" => "fa-trash-o", _ => "fa-tasks" };
 }

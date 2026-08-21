@@ -30,7 +30,8 @@ public sealed record OperationPlan(
     bool RebalanceAfterAdd = false,
     string? IdempotencyKey = null,
     string? TopologyFingerprint = null,
-    long? RebalanceJobId = null);
+    long? RebalanceJobId = null,
+    CoordinatorMigrationPlan? CoordinatorMigration = null);
 
 public sealed record CreatePartitionedTablePlan(CreateTableRequest Request);
 
@@ -50,10 +51,16 @@ public interface IOperationService
     Task<IReadOnlyList<OperationResponse>> GetAllAsync(Guid? clusterId, CancellationToken cancellationToken);
     Task<OperationResponse?> GetAsync(Guid id, CancellationToken cancellationToken);
     Task<OperationResponse> CreateAsync(Guid clusterId, CreateOperationRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<WorkerConnectionTestResponse> TestWorkerConnectionAsync(
+        Guid clusterId, TestWorkerConnectionRequest request, CancellationToken cancellationToken);
     Task<OperationResponse> AddNodeAsync(Guid clusterId, AddNodeRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> RebalanceAsync(Guid clusterId, RebalanceRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> DrainWorkerAsync(Guid clusterId, DrainWorkerRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> RetireWorkerAsync(Guid clusterId, RetireWorkerRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> PlanCoordinatorMigrationAsync(
+        Guid clusterId, PlanCoordinatorMigrationRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<OperationResponse> ApproveCoordinatorMigrationAsync(
+        Guid id, ApproveCoordinatorMigrationRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<RebalancePreviewResponse> PreviewRebalanceAsync(
         Guid clusterId, bool drainOnly, string? workerHost, int? workerPort, CancellationToken cancellationToken);
     Task<ActiveOperationSummaryResponse?> GetActiveAsync(Guid clusterId, CancellationToken cancellationToken);
@@ -74,7 +81,8 @@ public sealed class OperationService(
     ControlDbContext db,
     ICitusInspector inspector,
     ICitusMutator mutator,
-    IDatabaseMaintenanceService maintenance) : IOperationService
+    IDatabaseMaintenanceService maintenance,
+    ICoordinatorMigrationService coordinatorMigrations) : IOperationService
 {
     public async Task<IReadOnlyList<OperationResponse>> GetAllAsync(
         Guid? clusterId, CancellationToken cancellationToken)
@@ -169,6 +177,8 @@ public sealed class OperationService(
                          operation.Kind == OperationKind.AddWorker && operation.Steps.Any(x => x.Name == "rebalance-started") ||
                          operation.Kind == OperationKind.RetireWorker && !operation.Steps.Any(x => x.Name is "disable-node" or "remove-dispatched") ||
                          operation.Kind == OperationKind.MergeRangePartitions && !operation.Steps.Any(x => x.Name == "merge-cutover-started"));
+        if (operation.Kind == OperationKind.MigrateControlCoordinator && operation.Status != OperationStatus.AwaitingApproval)
+            canCancel = false;
         return new(operation.Id, operation.Kind, operation.Risk, operation.Status, phase, current, total,
             processed, totalBytes, elapsed, canCancel, warning, operation.SafeError, steps,
             resultSchema, resultTable, exactRows, exactBytes, topologyProgress);
@@ -265,6 +275,13 @@ public sealed class OperationService(
 
         var inventory = await inspector.CollectAsync(cluster, cancellationToken);
         EnsureCapabilities(request.Kind, inventory.Capability);
+        if (request.Kind == OperationKind.AddWorker)
+        {
+            var connectionTest = await inspector.TestWorkerConnectionAsync(
+                cluster, request.WorkerHost!, request.WorkerPort!.Value, cancellationToken);
+            if (!connectionTest.Success)
+                throw new InvalidOperationException(connectionTest.Message);
+        }
         if (request.Kind == OperationKind.AddWorker && request.RebalanceAfterAdd)
             EnsureCapabilities(OperationKind.Rebalance, inventory.Capability);
 
@@ -314,6 +331,16 @@ public sealed class OperationService(
         return await SaveTopologyOperationAsync(clusterId, actorId, plan, cancellationToken);
     }
 
+    public async Task<WorkerConnectionTestResponse> TestWorkerConnectionAsync(
+        Guid clusterId, TestWorkerConnectionRequest request, CancellationToken cancellationToken)
+    {
+        var cluster = await db.Clusters.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == clusterId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cluster not found.");
+        return await inspector.TestWorkerConnectionAsync(
+            cluster, request.Host, request.Port, cancellationToken);
+    }
+
     public Task<OperationResponse> AddNodeAsync(
         Guid clusterId, AddNodeRequest request, Guid actorId, CancellationToken cancellationToken) =>
         CreateAsync(clusterId, new CreateOperationRequest
@@ -352,6 +379,119 @@ public sealed class OperationService(
             TypedConfirmation = request.TypedConfirmation, IdempotencyKey = request.IdempotencyKey
         }, actorId, cancellationToken);
 
+    public async Task<OperationResponse> PlanCoordinatorMigrationAsync(
+        Guid clusterId, PlanCoordinatorMigrationRequest request, Guid actorId,
+        CancellationToken cancellationToken)
+    {
+        var targetHost = request.TargetHost.Trim();
+        OperationSafety.ValidateCoordinatorMigrationPlanRequest(request, targetHost);
+
+        var existing = await db.Operations.Include(x => x.Steps).SingleOrDefaultAsync(x =>
+            x.ClusterId == clusterId && x.IdempotencyKey == request.IdempotencyKey, cancellationToken);
+        if (existing is not null)
+        {
+            var existingPlan = TryReadPlan(existing.PlanJson);
+            if (existing.Kind != OperationKind.MigrateControlCoordinator ||
+                !string.Equals(existingPlan?.CoordinatorMigration?.TargetHost,
+                    targetHost, StringComparison.OrdinalIgnoreCase) ||
+                existingPlan?.CoordinatorMigration?.TargetPort != request.TargetPort)
+                throw new InvalidOperationException(
+                    "Idempotency key was already used for a different coordinator migration.");
+            return Map(existing);
+        }
+
+        var cluster = await db.Clusters.SingleOrDefaultAsync(x => x.Id == clusterId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cluster not found.");
+        await EnsureNoActiveBackupOrRestoreAsync(clusterId, cancellationToken);
+        CoordinatorMigrationPlan migration;
+        try
+        {
+            migration = await coordinatorMigrations.PlanAsync(
+                cluster, targetHost, request.TargetPort, cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new CoordinatorMigrationRejectedException(exception.Message, exception);
+        }
+        var warnings = new List<string>
+        {
+            "This plan does not fence or promote PostgreSQL. Fence the source and promote the verified physical standby outside this application before approval.",
+            "Coordinator failover is not a backup. Verify tested backup/PITR and a named recovery owner.",
+            "After external promotion is approved, cancellation and automatic rollback are unsafe."
+        };
+        var plan = new OperationPlan(OperationKind.MigrateControlCoordinator, null, null,
+            migration.CitusVersion, [], "[]", null, warnings, DateTimeOffset.UtcNow,
+            PlanVersion: 4, IdempotencyKey: request.IdempotencyKey,
+            TopologyFingerprint: migration.TopologyFingerprint,
+            CoordinatorMigration: migration);
+        return await SaveCoordinatorMigrationPlanAsync(clusterId, actorId, plan, cancellationToken);
+    }
+
+    public async Task<OperationResponse> ApproveCoordinatorMigrationAsync(
+        Guid id, ApproveCoordinatorMigrationRequest request, Guid actorId,
+        CancellationToken cancellationToken)
+    {
+        var operation = await LoadAsync(id, cancellationToken);
+        if (operation.Kind != OperationKind.MigrateControlCoordinator)
+            throw new InvalidOperationException("Only a coordinator migration can use this approval endpoint.");
+        if (operation.Status != OperationStatus.AwaitingApproval)
+            throw new InvalidOperationException("Only a coordinator migration awaiting approval can be approved.");
+        var plan = TryReadPlan(operation.PlanJson)
+            ?? throw new InvalidOperationException("Coordinator migration plan is invalid.");
+        var migration = plan.CoordinatorMigration
+            ?? throw new InvalidOperationException("Coordinator migration details are missing.");
+        OperationSafety.ValidateCoordinatorMigrationApprovalRequest(request, migration.TargetHost, migration.TargetPort);
+        await EnsureNoActiveBackupOrRestoreAsync(operation.ClusterId, cancellationToken);
+        var cluster = await db.Clusters.SingleAsync(x => x.Id == operation.ClusterId, cancellationToken);
+        if (!string.Equals(cluster.Host, migration.SourceHost, StringComparison.OrdinalIgnoreCase) ||
+            cluster.Port != migration.SourcePort || cluster.Version != migration.SourceProfileVersion)
+            throw new InvalidOperationException(
+                "Control coordinator profile changed after migration planning; cancel this plan and create a fresh one.");
+        CoordinatorMigrationValidation validation;
+        try
+        {
+            validation = await coordinatorMigrations.ValidateExternalPromotionAsync(
+                cluster, migration, cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new CoordinatorMigrationRejectedException(exception.Message, exception);
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await AcquireClusterTransactionLockAsync(operation.ClusterId, cancellationToken);
+        await db.Entry(operation).ReloadAsync(cancellationToken);
+        if (operation.Status != OperationStatus.AwaitingApproval)
+            throw new InvalidOperationException("Coordinator migration is no longer awaiting approval.");
+        await EnsureNoActiveBackupOrRestoreAsync(operation.ClusterId, cancellationToken);
+        var competing = await db.Operations.AnyAsync(x => x.ClusterId == operation.ClusterId && x.Id != id &&
+            (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running ||
+             x.Status == OperationStatus.Cancelling), cancellationToken);
+        if (competing)
+            throw new InvalidOperationException("Another impact operation is active for this cluster.");
+        operation.Steps.Add(new OperationStep
+        {
+            OperationId = operation.Id,
+            Sequence = operation.Steps.Count == 0 ? 1 : operation.Steps.Max(x => x.Sequence) + 1,
+            Name = "source-fence-verified",
+            Status = "Succeeded",
+            Detail = $"source_fenced={validation.SourceFenced}; source_reachable_as_standby={validation.SourceReachableAsStandby}; " +
+                     $"target_wal_lsn={validation.TargetWalLsn}; validated_at={validation.ValidatedAt:O}",
+            CompletedAt = DateTimeOffset.UtcNow
+        });
+        operation.Status = OperationStatus.Approved;
+        operation.ApprovedBy = actorId;
+        operation.ApprovedAt = DateTimeOffset.UtcNow;
+        operation.Version++;
+        db.AuditEvents.Add(ClusterService.Audit(actorId, "coordinator-migration.fence-approved",
+            "operation", id, new { operation.ClusterId, operation.PlanHash, migration.TargetHost,
+                migration.TargetPort, validation.SourceFenced, validation.SourceReachableAsStandby,
+                validation.TargetWalLsn, validation.ValidatedAt }));
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return Map(operation);
+    }
+
     public async Task<RebalancePreviewResponse> PreviewRebalanceAsync(
         Guid clusterId, bool drainOnly, string? workerHost, int? workerPort, CancellationToken cancellationToken)
     {
@@ -377,7 +517,8 @@ public sealed class OperationService(
     public async Task<ActiveOperationSummaryResponse?> GetActiveAsync(Guid clusterId, CancellationToken cancellationToken)
     {
         var active = await db.Operations.AsNoTracking().Where(x => x.ClusterId == clusterId &&
-                (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running || x.Status == OperationStatus.Cancelling))
+                (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running || x.Status == OperationStatus.Cancelling ||
+                 x.Kind == OperationKind.MigrateControlCoordinator && x.Status == OperationStatus.AwaitingApproval))
             .OrderBy(x => x.ApprovedAt).Select(x => new
             {
                 x.Id, x.Kind, x.Status, x.RequestedAt, x.StartedAt,
@@ -468,6 +609,8 @@ public sealed class OperationService(
     public async Task<OperationResponse> ApproveAsync(Guid id, Guid actorId, CancellationToken cancellationToken)
     {
         var operation = await LoadAsync(id, cancellationToken);
+        if (operation.Kind == OperationKind.MigrateControlCoordinator)
+            throw new InvalidOperationException("Use the dedicated fenced coordinator-migration approval endpoint.");
         if (operation.Status != OperationStatus.AwaitingApproval)
             throw new InvalidOperationException("Only an operation awaiting approval can be approved.");
         if (operation.RequestedBy == actorId && !CanRequesterApprove(operation))
@@ -488,11 +631,14 @@ public sealed class OperationService(
     }
 
     internal static bool CanRequesterApprove(ClusterOperation operation)
-        => Enum.IsDefined(operation.Kind);
+        => operation.Kind != OperationKind.MigrateControlCoordinator && Enum.IsDefined(operation.Kind);
 
     public async Task<OperationResponse> CancelAsync(Guid id, Guid actorId, CancellationToken cancellationToken)
     {
         var operation = await LoadAsync(id, cancellationToken);
+        if (operation.Kind == OperationKind.MigrateControlCoordinator &&
+            operation.Status != OperationStatus.AwaitingApproval)
+            throw new InvalidOperationException("Coordinator migration cannot be cancelled after external promotion approval.");
         if (operation.Kind == OperationKind.RetireWorker &&
             operation.Steps.Any(x => x.Name is "disable-node" or "remove-dispatched"))
             throw new InvalidOperationException("Worker retirement cannot be cancelled after reference-placement cleanup was dispatched.");
@@ -558,11 +704,7 @@ public sealed class OperationService(
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         // Serialize topology creation even when no operation row exists yet. The runner still owns the execution lease.
-        if (db.Database.GetDbConnection() is NpgsqlConnection)
-        {
-            var lockKey = BitConverter.ToInt64(SHA256.HashData(clusterId.ToByteArray()), 0);
-            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({lockKey})", cancellationToken);
-        }
+        await AcquireClusterTransactionLockAsync(clusterId, cancellationToken);
 
         if (!string.IsNullOrWhiteSpace(plan.IdempotencyKey))
         {
@@ -580,7 +722,8 @@ public sealed class OperationService(
         }
 
         var active = await db.Operations.Include(x => x.Steps).Where(x => x.ClusterId == clusterId &&
-                (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running || x.Status == OperationStatus.Cancelling))
+                (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running || x.Status == OperationStatus.Cancelling ||
+                 x.Kind == OperationKind.MigrateControlCoordinator && x.Status == OperationStatus.AwaitingApproval))
             .OrderBy(x => x.ApprovedAt).FirstOrDefaultAsync(cancellationToken);
         if (active is not null)
         {
@@ -612,6 +755,90 @@ public sealed class OperationService(
         return Map(operation);
     }
 
+    private async Task<OperationResponse> SaveCoordinatorMigrationPlanAsync(
+        Guid clusterId, Guid actorId, OperationPlan plan, CancellationToken cancellationToken)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await AcquireClusterTransactionLockAsync(clusterId, cancellationToken);
+        await EnsureNoActiveBackupOrRestoreAsync(clusterId, cancellationToken);
+
+        var matching = await db.Operations.Include(x => x.Steps).SingleOrDefaultAsync(x =>
+            x.ClusterId == clusterId && x.IdempotencyKey == plan.IdempotencyKey, cancellationToken);
+        if (matching is not null)
+        {
+            var existingPlan = TryReadPlan(matching.PlanJson);
+            if (matching.Kind != OperationKind.MigrateControlCoordinator ||
+                !string.Equals(existingPlan?.CoordinatorMigration?.TargetHost,
+                    plan.CoordinatorMigration?.TargetHost, StringComparison.OrdinalIgnoreCase) ||
+                existingPlan?.CoordinatorMigration?.TargetPort != plan.CoordinatorMigration?.TargetPort)
+                throw new InvalidOperationException("Idempotency key was already used for a different coordinator migration.");
+            await transaction.CommitAsync(cancellationToken);
+            return Map(matching);
+        }
+
+        var active = await db.Operations.AnyAsync(x => x.ClusterId == clusterId &&
+            (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running ||
+             x.Status == OperationStatus.Cancelling ||
+             x.Kind == OperationKind.MigrateControlCoordinator && x.Status == OperationStatus.AwaitingApproval),
+            cancellationToken);
+        if (active)
+            throw new InvalidOperationException("Another topology operation or coordinator-migration plan is active for this cluster.");
+
+        var planJson = JsonSerializer.Serialize(plan);
+        var operation = new ClusterOperation
+        {
+            ClusterId = clusterId,
+            Kind = OperationKind.MigrateControlCoordinator,
+            Risk = OperationRisk.Destructive,
+            Status = OperationStatus.AwaitingApproval,
+            PlanJson = planJson,
+            PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
+            IdempotencyKey = plan.IdempotencyKey,
+            RequestedBy = actorId
+        };
+        db.Operations.Add(operation);
+        db.AuditEvents.Add(ClusterService.Audit(actorId, "coordinator-migration.plan", "operation", operation.Id,
+            new { operation.ClusterId, operation.Kind, operation.Risk, operation.PlanHash,
+                plan.IdempotencyKey, plan.CoordinatorMigration?.TargetHost,
+                plan.CoordinatorMigration?.TargetPort, AutoApproved = false }));
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return Map(operation);
+    }
+
+    private async Task EnsureNoActiveBackupOrRestoreAsync(Guid clusterId, CancellationToken cancellationToken)
+    {
+        var backup = await db.BackupRuns.AnyAsync(x => x.ClusterId == clusterId &&
+            (x.Status == BackupRunStatus.Queued || x.Status == BackupRunStatus.Running ||
+             x.Status == BackupRunStatus.RetryScheduled || x.Status == BackupRunStatus.Cancelling), cancellationToken);
+        var restore = await db.RestoreRuns.AsNoTracking().Where(x =>
+            (x.SourceClusterId == clusterId || x.TargetClusterId == clusterId) &&
+            (x.Status == RestoreRunStatus.Queued || x.Status == RestoreRunStatus.Running ||
+             x.Status == RestoreRunStatus.Cancelling) ||
+            x.TargetClusterId == clusterId && x.Status == RestoreRunStatus.RecoveryRequired)
+            .OrderByDescending(x => x.CreatedAt)
+            .Select(x => new { x.Id, x.Status })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (backup)
+            throw new InvalidOperationException("Coordinator migration is blocked by active backup work.");
+        if (restore is not null)
+        {
+            if (restore.Status == RestoreRunStatus.RecoveryRequired)
+                throw new CoordinatorMigrationBlockedByRestoreException(restore.Id,
+                    $"Coordinator migration is blocked by restore {restore.Id}, which still requires manual recovery resolution.");
+            throw new InvalidOperationException(
+                $"Coordinator migration is blocked by active restore {restore.Id} ({restore.Status}).");
+        }
+    }
+
+    private async Task AcquireClusterTransactionLockAsync(Guid clusterId, CancellationToken cancellationToken)
+    {
+        if (db.Database.GetDbConnection() is not NpgsqlConnection) return;
+        var lockKey = BitConverter.ToInt64(SHA256.HashData(clusterId.ToByteArray()), 0);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({lockKey})", cancellationToken);
+    }
+
     private static OperationPlan? TryReadPlan(string json)
     {
         try { return JsonSerializer.Deserialize<OperationPlan>(json); }
@@ -640,6 +867,7 @@ public sealed class OperationService(
         {
             OperationKind.AddWorker when plan?.RebalanceAfterAdd == true => 5,
             OperationKind.AddWorker or OperationKind.AddQueryNode or OperationKind.Rebalance => 3,
+            OperationKind.MigrateControlCoordinator => 4,
             OperationKind.DrainWorker => 4,
             OperationKind.RetireWorker => 5,
             _ => Math.Max(completedSteps + 1, 1)
@@ -733,6 +961,7 @@ public sealed class OperationService(
             OperationKind.DrainWorker => ["citus_set_node_property", "get_rebalance_table_shards_plan", "citus_rebalance_start", "citus_rebalance_status"],
             OperationKind.RetireWorker => ["citus_set_node_property", "get_rebalance_table_shards_plan", "citus_rebalance_start", "citus_rebalance_status", "citus_disable_node", "citus_remove_node"],
             OperationKind.RemoveWorker => ["citus_remove_node"],
+            OperationKind.MigrateControlCoordinator => [],
             OperationKind.ConvertTable => ["create_distributed_table"],
             _ => []
         };
@@ -814,6 +1043,7 @@ public sealed class OperationService(
         RestoreRunStatus.Succeeded => OperationStatus.Succeeded,
         RestoreRunStatus.Failed => OperationStatus.Failed,
         RestoreRunStatus.RecoveryRequired => OperationStatus.RecoveryRequired,
+        RestoreRunStatus.RecoveryResolved => OperationStatus.Cancelled,
         RestoreRunStatus.Cancelling => OperationStatus.Cancelling,
         RestoreRunStatus.Cancelled => OperationStatus.Cancelled,
         _ => OperationStatus.Failed
@@ -828,12 +1058,38 @@ public sealed class OperationService(
 
 internal static class OperationSafety
 {
+    internal static void ValidateCoordinatorMigrationPlanRequest(
+        PlanCoordinatorMigrationRequest request, string? normalizedTargetHost = null)
+    {
+        var targetHost = normalizedTargetHost ?? request.TargetHost.Trim();
+        if (string.IsNullOrWhiteSpace(targetHost))
+            throw new ArgumentException("Target host is required.");
+        if (!request.ExternalCapacityAndBackupChecksAcknowledged)
+            throw new ArgumentException("External capacity, backup/PITR, fencing, and rollback-owner checks must be acknowledged.");
+        if (!string.Equals(request.TypedConfirmation, $"{targetHost}:{request.TargetPort}", StringComparison.Ordinal))
+            throw new ArgumentException("Typed confirmation must exactly match the target host and port.");
+        if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
+            throw new ArgumentException("Idempotency key is required.");
+    }
+
+    internal static void ValidateCoordinatorMigrationApprovalRequest(
+        ApproveCoordinatorMigrationRequest request, string targetHost, int targetPort)
+    {
+        if (!request.SourceFencedAndTargetPromotedAcknowledged)
+            throw new ArgumentException("Source fencing and target promotion must be acknowledged.");
+        var phrase = $"PROMOTE {targetHost}:{targetPort}";
+        if (!string.Equals(request.TypedConfirmation, phrase, StringComparison.Ordinal))
+            throw new ArgumentException($"Typed confirmation must exactly match {phrase}.");
+    }
+
     internal static void ValidateRequest(CreateOperationRequest request)
     {
         if (request.Kind is OperationKind.Backup or OperationKind.Restore)
             throw new ArgumentException("Backup and restore operations must be created from the backup workflow.");
         if (request.Kind == OperationKind.ConvertTable)
             throw new ArgumentException("Use the dedicated table-conversion endpoint.");
+        if (request.Kind == OperationKind.MigrateControlCoordinator)
+            throw new ArgumentException("Use the dedicated coordinator-migration planning endpoint.");
         if (request.Kind is OperationKind.AddWorker or OperationKind.AddQueryNode or OperationKind.DrainWorker or
             OperationKind.RetireWorker or OperationKind.RemoveWorker)
         {
@@ -853,6 +1109,7 @@ internal static class OperationSafety
         OperationKind.AddWorker or OperationKind.AddQueryNode => OperationRisk.Write,
         OperationKind.Rebalance or OperationKind.DrainWorker => OperationRisk.Impact,
         OperationKind.RetireWorker or OperationKind.RemoveWorker => OperationRisk.Destructive,
+        OperationKind.MigrateControlCoordinator => OperationRisk.Destructive,
         OperationKind.ConvertTable => OperationRisk.Impact,
         OperationKind.CreatePartitionedTable or OperationKind.CreateRangePartitions => OperationRisk.Write,
         OperationKind.InspectTable => OperationRisk.Read,

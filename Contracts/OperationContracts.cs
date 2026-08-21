@@ -28,6 +28,24 @@ public sealed record AddNodeRequest
     [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
 }
 
+/// <summary>Payload for a read-only worker endpoint connectivity and compatibility check.</summary>
+public sealed record TestWorkerConnectionRequest
+{
+    [Required, MaxLength(255)] public required string Host { get; init; }
+    [Range(1, 65535)] public int Port { get; init; } = 5432;
+}
+
+/// <summary>Result of checking a prospective worker without changing Citus metadata.</summary>
+public sealed record WorkerConnectionTestResponse(
+    bool Success,
+    string Host,
+    int Port,
+    string? Database,
+    string? User,
+    string? PostgreSqlVersion,
+    string? CitusVersion,
+    string Message);
+
 public sealed record RebalanceRequest
 {
     public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
@@ -49,6 +67,23 @@ public sealed record RetireWorkerRequest
     public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
     [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
     [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
+}
+
+/// <summary>Creates an immutable, manually approved control-coordinator migration plan.</summary>
+public sealed record PlanCoordinatorMigrationRequest
+{
+    [Required, MaxLength(255)] public required string TargetHost { get; init; }
+    [Range(1, 65535)] public int TargetPort { get; init; } = 5432;
+    public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
+    [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
+    [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
+}
+
+/// <summary>Attests that external fencing and physical-standby promotion completed.</summary>
+public sealed record ApproveCoordinatorMigrationRequest
+{
+    public bool SourceFencedAndTargetPromotedAcknowledged { get; init; }
+    [Required, MaxLength(255)] public required string TypedConfirmation { get; init; }
 }
 
 public sealed record RebalanceMoveSummary(

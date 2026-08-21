@@ -13,6 +13,9 @@ using System.Net.Sockets;
 
 namespace CitusManager.Services;
 
+public sealed class RestoreRecoveryRejectedException(string message, Exception? innerException = null)
+    : InvalidOperationException(message, innerException);
+
 public sealed record RestoreTargetSnapshot(
     string Host, int Port, string Database, string? Username, string? Password, ClusterSslMode SslMode);
 
@@ -20,7 +23,9 @@ public sealed class RestoreService(
     ControlDbContext db,
     IBackupSecretProtector backupSecrets,
     UserManager<ApplicationUser> users,
-    IConfiguration configuration) : IRestoreService
+    IConfiguration configuration,
+    ICitusInspector inspector,
+    IControlPlaneLeaseProvider leases) : IRestoreService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -69,11 +74,19 @@ public sealed class RestoreService(
 
         var conflict = await db.RestoreRuns.AnyAsync(x =>
             (x.SourceClusterId == source.Id || x.TargetIdentityHash == targetIdentityHash) &&
-            (x.Status == RestoreRunStatus.Queued || x.Status == RestoreRunStatus.Running || x.Status == RestoreRunStatus.Cancelling), cancellationToken);
+            (x.Status == RestoreRunStatus.Queued || x.Status == RestoreRunStatus.Running || x.Status == RestoreRunStatus.Cancelling) ||
+            x.TargetIdentityHash == targetIdentityHash && x.Status == RestoreRunStatus.RecoveryRequired, cancellationToken);
         var backupConflict = await db.BackupRuns.AnyAsync(x =>
             (x.ClusterId == source.Id || registered != null && x.ClusterId == registered.Id) &&
             (x.Status == BackupRunStatus.Queued || x.Status == BackupRunStatus.Running || x.Status == BackupRunStatus.Cancelling), cancellationToken);
-        if (conflict || backupConflict) throw new InvalidOperationException("Source or target cluster already has active backup/restore work.");
+        var coordinatorMigration = await db.Operations.AnyAsync(x =>
+            (x.ClusterId == source.Id || registered != null && x.ClusterId == registered.Id) &&
+            x.Kind == OperationKind.MigrateControlCoordinator &&
+            (x.Status == OperationStatus.AwaitingApproval || x.Status == OperationStatus.Approved ||
+             x.Status == OperationStatus.Running || x.Status == OperationStatus.Cancelling ||
+             x.Status == OperationStatus.RecoveryRequired), cancellationToken);
+        if (conflict || backupConflict || coordinatorMigration)
+            throw new InvalidOperationException("Source or target cluster already has active backup, restore, or coordinator-migration work.");
 
         var run = new RestoreRun
         {
@@ -114,6 +127,106 @@ public sealed class RestoreService(
         db.AuditEvents.Add(ClusterService.Audit(actorId, "restore.cancel", "restore-run", run.Id, new { run.Status }));
         await db.SaveChangesAsync(cancellationToken);
         return BackupService.MapRestore(run);
+    }
+
+    public async Task<RestoreRunResponse> ResolveRecoveryAsync(
+        Guid runId, ResolveRestoreRecoveryRequest request, Guid actorId,
+        CancellationToken cancellationToken)
+    {
+        ValidateRecoveryResolutionRequest(runId, request);
+        var note = request.ResolutionNote.Trim();
+
+        var run = await db.RestoreRuns.Include(x => x.BackupRun).Include(x => x.TargetCluster)
+            .Include(x => x.Steps).SingleOrDefaultAsync(x => x.Id == runId, cancellationToken)
+            ?? throw new KeyNotFoundException("Restore run not found.");
+        if (run.Status != RestoreRunStatus.RecoveryRequired)
+            throw new InvalidOperationException("Only a restore requiring manual recovery can be resolved.");
+        var target = run.TargetCluster
+            ?? throw new InvalidOperationException(
+                "External restore targets cannot be marked resolved here. Register and validate the recovered target first.");
+
+        await using var lease = await leases.TryAcquireClusterAsync(target.Id, cancellationToken);
+        if (lease is null)
+            throw new InvalidOperationException("The target cluster is busy; retry after active work finishes.");
+
+        var activeBackup = await db.BackupRuns.AnyAsync(x => x.ClusterId == target.Id &&
+            (x.Status == BackupRunStatus.Queued || x.Status == BackupRunStatus.Running ||
+             x.Status == BackupRunStatus.RetryScheduled || x.Status == BackupRunStatus.Cancelling), cancellationToken);
+        var activeRestore = await db.RestoreRuns.AnyAsync(x => x.Id != runId &&
+            (x.SourceClusterId == target.Id || x.TargetClusterId == target.Id) &&
+            (x.Status == RestoreRunStatus.Queued || x.Status == RestoreRunStatus.Running ||
+             x.Status == RestoreRunStatus.Cancelling), cancellationToken);
+        var activeOperation = await db.Operations.AnyAsync(x => x.ClusterId == target.Id &&
+            (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running ||
+             x.Status == OperationStatus.Cancelling), cancellationToken);
+        if (activeBackup || activeRestore || activeOperation)
+            throw new InvalidOperationException(
+                "Manual recovery cannot be resolved while backup, restore, or cluster operations are active.");
+
+        var inventory = await inspector.CollectAsync(target, cancellationToken);
+        var coordinators = inventory.Nodes.Where(x => x.GroupId == 0 &&
+            x.Role.Equals("primary", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (coordinators.Count != 1 || !coordinators[0].IsActive ||
+            !coordinators[0].HasMetadata || !coordinators[0].MetadataSynced)
+            throw new InvalidOperationException(
+                "Fresh validation did not find exactly one active, metadata-synchronized control coordinator.");
+        if (inventory.Nodes.Any(x => !x.IsActive || x.HasMetadata && !x.MetadataSynced))
+            throw new InvalidOperationException(
+                "Fresh validation found inactive nodes or unsynchronized Citus metadata.");
+
+        var resolvedAt = DateTimeOffset.UtcNow;
+        var supersededPlans = await db.Operations.Where(x => x.ClusterId == target.Id &&
+                x.Status == OperationStatus.AwaitingApproval && x.StartedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var operation in supersededPlans)
+        {
+            operation.Status = OperationStatus.Cancelled;
+            operation.CompletedAt = resolvedAt;
+            operation.SafeError =
+                $"Superseded while resolving restore recovery {run.Id}; this plan had not started.";
+            operation.Version++;
+        }
+        run.Status = RestoreRunStatus.RecoveryResolved;
+        run.CurrentPhase = "RecoveryResolved";
+        run.RecoveryResolvedBy = actorId;
+        run.RecoveryResolvedAt = resolvedAt;
+        run.RecoveryResolutionNote = note;
+        run.CompletedAt ??= resolvedAt;
+        run.Version++;
+        run.Steps.Add(new RestoreRunStep
+        {
+            RestoreRunId = run.Id,
+            Sequence = run.Steps.Count == 0 ? 1 : run.Steps.Max(x => x.Sequence) + 1,
+            Name = "RecoveryResolution",
+            Status = "Succeeded",
+            DetailJson = JsonSerializer.Serialize(new
+            {
+                note,
+                coordinator = $"{coordinators[0].Host}:{coordinators[0].Port}",
+                nodeCount = inventory.Nodes.Count,
+                tableCount = inventory.Tables.Count,
+                supersededAwaitingOperationIds = supersededPlans.Select(x => x.Id),
+                validatedAt = inventory.CollectedAt
+            }, JsonOptions),
+            StartedAt = resolvedAt,
+            CompletedAt = resolvedAt
+        });
+        db.AuditEvents.Add(ClusterService.Audit(actorId, "restore.recovery-resolved", "restore-run", run.Id,
+            new { run.SourceClusterId, run.TargetClusterId, resolvedAt, nodeCount = inventory.Nodes.Count,
+                tableCount = inventory.Tables.Count, supersededAwaitingOperationIds = supersededPlans.Select(x => x.Id), note }));
+        await db.SaveChangesAsync(cancellationToken);
+        return BackupService.MapRestore(run);
+    }
+
+    internal static void ValidateRecoveryResolutionRequest(
+        Guid runId, ResolveRestoreRecoveryRequest request)
+    {
+        if (!request.ManualRecoveryCompleted)
+            throw new ArgumentException("Manual recovery completion must be acknowledged.");
+        if (!string.Equals(request.TypedConfirmation, runId.ToString(), StringComparison.Ordinal))
+            throw new ArgumentException("Typed confirmation must exactly match the restore ID.");
+        if (string.IsNullOrWhiteSpace(request.ResolutionNote))
+            throw new ArgumentException("A manual recovery summary is required.");
     }
 
     public async Task<RestoreProgressResponse?> GetProgressAsync(Guid runId, CancellationToken cancellationToken)

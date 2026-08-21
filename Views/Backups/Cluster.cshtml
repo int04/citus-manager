@@ -123,10 +123,19 @@
 
 <section class="section-block">
     <div class="section-title"><div><h2>@T["Restore.Title"]</h2><p>@T["Restore.Help"]</p></div></div>
-    <div class="table-wrap backup-table"><table><thead><tr><th>@T["Runs.Requested"]</th><th>@T["Restore.Target"]</th><th>@T["Runs.StatusPhase"]</th><th>@T["Restore.Processed"]</th><th>@T["Restore.Error"]</th></tr></thead><tbody>
-    @if (backupPage.RestoreRuns.Count == 0) { <tr><td colspan="5" class="backup-empty-cell">@T["Restore.Empty"]</td></tr> }
+    <div class="table-wrap backup-table"><table><thead><tr><th>@T["Runs.Requested"]</th><th>@T["Restore.Target"]</th><th>@T["Runs.StatusPhase"]</th><th>@T["Restore.Processed"]</th><th>@T["Restore.Error"]</th><th><span class="sr-only">@T["Common.Actions"]</span></th></tr></thead><tbody>
+    @if (backupPage.RestoreRuns.Count == 0) { <tr><td colspan="6" class="backup-empty-cell">@T["Restore.Empty"]</td></tr> }
     @foreach (var restore in backupPage.RestoreRuns)
-    { <tr data-restore-run="@restore.Id" data-progress-url="/api/restore-runs/@restore.Id/progress"><td>@restore.RequestedAt.ToString("g")</td><td><code>@(restore.TargetClusterId is null ? T["Restore.ExternalTarget"] : restore.TargetDisplay)</code></td><td><span data-field="status" data-status="@restore.Status" class="status-pill @StatusClass(restore.Status)">@T[$"Status.{restore.Status}"]</span><small data-field="phase" data-phase="@restore.Phase">@(restore.Phase == "Download/Decrypt" ? T["Phase.DownloadDecrypt"] : T[$"Phase.{restore.Phase}"])</small></td><td><strong data-field="bytes">@FormatBytes(restore.BytesProcessed)</strong><small data-field="throughput">@(restore.BytesPerSecond is null ? "" : $"{FormatBytes((long)restore.BytesPerSecond.Value)}/s")</small></td><td><span class="backup-error" data-field="error">@restore.SafeError</span></td></tr> }
+    {
+        <tr data-restore-run="@restore.Id" data-progress-url="/api/restore-runs/@restore.Id/progress">
+            <td>@restore.RequestedAt.ToString("g")</td>
+            <td><code>@(restore.TargetClusterId is null ? T["Restore.ExternalTarget"] : restore.TargetDisplay)</code></td>
+            <td><span data-field="status" data-status="@restore.Status" class="status-pill @StatusClass(restore.Status)">@T[$"Status.{restore.Status}"]</span><small data-field="phase" data-phase="@restore.Phase">@(restore.Phase == "Download/Decrypt" ? T["Phase.DownloadDecrypt"] : T[$"Phase.{restore.Phase}"])</small></td>
+            <td><strong data-field="bytes">@FormatBytes(restore.BytesProcessed)</strong><small data-field="throughput">@(restore.BytesPerSecond is null ? "" : $"{FormatBytes((long)restore.BytesPerSecond.Value)}/s")</small></td>
+            <td><span class="backup-error" data-field="error">@restore.SafeError</span></td>
+            <td>@if (isAdmin && restore.Status == "RecoveryRequired" && restore.TargetClusterId is not null) { <button type="button" class="btn btn-danger backup-icon-action" data-resolve-restore-recovery data-restore-id="@restore.Id" data-url="/api/restore-runs/@restore.Id/resolve-recovery" title="@T["Recovery.ResolveAction"]" aria-label="@T["Recovery.ResolveAction"]"><i class="fa fa-check-circle" aria-hidden="true"></i><span class="sr-only">@T["Recovery.ResolveAction"]</span></button> }</td>
+        </tr>
+    }
     </tbody></table></div>
 </section>
 
@@ -155,6 +164,22 @@
             <div class="form-actions"><button type="button" class="btn btn-secondary" data-dialog-close>@T["Action.Cancel"]</button><button type="submit" class="btn btn-danger"><i class="fa fa-database" aria-hidden="true"></i><span>@T["Action.ValidateApply"]</span></button></div>
         </form>
     </dialog>
+    @if (isAdmin)
+    {
+        <dialog id="resolve-restore-recovery-dialog" class="backup-dialog" aria-labelledby="resolve-recovery-title" aria-describedby="resolve-recovery-warning">
+            <form id="resolve-restore-recovery-form" method="dialog">
+                <div class="backup-dialog-head"><div><p class="eyebrow">@T["Recovery.Kicker"]</p><h2 id="resolve-recovery-title">@T["Recovery.Title"]</h2></div><button type="button" class="btn btn-ghost" data-dialog-close aria-label="@T["Common.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></div>
+                <div class="hidden notice" role="alert" tabindex="-1" data-dialog-feedback></div>
+                <div id="resolve-recovery-warning" class="warning-callout"><strong>@T["Recovery.WarningTitle"]</strong> @T["Recovery.Warning"]</div>
+                <p>@T["Recovery.HealthPreflight"]</p>
+                <input type="hidden" name="url" />
+                <label class="check-field"><input type="checkbox" name="manualRecoveryCompleted" required /><span>@T["Recovery.Ack"]</span></label>
+                <div class="field"><label for="recovery-resolution-note">@T["Recovery.Note"]</label><textarea id="recovery-resolution-note" name="resolutionNote" required maxlength="2000" rows="4"></textarea></div>
+                <div class="field"><label for="recovery-confirmation">@T["Recovery.TypeId"] <code data-recovery-id></code></label><input id="recovery-confirmation" name="typedConfirmation" required maxlength="36" autocomplete="off" autocapitalize="none" spellcheck="false" /></div>
+                <div class="form-actions"><button type="button" class="btn btn-secondary" data-dialog-close>@T["Action.Cancel"]</button><button type="submit" class="btn btn-danger"><i class="fa fa-check-circle" aria-hidden="true"></i><span>@T["Recovery.ResolveAction"]</span></button></div>
+            </form>
+        </dialog>
+    }
 }
 
 @section Scripts {
@@ -170,7 +195,8 @@
         ["processed"] = T["Js.Processed"],
         ["statusQueued"] = T["Status.Queued"], ["statusRunning"] = T["Status.Running"], ["statusRetryScheduled"] = T["Status.RetryScheduled"],
         ["statusSucceeded"] = T["Status.Succeeded"], ["statusPartialSucceeded"] = T["Status.PartialSucceeded"], ["statusFailed"] = T["Status.Failed"],
-        ["statusCancelling"] = T["Status.Cancelling"], ["statusCancelled"] = T["Status.Cancelled"], ["statusRecoveryRequired"] = T["Status.RecoveryRequired"],
+        ["statusCancelling"] = T["Status.Cancelling"], ["statusCancelled"] = T["Status.Cancelled"], ["statusRecoveryRequired"] = T["Status.RecoveryRequired"], ["statusRecoveryResolved"] = T["Status.RecoveryResolved"],
+        ["resolvingRecovery"] = T["Recovery.Resolving"], ["recoveryConfirmationMismatch"] = T["Recovery.ConfirmationMismatch"],
         ["statusCommitted"] = T["Status.Committed"], ["phasePreflight"] = T["Phase.Preflight"], ["phaseMetadata"] = T["Phase.Metadata"],
         ["phaseDumping"] = T["Phase.Dumping"], ["phaseUploading"] = T["Phase.Uploading"], ["phaseValidating"] = T["Phase.Validating"],
         ["phaseRetention"] = T["Phase.Retention"], ["phaseNotifications"] = T["Phase.Notifications"], ["phaseDownloadDecrypt"] = T["Phase.DownloadDecrypt"],
@@ -181,7 +207,7 @@
 }
 
 @functions {
-    static string StatusClass(string status) => status switch { "Succeeded" => "success", "PartialSucceeded" or "RetryScheduled" or "RecoveryRequired" => "warning", "Failed" or "Cancelled" => "danger", _ => "neutral" };
+    static string StatusClass(string status) => status switch { "Succeeded" or "RecoveryResolved" => "success", "PartialSucceeded" or "RetryScheduled" or "RecoveryRequired" => "warning", "Failed" or "Cancelled" => "danger", _ => "neutral" };
     static string DotClass(string status) => status is "Succeeded" or "Committed" ? "ok" : status is "Failed" ? "bad" : "";
     static string FormatBytes(long bytes) { string[] units = ["B", "KiB", "MiB", "GiB", "TiB"]; double value = Math.Max(0, bytes); var unit = 0; while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; } return $"{value:0.##} {units[unit]}"; }
     static string Duration(DateTimeOffset? start, DateTimeOffset? end, string notStarted) { if (start is null) return notStarted; var duration = (end ?? DateTimeOffset.UtcNow) - start.Value; return duration.TotalHours >= 1 ? $"{duration.TotalHours:0.#}h" : duration.TotalMinutes >= 1 ? $"{duration.TotalMinutes:0.#}m" : $"{duration.TotalSeconds:0}s"; }

@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="~/css/clusters.css" asp-append-version="true" />
 <div class="page-heading">
     <div><p class="eyebrow">@Model.Cluster.Host:@Model.Cluster.Port / @Model.Cluster.Database</p><h1>@Model.Cluster.Name</h1><p>Citus @Model.Cluster.CitusVersion · TLS @Model.Cluster.SslMode</p></div>
-    <div class="heading-actions"><a class="btn btn-primary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">@T["Cluster.Data"]</a><a class="btn btn-secondary" asp-controller="Backups" asp-action="Cluster" asp-route-clusterId="@Model.Cluster.Id"><i class="fa fa-database" aria-hidden="true"></i> @T["Cluster.Backup"]</a><a class="btn btn-secondary" asp-controller="Activity" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Activity</a><a class="btn btn-secondary" asp-controller="Metrics" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Metrics</a><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Cluster.Id" asp-route-refresh="true">@T["Cluster.Refresh"]</a></div>
+    <div class="heading-actions"><a class="btn btn-primary" asp-controller="Database" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">@T["Cluster.Data"]</a><a class="btn btn-secondary" asp-controller="Backups" asp-action="Cluster" asp-route-clusterId="@Model.Cluster.Id"><i class="fa fa-database" aria-hidden="true"></i> @T["Cluster.Backup"]</a>@if (User.IsInRole("Admin") && inventory is not null) { <button class="btn btn-secondary" type="button" data-cluster-header-operation data-open-operation="change-coordinator" data-current-host="@Model.Cluster.Host" data-current-port="@Model.Cluster.Port"><i class="fa fa-exchange" aria-hidden="true"></i> @T["Cluster.ChangeCoordinator"]</button> }<a class="btn btn-secondary" asp-controller="Activity" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Activity</a><a class="btn btn-secondary" asp-controller="Metrics" asp-action="Index" asp-route-clusterId="@Model.Cluster.Id">Metrics</a><a class="btn btn-secondary" asp-action="Details" asp-route-id="@Model.Cluster.Id" asp-route-refresh="true">@T["Cluster.Refresh"]</a></div>
 </div>
 @if (Model.SafeError is not null) { <div class="notice danger" role="alert">@Model.SafeError</div> }
 @if (inventory is not null)
@@ -40,10 +40,18 @@
              data-i18n-shard="@T["Cluster.Shards"]"
              data-i18n-bytes="@T["Cluster.Bytes"]"
              data-i18n-snapshot="@T["Cluster.Snapshot"]"
-             data-i18n-confirmation-mismatch="@T["Cluster.ConfirmationMismatch"]"
+              data-i18n-confirmation-mismatch="@T["Cluster.ConfirmationMismatch"]"
+              data-i18n-target-confirmation-mismatch="@T["Cluster.TargetEndpointConfirmationMismatch"]"
+             data-i18n-recovery-confirmation-mismatch="@T["Cluster.CoordinatorRecoveryConfirmationMismatch"]"
              data-i18n-missing-operation-id="@T["Cluster.MissingOperationId"]"
              data-i18n-preparing-operation="@T["Cluster.PreparingOperation"]"
              data-i18n-active-conflict="@T["Cluster.ActiveConflict"]"
+             data-i18n-test-worker-connection="@T["Cluster.TestWorkerConnection"]"
+             data-i18n-testing-worker-connection="@T["Cluster.TestingWorkerConnection"]"
+             data-i18n-worker-connection-required="@T["Cluster.WorkerConnectionRequired"]"
+             data-i18n-worker-connection-changed="@T["Cluster.WorkerConnectionChanged"]"
+             data-i18n-worker-connection-succeeded="@T["Cluster.WorkerConnectionSucceeded"]"
+             data-i18n-worker-connection-failed="@T["Cluster.WorkerConnectionFailed"]"
              data-can-operate="@canOperate.ToString().ToLowerInvariant()">
         <div class="section-title topology-title">
             <div><h2>@T["Cluster.Topology"]</h2><p>@T["Cluster.TopologyHelp"]</p></div>

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Microsoft.Extensions.Localization;
+using CitusManager.Services;
 
 namespace CitusManager.Middleware;
 
@@ -17,6 +18,10 @@ public sealed class ApiExceptionHandler(
     {
         var (status, title, detail) = exception switch
         {
+            CoordinatorMigrationRejectedException migration =>
+                (StatusCodes.Status409Conflict, text["Rejected.Title"].Value, migration.Message),
+            RestoreRecoveryRejectedException recovery =>
+                (StatusCodes.Status409Conflict, text["Rejected.Title"].Value, recovery.Message),
             KeyNotFoundException => (StatusCodes.Status404NotFound, text["NotFound.Title"].Value, text["NotFound.Detail"].Value),
             ArgumentException => (StatusCodes.Status400BadRequest, text["Invalid.Title"].Value, text["Invalid.Detail"].Value),
             InvalidOperationException => (StatusCodes.Status409Conflict, text["Rejected.Title"].Value, text["Rejected.Detail"].Value),
@@ -33,18 +38,27 @@ public sealed class ApiExceptionHandler(
             logger.LogWarning(exception, "Request rejected: {ExceptionType}, trace {TraceId}.",
                 exception.GetType().Name, httpContext.TraceIdentifier);
 
+        var response = new ProblemDetails
+        {
+            Status = status,
+            Title = title,
+            Detail = detail,
+            Instance = httpContext.Request.Path,
+            Extensions = { ["traceId"] = httpContext.TraceIdentifier }
+        };
+        if (exception is CoordinatorMigrationBlockedByRestoreException restoreBlocker)
+        {
+            response.Extensions["blockerKind"] = "RestoreRecoveryRequired";
+            response.Extensions["restoreRecoveryId"] = restoreBlocker.RestoreId;
+            response.Extensions["remediationEndpoint"] =
+                $"/api/restore-runs/{restoreBlocker.RestoreId}/resolve-recovery";
+        }
+
         httpContext.Response.StatusCode = status;
         return await problemDetails.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = httpContext,
-            ProblemDetails = new ProblemDetails
-            {
-                Status = status,
-                Title = title,
-                Detail = detail,
-                Instance = httpContext.Request.Path,
-                Extensions = { ["traceId"] = httpContext.TraceIdentifier }
-            },
+            ProblemDetails = response,
             Exception = exception
         });
     }

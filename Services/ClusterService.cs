@@ -117,14 +117,30 @@ public sealed class ClusterService(
             ?? throw new KeyNotFoundException("Cluster not found.");
         var active = await db.Operations.AnyAsync(x => x.ClusterId == id &&
             (x.Status == OperationStatus.Approved || x.Status == OperationStatus.Running ||
-             x.Status == OperationStatus.Cancelling), cancellationToken);
+             x.Status == OperationStatus.Cancelling ||
+             x.Kind == OperationKind.MigrateControlCoordinator &&
+             (x.Status == OperationStatus.AwaitingApproval || x.Status == OperationStatus.RecoveryRequired)),
+            cancellationToken);
         if (active)
             throw new InvalidOperationException("Cluster has an active operation.");
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.RestoreRuns
+            .Where(x => x.SourceClusterId == id || x.TargetClusterId == id)
+            .ExecuteDeleteAsync(cancellationToken);
+        await db.BackupRuns
+            .Where(x => x.ClusterId == id)
+            .ExecuteDeleteAsync(cancellationToken);
         db.Clusters.Remove(cluster);
-        topologyCache.Remove(id);
         db.AuditEvents.Add(Audit(actorId, "cluster.delete-profile", "cluster", id,
-            new { cluster.Name, note = "Control-plane profile only; target Citus cluster was not changed." }));
+            new
+            {
+                cluster.Name,
+                note = "Control-plane profile and associated history deleted; target Citus cluster and external backup objects were not changed."
+            }));
         await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        topologyCache.Remove(id);
     }
 
     private static ClusterResponse Map(ClusterProfile x) => new(

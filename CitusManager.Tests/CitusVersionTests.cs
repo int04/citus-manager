@@ -19,4 +19,33 @@ public sealed class CitusVersionTests
     [InlineData("unknown")]
     public void MajorVersion_rejects_unknown_formats(string version) =>
         Assert.Throws<InvalidOperationException>(() => CitusMutator.MajorVersion(version));
+
+    [Fact]
+    public void Worker_compatibility_accepts_matching_writable_endpoint()
+    {
+        var expected = Identity();
+        var actual = Identity(user: "worker_user");
+
+        Assert.Null(CitusInspector.WorkerCompatibilityError(expected, actual));
+    }
+
+    [Theory]
+    [InlineData("other_db", "17.6", 170006, "14.1-1", false, false)]
+    [InlineData("appdb", "16.10", 160010, "14.1-1", false, false)]
+    [InlineData("appdb", "17.6", 170006, "13.2-1", false, false)]
+    [InlineData("appdb", "17.6", 170006, "", false, false)]
+    [InlineData("appdb", "17.6", 170006, "14.1-1", true, false)]
+    [InlineData("appdb", "17.6", 170006, "14.1-1", false, true)]
+    public void Worker_compatibility_rejects_incompatible_endpoint(
+        string database, string postgresVersion, int postgresVersionNumber,
+        string citusVersion, bool recovery, bool readOnly)
+    {
+        var actual = new NodeEndpointIdentity(database, "worker_user", postgresVersion,
+            postgresVersionNumber, citusVersion, recovery, readOnly);
+
+        Assert.NotNull(CitusInspector.WorkerCompatibilityError(Identity(), actual));
+    }
+
+    private static NodeEndpointIdentity Identity(string user = "control_user") =>
+        new("appdb", user, "17.6", 170006, "14.1-1", false, false);
 }

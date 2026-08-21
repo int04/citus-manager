@@ -16,7 +16,8 @@ public enum OperationKind
     RebuildIndex,
     ChangeTableMode,
     Backup,
-    Restore
+    Restore,
+    MigrateControlCoordinator
 }
 
 public enum OperationRisk

@@ -83,7 +83,13 @@ public sealed class BackupService(
             (x.Status == BackupRunStatus.Queued || x.Status == BackupRunStatus.Running || x.Status == BackupRunStatus.Cancelling), cancellationToken);
         var activeRestore = await db.RestoreRuns.AnyAsync(x => (x.SourceClusterId == clusterId || x.TargetClusterId == clusterId) &&
             (x.Status == RestoreRunStatus.Queued || x.Status == RestoreRunStatus.Running || x.Status == RestoreRunStatus.Cancelling), cancellationToken);
-        if (active || activeRestore) throw new InvalidOperationException("Cluster already has active backup or restore work.");
+        var coordinatorMigration = await db.Operations.AnyAsync(x => x.ClusterId == clusterId &&
+            x.Kind == OperationKind.MigrateControlCoordinator &&
+            (x.Status == OperationStatus.AwaitingApproval || x.Status == OperationStatus.Approved ||
+             x.Status == OperationStatus.Running || x.Status == OperationStatus.Cancelling ||
+             x.Status == OperationStatus.RecoveryRequired), cancellationToken);
+        if (active || activeRestore || coordinatorMigration)
+            throw new InvalidOperationException("Cluster already has active backup, restore, or coordinator-migration work.");
 
         var storageRefs = policy.Storages.Where(x => x.IsEnabled && x.StorageProfile is { IsEnabled: true })
             .Select(x => new VersionedProfileReference(x.StorageProfileId, x.StorageProfile!.CurrentVersion,

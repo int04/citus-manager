@@ -70,6 +70,15 @@ GET {{baseUrl}}/api/operations/clusters/{{clusterId}}/previews/rebalance?drainOn
 ### Read lightweight active topology operation
 GET {{baseUrl}}/api/operations/clusters/{{clusterId}}/active-summary
 
+### Test prospective worker connection (read-only; required by the add-worker dialog)
+POST {{baseUrl}}/api/operations/clusters/{{clusterId}}/test-worker-connection
+Content-Type: application/json
+
+{
+  "host": "worker-03.internal",
+  "port": 5432
+}
+
 ### Add worker and rebalance in one durable workflow
 POST {{baseUrl}}/api/operations/clusters/{{clusterId}}/add-node
 Content-Type: application/json

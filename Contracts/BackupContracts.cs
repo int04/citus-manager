@@ -41,6 +41,14 @@ namespace CitusManager.Contracts
         [MaxLength(255)] public string? TypedConfirmation { get; init; }
     }
 
+    /// <summary>Confirms that an Admin manually reconciled a partially mutated restore target.</summary>
+    public sealed record ResolveRestoreRecoveryRequest
+    {
+        public bool ManualRecoveryCompleted { get; init; }
+        [Required, MaxLength(36)] public required string TypedConfirmation { get; init; }
+        [Required, MaxLength(2000)] public required string ResolutionNote { get; init; }
+    }
+
     public sealed record BackupPolicyResponse(
         bool Enabled, Guid? TemplateId, int Interval, BackupScheduleUnit Unit, int Minute, int Hour,
         int? DayOfWeek, int? DayOfMonth, string TimeZone, int RetryCount, int RetentionDays,
@@ -113,6 +121,7 @@ namespace CitusManager.Services
     {
         Task<RestoreRunResponse> CreateAsync(Guid backupRunId, CreateRestoreRunRequest request, Guid actorId, CancellationToken cancellationToken);
         Task<RestoreRunResponse> CancelAsync(Guid runId, Guid actorId, CancellationToken cancellationToken);
+        Task<RestoreRunResponse> ResolveRecoveryAsync(Guid runId, ResolveRestoreRecoveryRequest request, Guid actorId, CancellationToken cancellationToken);
         Task<RestoreProgressResponse?> GetProgressAsync(Guid runId, CancellationToken cancellationToken);
     }
 }

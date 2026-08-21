@@ -46,7 +46,7 @@ public static class ClusterEndpoints
                 return TypedResults.NoContent();
             })
             .RequireAuthorization("Admin")
-            .WithName("DeleteClusterProfile").WithSummary("Delete only the local control-plane profile");
+            .WithName("DeleteClusterProfile").WithSummary("Delete the local profile and all associated control-plane history");
 
         return endpoints;
     }

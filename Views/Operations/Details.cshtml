@@ -7,6 +7,9 @@
     var completeSteps = Model.Steps.Count(x => x.Status == "Succeeded");
     var currentStep = Model.Steps.LastOrDefault(x => x.Status != "Succeeded") ?? Model.Steps.LastOrDefault();
     var isActive = Model.Status is OperationStatus.Running or OperationStatus.Cancelling or OperationStatus.RetryScheduled or OperationStatus.Approved;
+    var coordinatorMigration = Model.Kind == OperationKind.MigrateControlCoordinator ? ReadCoordinatorMigration(Model.PlanJson) : null;
+    var migrationTarget = coordinatorMigration is null ? null : $"{coordinatorMigration.TargetHost}:{coordinatorMigration.TargetPort}";
+    var migrationConfirmation = migrationTarget is null ? null : $"PROMOTE {migrationTarget}";
     int? progress = isActive ? null : Model.Status == OperationStatus.Succeeded ? 100 :
         Model.Steps.Count == 0 ? 0 : (int)Math.Round(completeSteps * 100d / Model.Steps.Count);
 }
@@ -17,8 +20,53 @@
     <div class="operation-error" role="alert"><i class="fa fa-exclamation-circle" aria-hidden="true"></i><div><strong>@T["OperationFailed"]</strong><p>@Model.SafeError</p><small>@T["RecoveryHelp"]</small></div></div>
 }
 
+@if (Model.Kind == OperationKind.MigrateControlCoordinator && Model.Status == OperationStatus.AwaitingApproval)
+{
+    <section class="panel coordinator-approval-gate" aria-labelledby="coordinator-approval-title">
+        <div class="coordinator-approval-head">
+            <div><span class="dialog-kicker danger">@T["CoordinatorApprovalKicker"]</span><h2 id="coordinator-approval-title">@T["CoordinatorApprovalTitle"]</h2><p>@T["CoordinatorApprovalHelp"]</p></div>
+            <span class="status-pill warning">@Model.Status</span>
+        </div>
+        @if (coordinatorMigration is not null)
+        {
+            <dl class="coordinator-cutover-summary">
+                <div><dt>@T["CoordinatorSource"]</dt><dd><code>@coordinatorMigration.SourceHost:@coordinatorMigration.SourcePort</code></dd></div>
+                <div><dt>@T["CoordinatorTarget"]</dt><dd><code>@migrationTarget</code></dd></div>
+            </dl>
+        }
+        <div class="warning-callout"><strong>@T["CoordinatorFenceTitle"]</strong> @T["CoordinatorFenceWarning"]</div>
+        <ol class="coordinator-fence-checklist">
+            <li><span>1</span><p>@T["CoordinatorFenceStep1"]</p></li>
+            <li><span>2</span><p>@T["CoordinatorFenceStep2"]</p></li>
+            <li><span>3</span><p>@T["CoordinatorFenceStep3", migrationTarget ?? T["CoordinatorTargetUnknown"]]</p></li>
+            <li><span>4</span><p>@T["CoordinatorFenceStep4"]</p></li>
+        </ol>
+        <p class="coordinator-external-note"><i class="fa fa-info-circle" aria-hidden="true"></i> @T["CoordinatorExternalRouting"]</p>
+        @if (User.IsInRole("Admin") && migrationConfirmation is not null)
+        {
+            <form asp-action="ApproveCoordinatorMigration" method="post" class="coordinator-approval-form">
+                <input type="hidden" name="id" value="@Model.Id" />
+                <fieldset>
+                    <legend>@T["CoordinatorApprovalAttestation"]</legend>
+                    <label class="check-field"><input type="checkbox" name="sourceFencedAndTargetPromotedAcknowledged" value="true" required /><span>@T["CoordinatorFenceAck"]</span></label>
+                    <div class="field">
+                        <label for="coordinator-approval-confirmation">@T["CoordinatorTypeConfirmation"] <code>@migrationConfirmation</code></label>
+                        <input id="coordinator-approval-confirmation" name="typedConfirmation" required maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="coordinator-approval-confirmation-help" />
+                        <small id="coordinator-approval-confirmation-help">@T["CoordinatorConfirmationHelp"]</small>
+                    </div>
+                </fieldset>
+                <div class="form-actions"><button class="btn btn-danger" type="submit"><i class="fa fa-exchange" aria-hidden="true"></i> @T["CoordinatorApproveAndStart"]</button></div>
+            </form>
+        }
+        else
+        {
+            <p class="coordinator-awaiting-admin"><i class="fa fa-lock" aria-hidden="true"></i> @T["CoordinatorAwaitingAdmin"]</p>
+        }
+    </section>
+}
+
 <section class="operation-progress-panel" aria-labelledby="progress-title" aria-live="polite" data-operation-progress data-operation-id="@Model.Id" data-active="@isActive.ToString().ToLowerInvariant()">
-    <div class="operation-progress-head"><div><span class="dialog-kicker">@T["ExecutionProgress"]</span><h2 id="progress-title">@(currentStep?.Name ?? T["WaitingToStart"])</h2><p data-progress-detail>@(currentStep?.Detail ?? T["QueuedDetail"])</p></div><strong class="operation-progress-percent">@(progress.HasValue ? $"{progress}%" : "…")</strong></div>
+    <div class="operation-progress-head"><div><span class="dialog-kicker">@T["ExecutionProgress"]</span><h2 id="progress-title">@(currentStep?.Name ?? T["WaitingToStart"])</h2><p data-progress-detail>@(currentStep?.Detail ?? (Model.Status == OperationStatus.AwaitingApproval ? T["AwaitingCoordinatorApprovalDetail"] : T["QueuedDetail"]))</p></div><strong class="operation-progress-percent">@(progress.HasValue ? $"{progress}%" : "…")</strong></div>
     @if (progress.HasValue) { <progress max="100" value="@progress.Value">@progress%</progress> }
     else { <progress max="100">@T["ExecutionProgress"]</progress> }
     <div class="operation-progress-meta"><span>@T["StepCount", Math.Min(completeSteps + (isActive ? 1 : 0), Model.Steps.Count), Model.Steps.Count]</span><span data-progress-elapsed>@T["Elapsed"] @Elapsed(Model.StartedAt, Model.CompletedAt)</span><span data-progress-updated>@T["LastUpdated"] @((currentStep?.CompletedAt ?? currentStep?.StartedAt ?? Model.RequestedAt).ToLocalTime().ToString("T"))</span></div>
@@ -27,8 +75,11 @@
 <div class="two-column operation-detail-grid">
     <section class="panel"><h2>@T["Approval"]</h2><dl class="detail-list"><div><dt>@T["RequestedBy"]</dt><dd><code>@Model.RequestedBy</code></dd></div><div><dt>@T["ApprovedBy"]</dt><dd><code>@(Model.ApprovedBy?.ToString() ?? T["Pending"])</code></dd></div><div><dt>@T["Started"]</dt><dd>@(Model.StartedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div><div><dt>@T["Completed"]</dt><dd>@(Model.CompletedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div></dl>
         <div class="form-actions">
-            @if (Model.Status == OperationStatus.AwaitingApproval && (User.IsInRole("Admin") || User.IsInRole("Operator"))) { <form asp-action="Approve" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-primary" type="submit">@T["Approve"]</button></form> }
-            @if (Model.Kind is not (OperationKind.Backup or OperationKind.Restore) && Model.Status is OperationStatus.AwaitingApproval or OperationStatus.Approved or OperationStatus.Running) { <form asp-action="Cancel" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-danger" type="submit">@T["Cancel"]</button></form> }
+            @if (Model.Kind != OperationKind.MigrateControlCoordinator && Model.Status == OperationStatus.AwaitingApproval && (User.IsInRole("Admin") || User.IsInRole("Operator"))) { <form asp-action="Approve" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-primary" type="submit">@T["Approve"]</button></form> }
+            @if (Model.Kind is not (OperationKind.Backup or OperationKind.Restore) &&
+                 (Model.Kind != OperationKind.MigrateControlCoordinator && Model.Status is OperationStatus.AwaitingApproval or OperationStatus.Approved or OperationStatus.Running ||
+                  Model.Kind == OperationKind.MigrateControlCoordinator && Model.Status == OperationStatus.AwaitingApproval))
+            { <form asp-action="Cancel" method="post"><input type="hidden" name="id" value="@Model.Id" /><button class="btn btn-danger" type="submit">@T["Cancel"]</button></form> }
         </div>
     </section>
     <section class="panel"><h2>@T["CurrentWork"]</h2><dl class="detail-list"><div><dt>@T["Phase"]</dt><dd>@(currentStep?.Name ?? "—")</dd></div><div><dt>@T["Detail"]</dt><dd>@(currentStep?.Detail ?? "—")</dd></div><div><dt>@T["CheckpointStatus"]</dt><dd><span class="status-pill @(currentStep?.Status == "Succeeded" ? "success" : "warning")">@(currentStep?.Status ?? T["Pending"])</span></dd></div></dl></section>
@@ -57,7 +108,35 @@ else
 }
 }
 @functions {
-    static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled or OperationStatus.Cancelling => "warning", _ => "neutral" };
+    static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.AwaitingApproval or OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled or OperationStatus.Cancelling => "warning", _ => "neutral" };
     static string Pretty(string json) { try { using var doc = System.Text.Json.JsonDocument.Parse(json); return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }); } catch { return "Invalid sanitized JSON"; } }
     static string Elapsed(DateTimeOffset? started, DateTimeOffset? completed) { if (started is null) return "—"; var duration = (completed ?? DateTimeOffset.UtcNow) - started.Value; return duration.TotalHours >= 1 ? $"{(int)duration.TotalHours}h {duration.Minutes}m" : $"{Math.Max(0, duration.Minutes)}m {Math.Max(0, duration.Seconds)}s"; }
+    static CoordinatorMigrationUi? ReadCoordinatorMigration(string json)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var plan = Property(root, "CoordinatorMigration") ?? Property(root, "Migration") ?? root;
+            var targetHost = Text(plan, "TargetHost") ?? Text(root, "TargetHost");
+            var targetPort = Number(plan, "TargetPort") ?? Number(root, "TargetPort");
+            if (string.IsNullOrWhiteSpace(targetHost) || targetPort is null) return null;
+            return new(
+                Text(plan, "SourceHost") ?? Text(plan, "CurrentHost") ?? Text(root, "SourceHost") ?? "—",
+                Number(plan, "SourcePort") ?? Number(plan, "CurrentPort") ?? Number(root, "SourcePort") ?? 0,
+                targetHost,
+                targetPort.Value);
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+    static System.Text.Json.JsonElement? Property(System.Text.Json.JsonElement element, string name)
+    {
+        if (element.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+        foreach (var property in element.EnumerateObject())
+            if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) return property.Value;
+        return null;
+    }
+    static string? Text(System.Text.Json.JsonElement element, string name) => Property(element, name)?.ToString();
+    static int? Number(System.Text.Json.JsonElement element, string name) => Property(element, name) is { } value && value.TryGetInt32(out var result) ? result : null;
+    sealed record CoordinatorMigrationUi(string SourceHost, int SourcePort, string TargetHost, int TargetPort);
 }

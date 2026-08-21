@@ -112,6 +112,29 @@ public static class BackupEndpoints
                 return TypedResults.Ok(await service.CancelAsync(id, EndpointUser.Id(user), cancellationToken));
             }).RequireAuthorization("Operator").WithName("CancelRestoreRun").WithSummary("Cancel a restore or mark mutated work as recovery required");
 
+        restores.MapPost("/resolve-recovery", async Task<Ok<RestoreRunResponse>> (
+                Guid id, ResolveRestoreRecoveryRequest request, ClaimsPrincipal user,
+                IRestoreService service, IAntiforgery antiforgery,
+                HttpContext context, CancellationToken cancellationToken) =>
+            {
+                await antiforgery.ValidateRequestAsync(context);
+                try
+                {
+                    return TypedResults.Ok(await service.ResolveRecoveryAsync(
+                        id, request, EndpointUser.Id(user), cancellationToken));
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException &&
+                                                  exception is not RestoreRecoveryRejectedException)
+                {
+                    throw new RestoreRecoveryRejectedException(exception.Message, exception);
+                }
+            }).RequireAuthorization("Admin")
+            .WithName("ResolveRestoreRecovery")
+            .WithSummary("Close a manual-recovery gate after fresh Citus health validation and Admin attestation")
+            .Produces<RestoreRunResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
         var storageProfiles = endpoints.MapGroup("/api/backup-storage-profiles").RequireAuthorization("Operator").WithTags("Backup profiles");
         storageProfiles.MapPost("/", async (SaveStorageProfileRequest request, ClaimsPrincipal user, IBackupProfileService service,
             IAntiforgery antiforgery, HttpContext context, CancellationToken ct) =>
