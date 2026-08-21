@@ -48,12 +48,14 @@ public sealed class CoordinatorMigrationServiceTests
     [Fact]
     public void Source_cleanup_keeps_database_and_recreates_empty_public_schema()
     {
-        var sql = CoordinatorLogicalMigrationService.BuildSourceSchemaPurgeSql("\"app\"");
+        var resetSql = CoordinatorLogicalMigrationService.BuildSourceDatabaseResetSql("\"app\"");
+        var purgeSql = CoordinatorLogicalMigrationService.BuildSourceSchemaPurgeSql();
 
-        Assert.DoesNotContain("DROP DATABASE", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("DROP SCHEMA IF EXISTS public CASCADE", sql, StringComparison.Ordinal);
-        Assert.Contains("CREATE SCHEMA public AUTHORIZATION pg_database_owner", sql, StringComparison.Ordinal);
-        Assert.Contains("DROP EXTENSION IF EXISTS %I CASCADE", sql, StringComparison.Ordinal);
-        Assert.Contains("ALTER DATABASE \"app\" RESET default_transaction_read_only", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("DROP DATABASE", resetSql + purgeSql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ALTER DATABASE \"app\" RESET default_transaction_read_only", resetSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("ALTER DATABASE", purgeSql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DROP SCHEMA IF EXISTS public CASCADE", purgeSql, StringComparison.Ordinal);
+        Assert.Contains("CREATE SCHEMA public AUTHORIZATION pg_database_owner", purgeSql, StringComparison.Ordinal);
+        Assert.Contains("DROP EXTENSION IF EXISTS %I CASCADE", purgeSql, StringComparison.Ordinal);
     }
 }

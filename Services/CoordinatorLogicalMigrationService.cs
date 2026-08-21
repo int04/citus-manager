@@ -218,6 +218,11 @@ public sealed class CoordinatorLogicalMigrationService(
                     "Source cleanup refused because source and target PostgreSQL server identities are not distinct.");
         }
 
+        var database = new NpgsqlCommandBuilder().QuoteIdentifier(source.Database);
+        await using (var resetDatabase = new NpgsqlCommand(
+                         BuildSourceDatabaseResetSql(database), maintenance) { CommandTimeout = 300 })
+            await resetDatabase.ExecuteNonQueryAsync(cancellationToken);
+
         await using (var terminate = new NpgsqlCommand("""
                          SELECT pg_terminate_backend(pid)
                          FROM pg_stat_activity
@@ -234,8 +239,7 @@ public sealed class CoordinatorLogicalMigrationService(
         };
         await using var cleanup = new NpgsqlConnection(cleanupBuilder.ConnectionString);
         await cleanup.OpenAsync(cancellationToken);
-        var database = new NpgsqlCommandBuilder().QuoteIdentifier(source.Database);
-        await using (var purge = new NpgsqlCommand(BuildSourceSchemaPurgeSql(database), cleanup)
+        await using (var purge = new NpgsqlCommand(BuildSourceSchemaPurgeSql(), cleanup)
                      { CommandTimeout = 600 })
             await purge.ExecuteNonQueryAsync(cancellationToken);
 
@@ -256,9 +260,14 @@ public sealed class CoordinatorLogicalMigrationService(
                 "Old coordinator database still contains user schemas, public objects, or non-core extensions after cleanup.");
     }
 
-    internal static string BuildSourceSchemaPurgeSql(string quotedDatabase) => $"""
-        SET default_transaction_read_only=off;
-        SET transaction_read_only=off;
+    internal static string BuildSourceDatabaseResetSql(string quotedDatabase) => $"""
+        ALTER DATABASE {quotedDatabase} RESET default_transaction_read_only;
+        ALTER DATABASE {quotedDatabase} RESET citus.enable_ddl_propagation;
+        ALTER DATABASE {quotedDatabase} RESET citus.enable_metadata_sync;
+        ALTER DATABASE {quotedDatabase} RESET citus.use_citus_managed_tables;
+        """;
+
+    internal static string BuildSourceSchemaPurgeSql() => """
         SET citus.enable_ddl_propagation=off;
         SET citus.enable_metadata_sync=off;
         DO $citus_manager_cleanup$
@@ -285,10 +294,6 @@ public sealed class CoordinatorLogicalMigrationService(
           GRANT USAGE ON SCHEMA public TO PUBLIC;
         END
         $citus_manager_cleanup$;
-        ALTER DATABASE {quotedDatabase} RESET default_transaction_read_only;
-        ALTER DATABASE {quotedDatabase} RESET citus.enable_ddl_propagation;
-        ALTER DATABASE {quotedDatabase} RESET citus.enable_metadata_sync;
-        ALTER DATABASE {quotedDatabase} RESET citus.use_citus_managed_tables;
         """;
 
     private async Task CreateSourceMetadataStageAsync(
