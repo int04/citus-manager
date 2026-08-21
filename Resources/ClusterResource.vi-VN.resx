@@ -49,4 +49,14 @@
   <data name="Cluster.WorkerConnectionChanged" xml:space="preserve"><value>Host hoặc port đã thay đổi. Hãy kiểm tra kết nối lại.</value></data>
   <data name="Cluster.WorkerConnectionSucceeded" xml:space="preserve"><value>Kết nối và kiểm tra tương thích thành công.</value></data>
   <data name="Cluster.WorkerConnectionFailed" xml:space="preserve"><value>Kiểm tra kết nối thất bại.</value></data>
+  <data name="Cluster.DeleteConfirmTitle" xml:space="preserve"><value>Xóa profile cluster local?</value></data>
+  <data name="Cluster.DeleteConfirmIntro" xml:space="preserve"><value>Hãy xem toàn bộ phạm vi dữ liệu trước khi tiếp tục.</value></data>
+  <data name="Cluster.DeleteConfirmWarning" xml:space="preserve"><value>Nếu xác nhận, toàn bộ dữ liệu control-plane local liên quan tới profile cluster này sẽ bị xóa vĩnh viễn.</value></data>
+  <data name="Cluster.DeleteScopeProfile" xml:space="preserve"><value>Profile local và credential kết nối đã lưu.</value></data>
+  <data name="Cluster.DeleteScopeOperations" xml:space="preserve"><value>Toàn bộ operation, operation step và query endpoint của cluster này.</value></data>
+  <data name="Cluster.DeleteScopeMonitoring" xml:space="preserve"><value>Inventory monitoring, metric sample và alert của cluster này.</value></data>
+  <data name="Cluster.DeleteScopeBackups" xml:space="preserve"><value>Backup policy của cluster và record các lần backup local.</value></data>
+  <data name="Cluster.DeleteScopeRestores" xml:space="preserve"><value>Record các lần restore liên kết với cluster này.</value></data>
+  <data name="Cluster.DeletePreservedTitle" xml:space="preserve"><value>Không bị xóa:</value></data>
+  <data name="Cluster.DeletePreserved" xml:space="preserve"><value>database Citus và dữ liệu của nó, object backup ngoài storage, cùng audit record xóa.</value></data>
 </root>

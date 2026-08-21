@@ -142,9 +142,26 @@
 </section>
 @if (User.IsInRole("Admin"))
 {
-    <section class="danger-zone"><h2>@T["Cluster.Danger"]</h2><p>@T["Cluster.DeleteHelp"]</p><form asp-action="Delete" method="post"><input type="hidden" name="id" value="@Model.Cluster.Id" /><button class="btn btn-danger" type="submit">@T["Cluster.Delete"]</button></form></section>
+    <section class="danger-zone"><h2>@T["Cluster.Danger"]</h2><p>@T["Cluster.DeleteHelp"]</p><form id="delete-cluster-form" asp-action="Delete" method="post"><input type="hidden" name="id" value="@Model.Cluster.Id" /><button class="btn btn-danger" type="button" data-open-delete-cluster>@T["Cluster.Delete"]</button></form></section>
+    <dialog class="operation-dialog" id="delete-cluster-dialog" aria-labelledby="delete-cluster-title" aria-describedby="delete-cluster-warning">
+        <div class="operation-dialog-shell">
+            <header><div><span class="dialog-kicker danger">@T["Cluster.Danger"]</span><h2 id="delete-cluster-title">@T["Cluster.DeleteConfirmTitle"]</h2><p>@T["Cluster.DeleteConfirmIntro"]</p></div><button class="dialog-close" type="button" data-close-delete-cluster aria-label="@T["Cluster.Cancel"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>
+            <div class="operation-dialog-body">
+                <div class="danger-callout" id="delete-cluster-warning" role="alert"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i><p>@T["Cluster.DeleteConfirmWarning"]</p></div>
+                <ul class="delete-scope-list">
+                    <li>@T["Cluster.DeleteScopeProfile"]</li>
+                    <li>@T["Cluster.DeleteScopeOperations"]</li>
+                    <li>@T["Cluster.DeleteScopeMonitoring"]</li>
+                    <li>@T["Cluster.DeleteScopeBackups"]</li>
+                    <li>@T["Cluster.DeleteScopeRestores"]</li>
+                </ul>
+                <p class="delete-preserve-note"><strong>@T["Cluster.DeletePreservedTitle"]</strong> @T["Cluster.DeletePreserved"]</p>
+            </div>
+            <footer><button class="btn btn-secondary" type="button" data-close-delete-cluster>@T["Cluster.Cancel"]</button><button class="btn btn-danger" type="button" data-confirm-delete-cluster>@T["Cluster.Delete"]</button></footer>
+        </div>
+    </dialog>
 }
-@section Scripts { <script src="~/js/clusters.js" asp-append-version="true" defer></script> }
+@section Scripts { <script src="~/js/clusters.js" asp-append-version="true" defer></script><script src="~/js/cluster-delete-confirm.js" asp-append-version="true" defer></script> }
 @functions {
     static string FormatBytes(long bytes) => bytes switch { >= 1_099_511_627_776 => $"{bytes / 1_099_511_627_776d:N1} TiB", >= 1_073_741_824 => $"{bytes / 1_073_741_824d:N1} GiB", >= 1_048_576 => $"{bytes / 1_048_576d:N1} MiB", >= 1_024 => $"{bytes / 1_024d:N1} KiB", _ => $"{bytes:N0} B" };
 }
