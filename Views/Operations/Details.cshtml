@@ -10,6 +10,9 @@
     var coordinatorMigration = Model.Kind == OperationKind.MigrateControlCoordinator ? ReadCoordinatorMigration(Model.PlanJson) : null;
     var migrationTarget = coordinatorMigration is null ? null : $"{coordinatorMigration.TargetHost}:{coordinatorMigration.TargetPort}";
     var migrationConfirmation = migrationTarget is null ? null : $"PROMOTE {migrationTarget}";
+    var showPostgreSqlProgress = Model.Kind == OperationKind.AddWorker &&
+        Model.Steps.Any(x => x.Name == "rebalance-started");
+    var postgreSqlProgress = ReadPostgreSqlProgress(Model.ResultJson);
     int? progress = isActive ? null : Model.Status == OperationStatus.Succeeded ? 100 :
         Model.Steps.Count == 0 ? 0 : (int)Math.Round(completeSteps * 100d / Model.Steps.Count);
 }
@@ -72,6 +75,17 @@
     <div class="operation-progress-meta"><span>@T["StepCount", Math.Min(completeSteps + (isActive ? 1 : 0), Model.Steps.Count), Model.Steps.Count]</span><span data-progress-elapsed>@T["Elapsed"] @Elapsed(Model.StartedAt, Model.CompletedAt)</span><span data-progress-updated>@T["LastUpdated"] @((currentStep?.CompletedAt ?? currentStep?.StartedAt ?? Model.RequestedAt).ToLocalTime().ToString("T"))</span></div>
 </section>
 
+@if (showPostgreSqlProgress)
+{
+    <section class="panel" aria-labelledby="postgres-progress-title">
+        <div class="section-title">
+            <div><span class="dialog-kicker">PostgreSQL / Citus</span><h2 id="postgres-progress-title">@T["PostgreSqlProgress"]</h2><p>@T["PostgreSqlProgressHelp"]</p></div>
+            <span class="status-pill warning" data-postgres-log-status aria-live="polite">@Model.Status</span>
+        </div>
+        <pre class="json-block mt-4" data-postgres-progress-log tabindex="0">@(postgreSqlProgress is null ? T["WaitingForPostgreSqlProgress"] : Pretty(postgreSqlProgress))</pre>
+    </section>
+}
+
 <div class="two-column operation-detail-grid">
     <section class="panel"><h2>@T["Approval"]</h2><dl class="detail-list"><div><dt>@T["RequestedBy"]</dt><dd><code>@Model.RequestedBy</code></dd></div><div><dt>@T["ApprovedBy"]</dt><dd><code>@(Model.ApprovedBy?.ToString() ?? T["Pending"])</code></dd></div><div><dt>@T["Started"]</dt><dd>@(Model.StartedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div><div><dt>@T["Completed"]</dt><dd>@(Model.CompletedAt?.ToLocalTime().ToString("G") ?? "—")</dd></div></dl>
         <div class="form-actions">
@@ -110,6 +124,20 @@ else
 @functions {
     static string StatusClass(OperationStatus status) => status switch { OperationStatus.Succeeded => "success", OperationStatus.PartialSucceeded => "warning", OperationStatus.Failed or OperationStatus.RecoveryRequired => "danger", OperationStatus.AwaitingApproval or OperationStatus.Running or OperationStatus.Approved or OperationStatus.RetryScheduled or OperationStatus.Cancelling => "warning", _ => "neutral" };
     static string Pretty(string json) { try { using var doc = System.Text.Json.JsonDocument.Parse(json); return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }); } catch { return "Invalid sanitized JSON"; } }
+    static string? ReadPostgreSqlProgress(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var property in document.RootElement.EnumerateObject())
+                if (property.Name.Equals("PostgreSqlProgressJson", StringComparison.OrdinalIgnoreCase) &&
+                    property.Value.ValueKind == System.Text.Json.JsonValueKind.String)
+                    return property.Value.GetString();
+            return null;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
     static string Elapsed(DateTimeOffset? started, DateTimeOffset? completed) { if (started is null) return "—"; var duration = (completed ?? DateTimeOffset.UtcNow) - started.Value; return duration.TotalHours >= 1 ? $"{(int)duration.TotalHours}h {duration.Minutes}m" : $"{Math.Max(0, duration.Minutes)}m {Math.Max(0, duration.Seconds)}s"; }
     static CoordinatorMigrationUi? ReadCoordinatorMigration(string json)
     {

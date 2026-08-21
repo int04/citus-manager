@@ -24,4 +24,7 @@
   <data name="CoordinatorApproveAndStart" xml:space="preserve"><value>Approve and start coordinator cutover</value></data>
   <data name="CoordinatorAwaitingAdmin" xml:space="preserve"><value>An Admin must complete the external failover checklist and approve this migration.</value></data>
   <data name="AwaitingCoordinatorApprovalDetail" xml:space="preserve"><value>Plan created; waiting for external fence, physical standby promotion, and Admin approval.</value></data>
+  <data name="PostgreSqlProgress" xml:space="preserve"><value>Live PostgreSQL progress</value></data>
+  <data name="PostgreSqlProgressHelp" xml:space="preserve"><value>Latest output from citus_rebalance_status() or get_rebalance_progress(); refreshed with the operation.</value></data>
+  <data name="WaitingForPostgreSqlProgress" xml:space="preserve"><value>Waiting for the first PostgreSQL progress snapshot…</value></data>
 </root>

@@ -12,6 +12,8 @@
     const statusLabel = document.querySelector("[data-operation-status]");
     const elapsedLabel = panel.querySelector("[data-progress-elapsed]");
     const updatedLabel = panel.querySelector("[data-progress-updated]");
+    const postgresLog = document.querySelector("[data-postgres-progress-log]");
+    const postgresLogStatus = document.querySelector("[data-postgres-log-status]");
     let timer;
     let request;
     let failures = 0;
@@ -33,6 +35,15 @@
         if (statusLabel) statusLabel.textContent = progress.status;
         if (elapsedLabel && progress.elapsed) elapsedLabel.textContent = `Elapsed ${progress.elapsed}`;
         if (updatedLabel) updatedLabel.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        if (postgresLogStatus) postgresLogStatus.textContent = progress.status;
+        if (postgresLog && progress.topologyProgress?.postgreSqlProgressJson) {
+            const raw = progress.topologyProgress.postgreSqlProgressJson;
+            try {
+                postgresLog.textContent = JSON.stringify(JSON.parse(raw), null, 2);
+            } catch {
+                postgresLog.textContent = raw;
+            }
+        }
 
         if (percent === null) {
             bar.removeAttribute("value");

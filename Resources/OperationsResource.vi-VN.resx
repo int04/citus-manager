@@ -24,4 +24,7 @@
   <data name="CoordinatorApproveAndStart" xml:space="preserve"><value>Phê duyệt và bắt đầu coordinator cutover</value></data>
   <data name="CoordinatorAwaitingAdmin" xml:space="preserve"><value>Admin phải hoàn tất checklist external failover và phê duyệt migration này.</value></data>
   <data name="AwaitingCoordinatorApprovalDetail" xml:space="preserve"><value>Plan đã tạo; đang chờ external fence, promote physical standby và Admin phê duyệt.</value></data>
+  <data name="PostgreSqlProgress" xml:space="preserve"><value>Tiến trình PostgreSQL trực tiếp</value></data>
+  <data name="PostgreSqlProgressHelp" xml:space="preserve"><value>Output mới nhất từ citus_rebalance_status() hoặc get_rebalance_progress(); tự cập nhật cùng operation.</value></data>
+  <data name="WaitingForPostgreSqlProgress" xml:space="preserve"><value>Đang chờ snapshot tiến trình đầu tiên từ PostgreSQL…</value></data>
 </root>

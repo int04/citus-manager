@@ -125,7 +125,7 @@ public sealed record OperationProgressSnapshot(
     int? MovesProcessed, int? MovesTotal, long? BytesProcessed, long? BytesTotal,
     string? CurrentSource, string? CurrentTarget, string? CurrentTable, long? CurrentShard,
     long? JobId, DateTimeOffset LastUpdatedAt, DateTimeOffset? StalledAt,
-    string? SqlState, string? Error);
+    string? SqlState, string? Error, string? PostgreSqlProgressJson = null);
 
 /// <summary>Durable operation returned to the UI.</summary>
 public sealed record OperationResponse(

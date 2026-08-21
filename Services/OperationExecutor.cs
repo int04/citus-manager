@@ -392,7 +392,11 @@ public sealed class OperationExecutor(
             await db.SaveChangesAsync(cancellationToken);
         }
         await MonitorRebalanceAsync(operation, cluster, null, ReadTrackedJobId(operation), cancellationToken);
-        await CompleteAsync(operation, new { state = "completed" }, cancellationToken);
+        await CompleteAsync(operation, new
+        {
+            state = "completed",
+            postgreSqlProgressJson = ReadPostgreSqlProgressJson(operation.ResultJson)
+        }, cancellationToken);
     }
 
     private async Task ExecuteRetireAsync(
@@ -833,7 +837,7 @@ public sealed class OperationExecutor(
                 operation.Steps.Count, Math.Max(operation.Steps.Count + 1, 4), percent, percentBasis,
                 status.MovesProcessed, status.MovesTotal, status.BytesProcessed, status.BytesTotal,
                 status.CurrentSource, status.CurrentTarget, status.CurrentTable, status.CurrentShard,
-                status.JobId ?? jobId, now, stalledAt, null, status.Error));
+                status.JobId ?? jobId, now, stalledAt, null, status.Error, status.RawJson));
             operation.Version++;
             await db.SaveChangesAsync(hostStoppingToken);
             if (status.IsFailed)
@@ -856,6 +860,17 @@ public sealed class OperationExecutor(
         }
         catch (JsonException) { }
         return null;
+    }
+
+    private static string? ReadPostgreSqlProgressJson(string? resultJson)
+    {
+        if (string.IsNullOrWhiteSpace(resultJson)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<OperationProgressSnapshot>(resultJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true })?.PostgreSqlProgressJson;
+        }
+        catch (JsonException) { return null; }
     }
 
     private async Task CompleteAsync(ClusterOperation operation, object result, CancellationToken cancellationToken)

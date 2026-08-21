@@ -23,6 +23,7 @@ public sealed class RebalanceStatusParserTests
         Assert.Equal(100, status.BytesProcessed);
         Assert.Equal("w1", status.CurrentSource);
         Assert.Equal(7, status.CurrentShard);
+        Assert.Equal(json, status.RawJson);
         Assert.False(status.IsComplete);
     }
 
