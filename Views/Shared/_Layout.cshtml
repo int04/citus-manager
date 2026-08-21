@@ -1035,7 +1035,7 @@ else if (User.Identity?.IsAuthenticated == true)
     <div class="app-shell">
         <aside class="sidebar" aria-label="@T["Layout.MainNavigation"]">
             <a class="brand" asp-controller="Home" asp-action="Index" aria-label="@T["Layout.HomeLabel"]">
-                <img class="size-10 shrink-0 rounded-xl shadow-lg shadow-indigo-600/20 ring-1 ring-white/20" src="~/images/brand/logo.png" width="40" height="40" alt="" aria-hidden="true" />
+                <img class="size-10 shrink-0 rounded-xl shadow-lg shadow-indigo-600/20 ring-1 ring-white/20" src="~/images/brand/logo.png" width="40" height="40" alt="" aria-hidden="true" asp-append-version="true" />
                 <span><strong>Citus Manager</strong><small>Distributed DB control</small></span>
             </a>
             <p class="mt-6 hidden px-3 text-[10px] font-bold uppercase tracking-[.16em] text-slate-400 lg:block dark:text-slate-600">Workspace</p>
@@ -1124,7 +1124,7 @@ else
 {
     <main id="main-content" class="auth-shell" tabindex="-1"><div class="auth-language-selector"><partial name="_LanguageSelector" /></div>@RenderBody()</main>
 }
-<script src="~/lib/jquery/dist/jquery.min.js"></script>
+<script src="~/lib/jquery/dist/jquery.min.js" asp-append-version="true"></script>
 <partial name="_ClientLocalization" />
 <script src="~/js/site.js" asp-append-version="true"></script>
 <script src="~/js/update-manager.js" asp-append-version="true"></script>
