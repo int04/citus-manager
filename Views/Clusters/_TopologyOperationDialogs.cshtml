@@ -6,8 +6,15 @@
 <dialog class="operation-dialog" data-operation-dialog="add-worker" aria-labelledby="add-worker-title">
     <form method="dialog" class="operation-dialog-shell" data-operation-form data-operation="add-worker" novalidate>
         <header><div><span class="dialog-kicker">@T["Cluster.TopologyChange"]</span><h2 id="add-worker-title">@T["Cluster.AddWorker"]</h2><p>@T["Cluster.AddWorkerHelp"]</p></div><button class="dialog-close" value="cancel" aria-label="@T["Cluster.Close"]"><i class="fa fa-times" aria-hidden="true"></i></button></header>
-        <div class="operation-dialog-body"><div class="form-grid"><div class="field"><label for="add-worker-host">@T["Cluster.Host"] *</label><input id="add-worker-host" name="host" required maxlength="255" autocomplete="off" /></div><div class="field"><label for="add-worker-port">@T["Cluster.Port"] *</label><input id="add-worker-port" name="port" type="number" min="1" max="65535" value="5432" required inputmode="numeric" /></div></div><label class="check-field"><input type="checkbox" name="rebalanceAfterAdd" value="true" checked /><span><strong>@T["Cluster.RebalanceAfterAdd"]</strong><small>@T["Cluster.RebalanceAfterAddHelp"]</small></span></label><label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.CapacityAck"]</span></label><div class="dialog-feedback" data-dialog-feedback role="alert" hidden></div></div>
-        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-primary" type="submit" value="submit">@T["Cluster.AddWorker"]</button></footer>
+        <div class="operation-dialog-body">
+            <div class="form-grid"><div class="field"><label for="add-worker-host">@T["Cluster.Host"] *</label><input id="add-worker-host" name="host" required maxlength="255" autocomplete="off" /></div><div class="field"><label for="add-worker-port">@T["Cluster.Port"] *</label><input id="add-worker-port" name="port" type="number" min="1" max="65535" value="5432" required inputmode="numeric" /></div></div>
+            <div class="worker-connection-check" data-worker-connection-check>
+                <button class="btn btn-secondary" type="button" data-test-worker-connection><i class="fa fa-plug" aria-hidden="true"></i> <span>@T["Cluster.TestWorkerConnection"]</span></button>
+                <p class="worker-connection-status" data-worker-connection-status role="status" aria-live="polite">@T["Cluster.WorkerConnectionRequired"]</p>
+            </div>
+            <label class="check-field"><input type="checkbox" name="rebalanceAfterAdd" value="true" checked /><span><strong>@T["Cluster.RebalanceAfterAdd"]</strong><small>@T["Cluster.RebalanceAfterAddHelp"]</small></span></label><label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.CapacityAck"]</span></label><div class="dialog-feedback" data-dialog-feedback role="alert" hidden></div>
+        </div>
+        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-primary" type="submit" value="submit" data-worker-submit disabled>@T["Cluster.AddWorker"]</button></footer>
     </form>
 </dialog>
 

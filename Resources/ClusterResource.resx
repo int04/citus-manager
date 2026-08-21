@@ -43,4 +43,10 @@
   <data name="Cluster.CoordinatorRecoveryType" xml:space="preserve"><value>Type the exact restore ID:</value></data>
   <data name="Cluster.CoordinatorRecoveryConfirmationMismatch" xml:space="preserve"><value>Confirmation must exactly match the restore ID.</value></data>
   <data name="Cluster.CreateCoordinatorPlan" xml:space="preserve"><value>Create migration plan</value></data>
+  <data name="Cluster.TestWorkerConnection" xml:space="preserve"><value>Test connection</value></data>
+  <data name="Cluster.TestingWorkerConnection" xml:space="preserve"><value>Testing connection…</value></data>
+  <data name="Cluster.WorkerConnectionRequired" xml:space="preserve"><value>Test this endpoint successfully before adding the worker.</value></data>
+  <data name="Cluster.WorkerConnectionChanged" xml:space="preserve"><value>Host or port changed. Test the connection again.</value></data>
+  <data name="Cluster.WorkerConnectionSucceeded" xml:space="preserve"><value>Connection and compatibility checks succeeded.</value></data>
+  <data name="Cluster.WorkerConnectionFailed" xml:space="preserve"><value>Connection check failed.</value></data>
 </root>

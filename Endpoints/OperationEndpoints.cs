@@ -53,6 +53,15 @@ public static class OperationEndpoints
             .RequireAuthorization("Operator")
             .WithName("AddTopologyNode").WithSummary("Add a worker or shard-ineligible MX query node");
 
+        group.MapPost("/clusters/{clusterId:guid}/test-worker-connection", async Task<Ok<WorkerConnectionTestResponse>> (
+                Guid clusterId, TestWorkerConnectionRequest request,
+                IOperationService service, CancellationToken cancellationToken) =>
+                TypedResults.Ok(await service.TestWorkerConnectionAsync(
+                    clusterId, request, cancellationToken)))
+            .RequireAuthorization("Operator")
+            .WithName("TestTopologyWorkerConnection")
+            .WithSummary("Check a prospective worker connection and version compatibility without changing metadata");
+
         group.MapPost("/clusters/{clusterId:guid}/rebalance", async Task<Accepted<OperationResponse>> (
                 Guid clusterId, RebalanceRequest request, ClaimsPrincipal user,
                 IOperationService service, CancellationToken cancellationToken) =>

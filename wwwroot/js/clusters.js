@@ -29,6 +29,38 @@
   const operationId = body => body?.operationId || body?.id || body?.operation?.id;
   const newIdempotencyKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const endpointText = (host, port) => host && port ? `${host}:${port}` : "";
+  const workerEndpointKey = form => {
+    const host = form.elements.host?.value.trim().toLowerCase() || "";
+    const port = Number(form.elements.port?.value || 0);
+    return host && Number.isInteger(port) && port > 0 ? `${host}:${port}` : "";
+  };
+
+  const syncWorkerSubmit = form => {
+    const submit = form.querySelector("[data-worker-submit]");
+    if (!submit) return;
+    const validConnection = form.dataset.workerConnectionState === "success" &&
+      form.dataset.testedWorkerEndpoint === workerEndpointKey(form);
+    submit.disabled = form.getAttribute("aria-busy") === "true" || !validConnection;
+  };
+
+  const setWorkerConnectionState = (form, state, message) => {
+    const status = form.querySelector("[data-worker-connection-status]");
+    form.dataset.workerConnectionState = state;
+    if (state !== "success") delete form.dataset.testedWorkerEndpoint;
+    if (status) {
+      status.className = `worker-connection-status ${state}`;
+      status.textContent = message;
+      status.setAttribute("role", state === "error" ? "alert" : "status");
+    }
+    syncWorkerSubmit(form);
+  };
+
+  const invalidateWorkerConnection = (form, changed = false) => {
+    form._workerConnectionController?.abort();
+    setWorkerConnectionState(form, "pending", changed
+      ? t("WorkerConnectionChanged", "Host or port changed. Test the connection again.")
+      : t("WorkerConnectionRequired", "Test this endpoint successfully before adding the worker."));
+  };
 
   const showFeedback = (form, message) => {
     const feedback = form.querySelector("[data-dialog-feedback]");
@@ -43,6 +75,47 @@
       if (button.value === "cancel") return;
       button.disabled = busy;
     });
+    syncWorkerSubmit(form);
+  };
+
+  const testWorkerConnection = async form => {
+    const hostInput = form.elements.host, portInput = form.elements.port;
+    if (!hostInput.reportValidity() || !portInput.reportValidity()) return;
+    const endpoint = workerEndpointKey(form);
+    const button = form.querySelector("[data-test-worker-connection]");
+    const label = button?.querySelector("span");
+    const controller = new AbortController();
+    form._workerConnectionController?.abort();
+    form._workerConnectionController = controller;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    if (label) label.textContent = t("TestingWorkerConnection", "Testing connection…");
+    setWorkerConnectionState(form, "checking", t("TestingWorkerConnection", "Testing connection…"));
+    try {
+      const response = await fetch(`${apiRoot}/test-worker-connection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", RequestVerificationToken: token, "X-CSRF-TOKEN": token },
+        body: JSON.stringify({ host: hostInput.value.trim(), port: Number(portInput.value) }),
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(await problemText(response));
+      const result = await response.json();
+      if (!result.success) throw new Error(result.message || t("WorkerConnectionFailed", "Connection check failed."));
+      if (endpoint !== workerEndpointKey(form)) return;
+      form.dataset.testedWorkerEndpoint = endpoint;
+      const detail = `${result.host}:${result.port} · PostgreSQL ${result.postgreSqlVersion} · Citus ${result.citusVersion}`;
+      setWorkerConnectionState(form, "success", `${t("WorkerConnectionSucceeded", "Connection and compatibility checks succeeded.")} ${detail}`);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      setWorkerConnectionState(form, "error", `${t("WorkerConnectionFailed", "Connection check failed.")} ${error.message}`);
+    } finally {
+      if (form._workerConnectionController === controller) {
+        form._workerConnectionController = null;
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        if (label) label.textContent = t("TestWorkerConnection", "Test connection");
+      }
+    }
   };
 
   const previewEndpoint = (form) => {
@@ -120,6 +193,7 @@
     const form = dialog.querySelector("[data-operation-form]");
     form.reset();
     showFeedback(form, "");
+    if (form.dataset.operation === "add-worker") invalidateWorkerConnection(form);
     form.dataset.idempotencyKey = newIdempotencyKey();
     const host = trigger.dataset.host || "", port = trigger.dataset.port || "5432";
     if (form.elements.host) form.elements.host.value = host;
@@ -196,6 +270,8 @@
     if (trigger) { event.preventDefault(); trigger.closest("details")?.removeAttribute("open"); openDialog(trigger); return; }
     const refresh = event.target.closest("[data-refresh-preview]");
     if (refresh) { event.preventDefault(); loadPreview(refresh.closest("form")); }
+    const testConnection = event.target.closest("[data-test-worker-connection]");
+    if (testConnection) { event.preventDefault(); testWorkerConnection(testConnection.closest("form")); }
   });
 
   root.querySelectorAll("[data-operation-dialog]").forEach(dialog => {
@@ -203,7 +279,9 @@
       if (event.target === dialog) dialog.close("cancel");
     });
     dialog.addEventListener("close", () => {
-      dialog.querySelector("form")?._previewController?.abort();
+      const form = dialog.querySelector("form");
+      form?._previewController?.abort();
+      form?._workerConnectionController?.abort();
       dialog._trigger?.focus();
     });
   });
@@ -212,6 +290,14 @@
     if (event.submitter?.value === "cancel") return;
     event.preventDefault();
     if (!form.reportValidity()) return;
+    if (form.dataset.operation === "add-worker" &&
+        (form.dataset.workerConnectionState !== "success" ||
+         form.dataset.testedWorkerEndpoint !== workerEndpointKey(form))) {
+      setWorkerConnectionState(form, "pending",
+        t("WorkerConnectionRequired", "Test this endpoint successfully before adding the worker."));
+      form.querySelector("[data-test-worker-connection]")?.focus();
+      return;
+    }
     const dialog = form.closest("dialog");
     const confirmation = form.querySelector("[data-confirm-input]");
     if (confirmation && confirmation.value !== dialog.dataset.confirmValue) {
@@ -273,6 +359,12 @@
       form.elements.typedConfirmation.value = "";
       updateCoordinatorTarget(form);
     }));
+  });
+
+  root.querySelectorAll('[data-operation-form][data-operation="add-worker"]').forEach(form => {
+    [form.elements.host, form.elements.port].forEach(input => input?.addEventListener("input", () =>
+      invalidateWorkerConnection(form, true)));
+    invalidateWorkerConnection(form);
   });
 
   // Compact active-only polling: one request, pauses in hidden tabs, backs off on failure.

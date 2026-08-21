@@ -51,6 +51,8 @@ public interface IOperationService
     Task<IReadOnlyList<OperationResponse>> GetAllAsync(Guid? clusterId, CancellationToken cancellationToken);
     Task<OperationResponse?> GetAsync(Guid id, CancellationToken cancellationToken);
     Task<OperationResponse> CreateAsync(Guid clusterId, CreateOperationRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<WorkerConnectionTestResponse> TestWorkerConnectionAsync(
+        Guid clusterId, TestWorkerConnectionRequest request, CancellationToken cancellationToken);
     Task<OperationResponse> AddNodeAsync(Guid clusterId, AddNodeRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> RebalanceAsync(Guid clusterId, RebalanceRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> DrainWorkerAsync(Guid clusterId, DrainWorkerRequest request, Guid actorId, CancellationToken cancellationToken);
@@ -273,6 +275,13 @@ public sealed class OperationService(
 
         var inventory = await inspector.CollectAsync(cluster, cancellationToken);
         EnsureCapabilities(request.Kind, inventory.Capability);
+        if (request.Kind == OperationKind.AddWorker)
+        {
+            var connectionTest = await inspector.TestWorkerConnectionAsync(
+                cluster, request.WorkerHost!, request.WorkerPort!.Value, cancellationToken);
+            if (!connectionTest.Success)
+                throw new InvalidOperationException(connectionTest.Message);
+        }
         if (request.Kind == OperationKind.AddWorker && request.RebalanceAfterAdd)
             EnsureCapabilities(OperationKind.Rebalance, inventory.Capability);
 
@@ -320,6 +329,16 @@ public sealed class OperationService(
             IdempotencyKey: request.IdempotencyKey,
             TopologyFingerprint: TopologyFingerprint(inventory));
         return await SaveTopologyOperationAsync(clusterId, actorId, plan, cancellationToken);
+    }
+
+    public async Task<WorkerConnectionTestResponse> TestWorkerConnectionAsync(
+        Guid clusterId, TestWorkerConnectionRequest request, CancellationToken cancellationToken)
+    {
+        var cluster = await db.Clusters.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == clusterId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cluster not found.");
+        return await inspector.TestWorkerConnectionAsync(
+            cluster, request.Host, request.Port, cancellationToken);
     }
 
     public Task<OperationResponse> AddNodeAsync(

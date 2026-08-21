@@ -9,6 +9,8 @@ namespace CitusManager.Services;
 public interface ICitusInspector
 {
     Task<ClusterInventoryResponse> CollectAsync(ClusterProfile cluster, CancellationToken cancellationToken);
+    Task<WorkerConnectionTestResponse> TestWorkerConnectionAsync(
+        ClusterProfile cluster, string host, int port, CancellationToken cancellationToken);
     Task<long> CountPlacementsAsync(ClusterProfile cluster, string host, int port, CancellationToken cancellationToken);
     Task<string> GetRebalancePlanAsync(ClusterProfile cluster, bool drainOnly, CancellationToken cancellationToken);
     Task<IReadOnlyList<DatabaseActivityResponse>> GetActivityAsync(ClusterProfile cluster, CancellationToken cancellationToken);
@@ -57,6 +59,99 @@ public sealed class CitusInspector(ICitusConnectionFactory connections) : ICitus
 
         return new ClusterInventoryResponse(capability, nodes, tables, DateTimeOffset.UtcNow);
     }
+
+    public async Task<WorkerConnectionTestResponse> TestWorkerConnectionAsync(
+        ClusterProfile cluster, string host, int port, CancellationToken cancellationToken)
+    {
+        host = host.Trim();
+        if (host.Length == 0 || port is < 1 or > 65535)
+            return Failed(host, port, "Worker host or port is invalid.");
+        if (string.Equals(host, cluster.Host, StringComparison.OrdinalIgnoreCase) && port == cluster.Port)
+            return Failed(host, port, "The control coordinator cannot be added as its own worker.");
+
+        try
+        {
+            await using var coordinator = connections.Create(cluster);
+            await coordinator.OpenAsync(cancellationToken);
+            var expected = await ReadNodeIdentityAsync(coordinator, cancellationToken);
+
+            await using (var registered = new NpgsqlCommand(
+                             "SELECT EXISTS (SELECT 1 FROM pg_dist_node WHERE lower(nodename)=lower($1) AND nodeport=$2)",
+                             coordinator))
+            {
+                registered.Parameters.AddWithValue(host);
+                registered.Parameters.AddWithValue(port);
+                if (Convert.ToBoolean(await registered.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture))
+                    return Failed(host, port, "This endpoint is already registered in Citus metadata.");
+            }
+
+            await using var worker = connections.Create(cluster, host, port);
+            await worker.OpenAsync(cancellationToken);
+            var actual = await ReadNodeIdentityAsync(worker, cancellationToken);
+            var incompatibility = WorkerCompatibilityError(expected, actual);
+            if (incompatibility is not null)
+                return Failed(host, port, incompatibility, actual);
+
+            return new(true, host, port, actual.Database, actual.User,
+                actual.PostgreSqlVersion, actual.CitusVersion,
+                "Connection and worker compatibility checks succeeded.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (NpgsqlException)
+        {
+            return Failed(host, port,
+                "Could not connect using the cluster database, stored credentials, and TLS settings.");
+        }
+        catch (TimeoutException)
+        {
+            return Failed(host, port, "The worker connection check timed out.");
+        }
+    }
+
+    internal static string? WorkerCompatibilityError(NodeEndpointIdentity expected, NodeEndpointIdentity actual)
+    {
+        if (!string.Equals(actual.Database, expected.Database, StringComparison.Ordinal))
+            return "The worker connection opened a different database.";
+        if (string.IsNullOrWhiteSpace(actual.CitusVersion))
+            return "The Citus extension is not installed in the worker database.";
+        if (actual.PostgreSqlVersionNumber / 10_000 != expected.PostgreSqlVersionNumber / 10_000)
+            return "The worker PostgreSQL major version differs from the control coordinator.";
+        if (!string.Equals(CitusMutator.MajorVersion(actual.CitusVersion),
+                CitusMutator.MajorVersion(expected.CitusVersion), StringComparison.Ordinal))
+            return "The worker Citus major version differs from the control coordinator.";
+        if (actual.IsInRecovery)
+            return "The worker endpoint is a read-only standby and cannot receive Citus writes.";
+        if (actual.IsReadOnly)
+            return "The worker database is read-only.";
+        return null;
+    }
+
+    private static async Task<NodeEndpointIdentity> ReadNodeIdentityAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT current_database(), current_user,
+                   current_setting('server_version'),
+                   current_setting('server_version_num')::int,
+                   COALESCE((SELECT extversion FROM pg_extension WHERE extname='citus'), ''),
+                   pg_is_in_recovery(),
+                   current_setting('transaction_read_only') = 'on'
+            """, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("Worker identity query returned no row.");
+        return new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3),
+            reader.GetString(4), reader.GetBoolean(5), reader.GetBoolean(6));
+    }
+
+    private static WorkerConnectionTestResponse Failed(
+        string host, int port, string message, NodeEndpointIdentity? identity = null) =>
+        new(false, host, port, identity?.Database, identity?.User,
+            identity?.PostgreSqlVersion, identity?.CitusVersion, message);
 
     public async Task<long> CountPlacementsAsync(
         ClusterProfile cluster, string host, int port, CancellationToken cancellationToken)
@@ -236,3 +331,12 @@ public sealed class CitusInspector(ICitusConnectionFactory connections) : ICitus
     private static DateTimeOffset? ReadTimestamp(NpgsqlDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : new DateTimeOffset(reader.GetDateTime(ordinal).ToUniversalTime());
 }
+
+internal sealed record NodeEndpointIdentity(
+    string Database,
+    string User,
+    string PostgreSqlVersion,
+    int PostgreSqlVersionNumber,
+    string CitusVersion,
+    bool IsInRecovery,
+    bool IsReadOnly);

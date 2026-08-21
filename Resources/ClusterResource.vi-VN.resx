@@ -43,4 +43,10 @@
   <data name="Cluster.CoordinatorRecoveryType" xml:space="preserve"><value>Nhập chính xác restore ID:</value></data>
   <data name="Cluster.CoordinatorRecoveryConfirmationMismatch" xml:space="preserve"><value>Nội dung xác nhận phải khớp chính xác restore ID.</value></data>
   <data name="Cluster.CreateCoordinatorPlan" xml:space="preserve"><value>Tạo migration plan</value></data>
+  <data name="Cluster.TestWorkerConnection" xml:space="preserve"><value>Kiểm tra kết nối</value></data>
+  <data name="Cluster.TestingWorkerConnection" xml:space="preserve"><value>Đang kiểm tra kết nối…</value></data>
+  <data name="Cluster.WorkerConnectionRequired" xml:space="preserve"><value>Phải kiểm tra endpoint thành công trước khi thêm worker.</value></data>
+  <data name="Cluster.WorkerConnectionChanged" xml:space="preserve"><value>Host hoặc port đã thay đổi. Hãy kiểm tra kết nối lại.</value></data>
+  <data name="Cluster.WorkerConnectionSucceeded" xml:space="preserve"><value>Kết nối và kiểm tra tương thích thành công.</value></data>
+  <data name="Cluster.WorkerConnectionFailed" xml:space="preserve"><value>Kiểm tra kết nối thất bại.</value></data>
 </root>

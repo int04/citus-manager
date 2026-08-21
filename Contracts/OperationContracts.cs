@@ -28,6 +28,24 @@ public sealed record AddNodeRequest
     [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
 }
 
+/// <summary>Payload for a read-only worker endpoint connectivity and compatibility check.</summary>
+public sealed record TestWorkerConnectionRequest
+{
+    [Required, MaxLength(255)] public required string Host { get; init; }
+    [Range(1, 65535)] public int Port { get; init; } = 5432;
+}
+
+/// <summary>Result of checking a prospective worker without changing Citus metadata.</summary>
+public sealed record WorkerConnectionTestResponse(
+    bool Success,
+    string Host,
+    int Port,
+    string? Database,
+    string? User,
+    string? PostgreSqlVersion,
+    string? CitusVersion,
+    string Message);
+
 public sealed record RebalanceRequest
 {
     public bool ExternalCapacityAndBackupChecksAcknowledged { get; init; }
