@@ -16,7 +16,7 @@ public sealed class OperationExecutor(
     ControlDbContext db,
     ICitusInspector inspector,
     ICitusMutator mutator,
-    ICoordinatorMigrationService coordinatorMigrations,
+    ICoordinatorLogicalMigrationService logicalCoordinatorMigration,
     IDatabaseMaintenanceService maintenance,
     IDatabaseObjectService objects,
     IControlPlaneLeaseProvider leases,
@@ -163,6 +163,9 @@ public sealed class OperationExecutor(
     {
         var plan = operationPlan.CoordinatorMigration
             ?? throw new InvalidOperationException("Coordinator migration plan is missing.");
+        if (operationPlan.PlanVersion < 7)
+            throw new InvalidOperationException(
+                "This legacy coordinator plan can copy distributed rows or rebuild worker metadata; cancel it and create a new plan.");
         var sourceProfile = CoordinatorMigrationService.CopyWithEndpoint(cluster, plan.SourceHost, plan.SourcePort);
         var targetProfile = CoordinatorMigrationService.CopyWithEndpoint(cluster, plan.TargetHost, plan.TargetPort);
         var cutoverAlreadySaved = HasStep(operation, "control-profile-cutover");
@@ -175,14 +178,10 @@ public sealed class OperationExecutor(
             throw new InvalidOperationException(
                 "Control coordinator profile and durable cutover checkpoint are inconsistent; manual recovery is required.");
 
-        var validation = await coordinatorMigrations.ValidateExternalPromotionAsync(
-            sourceProfile, plan, cancellationToken);
-        await SaveStepAsync(operation, "external-promotion-validated", "Succeeded",
-            validation.Detail, cancellationToken);
-
-        await coordinatorMigrations.PrepareTargetCoordinatorAsync(targetProfile, plan, cancellationToken);
-        await SaveStepAsync(operation, "coordinator-address-prepared", "Succeeded",
-            $"Citus group 0 now advertises {plan.TargetHost}:{plan.TargetPort}.", cancellationToken);
+        if (!cutoverAlreadySaved)
+            await logicalCoordinatorMigration.MigrateAsync(sourceProfile, targetProfile,
+                (name, detail) => SaveStepAsync(operation, name, "Succeeded", detail, cancellationToken),
+                cancellationToken);
 
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
         {
@@ -228,7 +227,7 @@ public sealed class OperationExecutor(
                         sourcePort = plan.SourcePort,
                         targetHost = plan.TargetHost,
                         targetPort = plan.TargetPort,
-                        validation.SourceFenceEvidence,
+                        migrationMode = "coordinator-state-transfer",
                         plan.SystemIdentifier,
                         plan.SourceFlushLsn
                     }));
@@ -248,15 +247,23 @@ public sealed class OperationExecutor(
             !coordinator.IsActive || !coordinator.HasMetadata || !coordinator.MetadataSynced)
             throw new InvalidOperationException("Fresh control-profile validation did not find the promoted target as active synchronized coordinator group 0.");
 
+        if (!HasStep(operation, "source-database-purged"))
+        {
+            await logicalCoordinatorMigration.PurgeSourceDatabaseAsync(
+                sourceProfile, targetProfile, cancellationToken);
+            await SaveStepAsync(operation, "source-database-purged", "Succeeded",
+                $"Database {plan.Database} permanently removed from old coordinator {plan.SourceHost}:{plan.SourcePort} after target validation.",
+                cancellationToken);
+        }
+
         await CompleteAsync(operation, new
         {
             Source = $"{plan.SourceHost}:{plan.SourcePort}",
             Target = $"{plan.TargetHost}:{plan.TargetPort}",
-            validation.SourceFenceEvidence,
-            validation.TargetWalLsn,
+            migrationMode = "coordinator-state-transfer",
             plan.SystemIdentifier,
             current.Capability.CitusVersion,
-            note = "External promotion adopted. The former primary remains fenced; no automatic rollback was attempted."
+            note = "Coordinator state transferred without copying distributed shard rows; old coordinator database permanently removed."
         }, cancellationToken);
     }
 

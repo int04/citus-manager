@@ -51,6 +51,10 @@ public sealed record CoordinatorMigrationValidation(
 
 public interface ICoordinatorMigrationService
 {
+    Task<bool> EnsureSourceCoordinatorRegisteredAsync(
+        ClusterProfile source, CancellationToken cancellationToken);
+    Task ValidateFreshStandaloneTargetAsync(
+        ClusterProfile source, string targetHost, int targetPort, CancellationToken cancellationToken);
     Task<CoordinatorMigrationPlan> PlanAsync(
         ClusterProfile source, string targetHost, int targetPort, CancellationToken cancellationToken);
     Task<CoordinatorMigrationValidation> ValidateExternalPromotionAsync(
@@ -61,6 +65,51 @@ public interface ICoordinatorMigrationService
 
 public sealed class CoordinatorMigrationService(ICitusConnectionFactory connections) : ICoordinatorMigrationService
 {
+    public async Task ValidateFreshStandaloneTargetAsync(
+        ClusterProfile source, string targetHost, int targetPort, CancellationToken cancellationToken)
+    {
+        var target = CopyWithEndpoint(source, targetHost.Trim(), targetPort);
+        await using var connection = connections.Create(target);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT NOT pg_is_in_recovery()
+              AND (SELECT count(*) FROM pg_database WHERE datallowconn AND NOT datistemplate) = 1
+              AND (SELECT count(*) FROM pg_dist_partition) = 0
+              AND (SELECT count(*) FROM pg_stat_user_tables) = 0
+            """, connection);
+        if (!Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture))
+            throw new InvalidOperationException(
+                "Automatic standby initialization is allowed only for a fresh standalone target with no user tables or distributed metadata.");
+    }
+
+    public async Task<bool> EnsureSourceCoordinatorRegisteredAsync(
+        ClusterProfile source, CancellationToken cancellationToken)
+    {
+        var before = await ReadStateAsync(source, requireSourceLsn: true, cancellationToken);
+        EnsureSourceIdentity(before);
+        if (before.Coordinator is not null) return false;
+        if (!before.CanSetCoordinatorHost)
+            throw new InvalidOperationException(
+                "Source database role cannot register the current coordinator with citus_set_coordinator_host.");
+
+        await using var connection = connections.Create(source);
+        await connection.OpenAsync(cancellationToken);
+        await using (var command = new NpgsqlCommand(
+                         "SELECT citus_set_coordinator_host($1,$2)", connection))
+        {
+            command.Parameters.AddWithValue(source.Host);
+            command.Parameters.AddWithValue(source.Port);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var after = await ReadStateAsync(source, requireSourceLsn: true, cancellationToken);
+        EnsureSourceCoordinator(after);
+        if (!SameNode(after.Coordinator!.Host, after.Coordinator.Port, source.Host, source.Port))
+            throw new InvalidOperationException(
+                "Current coordinator registration checkpoint did not match the stored source endpoint.");
+        return true;
+    }
+
     public async Task<CoordinatorMigrationPlan> PlanAsync(
         ClusterProfile source, string targetHost, int targetPort, CancellationToken cancellationToken)
     {
@@ -77,22 +126,15 @@ public sealed class CoordinatorMigrationService(ICitusConnectionFactory connecti
         var target = CopyWithEndpoint(source, normalizedTarget, targetPort);
         var targetState = await ReadStateAsync(target, requireSourceLsn: false, cancellationToken);
 
-        if (!targetState.InRecovery)
-            throw new InvalidOperationException("Target must be a physical standby before a coordinator migration can be planned.");
-        EnsurePhysicalClone(sourceState, targetState);
+        if (targetState.InRecovery)
+            throw new InvalidOperationException("Target must be a writable standalone PostgreSQL/Citus server.");
+        EnsureLogicalTargetIdentity(sourceState, targetState);
         if (targetState.LocalGroupId != 0)
-            throw new InvalidOperationException("Target physical standby must retain coordinator local group 0.");
-        if (targetState.ReplayPaused)
-            throw new InvalidOperationException("Target WAL replay is paused.");
-        if (!targetState.HasWalReceiver || !targetState.WalReceiverStreaming)
-            throw new InvalidOperationException("Target is not actively streaming WAL from a primary.");
+            throw new InvalidOperationException("Target Citus local group must be 0.");
         if (!targetState.CanSetCoordinatorHost)
             throw new InvalidOperationException("Target database role cannot execute citus_set_coordinator_host after promotion.");
         if (targetState.HasDistinctTargetNode)
             throw new InvalidOperationException("Target endpoint is registered as a non-coordinator Citus node; a physical coordinator standby must not have a distinct topology row.");
-        if (!targetState.ReplayReached(sourceState.SourceFlushLsn!))
-            throw new InvalidOperationException("Target has not replayed the source WAL flush position captured for this plan.");
-        EnsureFingerprints(sourceState, targetState);
 
         var coordinator = sourceState.Coordinator
             ?? throw new InvalidOperationException("Source has no active primary coordinator row.");
@@ -196,8 +238,12 @@ public sealed class CoordinatorMigrationService(ICitusConnectionFactory connecti
                    CASE WHEN pg_is_in_recovery() THEN pg_last_wal_replay_lsn()::text
                         ELSE COALESCE(pg_last_wal_replay_lsn(),pg_current_wal_flush_lsn())::text END,
                    CASE WHEN pg_is_in_recovery() THEN pg_get_wal_replay_pause_state() <> 'not paused' ELSE false END,
-                   has_function_privilege(current_user,
-                     'citus_set_coordinator_host(text,integer,noderole,name)'::regprocedure,'EXECUTE'),
+                   COALESCE((SELECT bool_or(has_function_privilege(current_user,p.oid,'EXECUTE'))
+                     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                     WHERE n.nspname='pg_catalog' AND p.proname='citus_set_coordinator_host'
+                       AND p.pronargs>=2 AND p.pronargs-p.pronargdefaults<=2
+                       AND p.proargtypes[0]='text'::regtype
+                       AND p.proargtypes[1]='integer'::regtype),false),
                    CASE WHEN pg_is_in_recovery() THEN NULL ELSE pg_current_wal_flush_lsn()::text END
             """;
         await using var identity = new NpgsqlCommand(identitySql, connection);
@@ -236,13 +282,14 @@ public sealed class CoordinatorMigrationService(ICitusConnectionFactory connecti
         NpgsqlConnection connection, CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand("""
-            SELECT nodeid,noderole::text,nodecluster::text
+            SELECT nodeid,noderole::text,nodecluster::text,nodename,nodeport
             FROM pg_dist_node WHERE groupid=0 AND noderole='primary' AND isactive ORDER BY nodeid
             """, connection);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         CoordinatorNode? result = null;
         if (await reader.ReadAsync(cancellationToken))
-            result = new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2));
+            result = new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2),
+                reader.GetString(3), reader.GetInt32(4));
         if (await reader.ReadAsync(cancellationToken))
             throw new InvalidOperationException("Topology contains multiple active primary coordinator rows.");
         return result;
@@ -288,10 +335,15 @@ public sealed class CoordinatorMigrationService(ICitusConnectionFactory connecti
 
     private static void EnsureSourceCoordinator(CoordinatorState state)
     {
-        if (state.InRecovery || !state.IsCoordinator || state.LocalGroupId != 0)
-            throw new InvalidOperationException("Source endpoint is not the live Citus control coordinator for local group 0.");
+        EnsureSourceIdentity(state);
         if (state.Coordinator is null)
             throw new InvalidOperationException("Source topology has no active primary coordinator row.");
+    }
+
+    private static void EnsureSourceIdentity(CoordinatorState state)
+    {
+        if (state.InRecovery || !state.IsCoordinator || state.LocalGroupId != 0)
+            throw new InvalidOperationException("Source endpoint is not the live Citus control coordinator for local group 0.");
     }
 
     private static void EnsurePhysicalClone(CoordinatorState source, CoordinatorState target)
@@ -302,6 +354,18 @@ public sealed class CoordinatorMigrationService(ICitusConnectionFactory connecti
             !string.Equals(source.CitusVersion, target.CitusVersion, StringComparison.Ordinal) ||
             !string.Equals(source.SystemIdentifier, target.SystemIdentifier, StringComparison.Ordinal))
             throw new InvalidOperationException("Target database/user/version/system identity differs from the source coordinator.");
+    }
+
+    private static void EnsureLogicalTargetIdentity(CoordinatorState source, CoordinatorState target)
+    {
+        if (!string.Equals(source.Database, target.Database, StringComparison.Ordinal) ||
+            !string.Equals(source.User, target.User, StringComparison.Ordinal) ||
+            source.PostgreSqlMajorVersion != target.PostgreSqlMajorVersion ||
+            !string.Equals(source.CitusVersion, target.CitusVersion, StringComparison.Ordinal))
+            throw new InvalidOperationException("Target database, user, PostgreSQL major, or Citus version differs from source.");
+        if (string.Equals(source.SystemIdentifier, target.SystemIdentifier, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "Target must be a distinct PostgreSQL server, not another endpoint for the source server.");
     }
 
     private static void EnsureFingerprints(CoordinatorState source, CoordinatorState target)
@@ -364,7 +428,7 @@ public sealed class CoordinatorMigrationService(ICitusConnectionFactory connecti
     private static bool SameNode(string leftHost, int leftPort, string rightHost, int rightPort) =>
         leftPort == rightPort && string.Equals(leftHost, rightHost, StringComparison.OrdinalIgnoreCase);
 
-    private sealed record CoordinatorNode(int NodeId, string Role, string Cluster);
+    private sealed record CoordinatorNode(int NodeId, string Role, string Cluster, string Host, int Port);
 
     private sealed record CoordinatorState(
         string Database, string User, int PostgreSqlMajorVersion, string CitusVersion,

@@ -32,4 +32,16 @@ public sealed class CoordinatorMigrationServiceTests
         Assert.Equal(source.ProtectedPrometheusToken, target.ProtectedPrometheusToken);
         Assert.Equal(7, target.Version);
     }
+
+    [Fact]
+    public void Local_coordinator_relocation_is_metadata_local_and_quotes_host()
+    {
+        var sql = CoordinatorLogicalMigrationService.BuildLocalCoordinatorRelocationCommand(
+            "new'coordinator", 12002);
+
+        Assert.Contains("citus.enable_metadata_sync','off',true", sql, StringComparison.Ordinal);
+        Assert.Contains("citus_set_coordinator_host('new''coordinator',12002)", sql, StringComparison.Ordinal);
+        Assert.Contains("groupid=0", sql, StringComparison.Ordinal);
+        Assert.Contains("count(*)", sql, StringComparison.Ordinal);
+    }
 }

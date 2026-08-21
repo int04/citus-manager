@@ -60,14 +60,14 @@
                 <div class="field"><label for="change-coordinator-port">@T["Cluster.TargetPort"] *</label><input id="change-coordinator-port" name="targetPort" type="number" min="1" max="65535" value="5432" required inputmode="numeric" /></div>
             </div>
             <p class="coordinator-credential-note"><i class="fa fa-key" aria-hidden="true"></i> @T["Cluster.ChangeCoordinatorSameCredentials"]</p>
-            <div class="field">
-                <label for="change-coordinator-confirmation">@T["Cluster.TypeTargetEndpointToConfirm"] <code data-confirm-label></code></label>
-                <input id="change-coordinator-confirmation" name="typedConfirmation" required maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" data-confirm-input aria-describedby="change-coordinator-risk" />
+            <p class="warning"><i class="fa fa-triangle-exclamation" aria-hidden="true"></i> @T["Cluster.CoordinatorTargetResetWarning"]</p>
+            <div class="worker-connection-check" data-coordinator-target-check>
+                <button class="btn btn-secondary" type="button" data-test-coordinator-target><i class="fa fa-check-circle" aria-hidden="true"></i> <span>@T["Cluster.TestCoordinatorTarget"]</span></button>
+                <p class="worker-connection-status" data-coordinator-target-status role="status" aria-live="polite">@T["Cluster.CoordinatorTargetCheckRequired"]</p>
             </div>
-            <label class="check-field"><input type="checkbox" name="ack" value="true" required /><span>@T["Cluster.CoordinatorPlanAck"]</span></label>
             <div class="dialog-feedback" data-dialog-feedback role="alert" aria-live="assertive" tabindex="-1" hidden></div>
         </div>
-        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-danger" type="submit" value="submit">@T["Cluster.CreateCoordinatorPlan"]</button></footer>
+        <footer><button class="btn btn-ghost" value="cancel">@T["Cluster.Cancel"]</button><button class="btn btn-danger" type="submit" value="submit" data-coordinator-submit disabled>@T["Cluster.CreateCoordinatorPlan"]</button></footer>
     </form>
 </dialog>
 

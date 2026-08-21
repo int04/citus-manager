@@ -21,8 +21,8 @@
   <data name="Cluster.ChangeCoordinatorShort" xml:space="preserve"><value>Plan a controlled physical failover</value></data>
   <data name="Cluster.ChangeCoordinatorKicker" xml:space="preserve"><value>External failover required</value></data>
   <data name="Cluster.ChangeCoordinatorHelp" xml:space="preserve"><value>Create a reviewed plan for moving the authoritative control coordinator to another PostgreSQL/Citus server.</value></data>
-  <data name="Cluster.ChangeCoordinatorPlanOnlyTitle" xml:space="preserve"><value>Plan only.</value></data>
-  <data name="Cluster.ChangeCoordinatorPlanOnly" xml:space="preserve"><value>This step does not change the cluster. The operation will wait for external fencing, standby promotion, and explicit approval.</value></data>
+  <data name="Cluster.ChangeCoordinatorPlanOnlyTitle" xml:space="preserve"><value>Preflight first; cutover later.</value></data>
+  <data name="Cluster.ChangeCoordinatorPlanOnly" xml:space="preserve"><value>The check verifies an empty compatible target. The migration plan automatically fences source writes, dumps/restores the coordinator, rebuilds topology, validates, and switches the profile.</value></data>
   <data name="Cluster.ChangeCoordinatorRiskTitle" xml:space="preserve"><value>This is an availability-impacting cutover.</value></data>
   <data name="Cluster.ChangeCoordinatorRisk" xml:space="preserve"><value>CitusManager does not promote PostgreSQL, change DNS/load balancers, stop the old server, or fence receiving endpoints. A failed or incomplete external failover can cause split brain or data loss.</value></data>
   <data name="Cluster.CurrentCoordinator" xml:space="preserve"><value>Current coordinator</value></data>
@@ -49,6 +49,13 @@
   <data name="Cluster.WorkerConnectionChanged" xml:space="preserve"><value>Host or port changed. Test the connection again.</value></data>
   <data name="Cluster.WorkerConnectionSucceeded" xml:space="preserve"><value>Connection and compatibility checks succeeded.</value></data>
   <data name="Cluster.WorkerConnectionFailed" xml:space="preserve"><value>Connection check failed.</value></data>
+  <data name="Cluster.TestCoordinatorTarget" xml:space="preserve"><value>Check &amp; prepare automatically</value></data>
+  <data name="Cluster.TestingCoordinatorTarget" xml:space="preserve"><value>Checking and preparing target automatically…</value></data>
+  <data name="Cluster.CoordinatorTargetCheckRequired" xml:space="preserve"><value>Check this target successfully before creating the migration plan.</value></data>
+  <data name="Cluster.CoordinatorTargetChanged" xml:space="preserve"><value>Target host or port changed. Check the target again.</value></data>
+  <data name="Cluster.CoordinatorTargetReady" xml:space="preserve"><value>Target is reset, compatible, and ready to receive coordinator metadata without copying worker shard rows.</value></data>
+  <data name="Cluster.CoordinatorTargetFailed" xml:space="preserve"><value>Target readiness check failed.</value></data>
+  <data name="Cluster.CoordinatorSourceRegistered" xml:space="preserve"><value>Current coordinator metadata was registered automatically.</value></data>
   <data name="Cluster.DeleteConfirmTitle" xml:space="preserve"><value>Delete this local cluster profile?</value></data>
   <data name="Cluster.DeleteConfirmIntro" xml:space="preserve"><value>Review the full deletion scope before continuing.</value></data>
   <data name="Cluster.DeleteConfirmWarning" xml:space="preserve"><value>Confirming will permanently delete all local control-plane data associated with this cluster profile.</value></data>
@@ -59,4 +66,5 @@
   <data name="Cluster.DeleteScopeRestores" xml:space="preserve"><value>Restore run records linked to this cluster.</value></data>
   <data name="Cluster.DeletePreservedTitle" xml:space="preserve"><value>Not deleted:</value></data>
   <data name="Cluster.DeletePreserved" xml:space="preserve"><value>the Citus database, its data, external backup objects, and the deletion audit record.</value></data>
+  <data name="Cluster.CoordinatorTargetResetWarning" xml:space="preserve"><value>Checking this target permanently deletes and recreates its configured database before Citus initialization.</value></data>
 </root>

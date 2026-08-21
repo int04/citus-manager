@@ -120,6 +120,7 @@ builder.Services.AddScoped<ICitusConnectionFactory, CitusConnectionFactory>();
 builder.Services.AddScoped<ICitusInspector, CitusInspector>();
 builder.Services.AddScoped<ICitusMutator, CitusMutator>();
 builder.Services.AddScoped<ICoordinatorMigrationService, CoordinatorMigrationService>();
+builder.Services.AddScoped<ICoordinatorLogicalMigrationService, CoordinatorLogicalMigrationService>();
 builder.Services.AddSingleton<IControlPlaneLeaseProvider, ControlPlaneLeaseProvider>();
 builder.Services.AddScoped<IClusterService, ClusterService>();
 builder.Services.AddSingleton<IClusterTopologyCache, ClusterTopologyCache>();

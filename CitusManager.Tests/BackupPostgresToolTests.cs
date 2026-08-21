@@ -35,6 +35,56 @@ public sealed class BackupPostgresToolTests
         Assert.Contains("--compress=gzip:5", arguments);
     }
 
+    [Fact]
+    public void Coordinator_schema_dump_contains_no_table_data()
+    {
+        var source = new ClusterProfile { Name = "source", Host = "coordinator" };
+
+        var arguments = PostgresToolRunner.BuildSchemaDumpArguments(source, "gzip:5");
+
+        Assert.Contains("--schema-only", arguments);
+        Assert.DoesNotContain("--data-only", arguments);
+    }
+
+    [Fact]
+    public void Coordinator_local_data_dump_excludes_distributed_tables_once()
+    {
+        var source = new ClusterProfile { Name = "source", Host = "coordinator" };
+
+        var arguments = PostgresToolRunner.BuildDataDumpArguments(
+            source, "gzip:5", ["\"app\".\"events\"", "\"app\".\"events\"", "\"app\".\"orders\""]);
+
+        Assert.Contains("--data-only", arguments);
+        Assert.Equal(1, arguments.Count(x => x == "--exclude-table-data=\"app\".\"events\""));
+        Assert.Equal(1, arguments.Count(x => x == "--exclude-table-data=\"app\".\"orders\""));
+    }
+
+    [Fact]
+    public void Coordinator_dump_environment_disables_citus_ddl_propagation()
+    {
+        var original = new Dictionary<string, string> { ["PGPASSFILE"] = "secret-file" };
+
+        var environment = PostgresToolRunner.BuildCoordinatorDumpEnvironment(original);
+
+        Assert.Equal("secret-file", environment["PGPASSFILE"]);
+        Assert.Equal("-c citus.enable_ddl_propagation=off", environment["PGOPTIONS"]);
+        Assert.DoesNotContain("PGOPTIONS", original);
+    }
+
+    [Fact]
+    public void Safe_diagnostic_preserves_error_before_long_query()
+    {
+        var error = "pg_dump: error: query failed: ERROR: failure on connection marked as essential";
+        var diagnostic = error + Environment.NewLine +
+                         "pg_dump: detail: Query was: LOCK TABLE " + new string('x', 5000);
+
+        var result = PostgresToolRunner.SafeDiagnostic(diagnostic);
+
+        Assert.StartsWith(error, result, StringComparison.Ordinal);
+        Assert.Contains("diagnostic truncated", result, StringComparison.Ordinal);
+        Assert.True(result.Length <= 2000);
+    }
+
     [Theory]
     [InlineData("pg_dump (PostgreSQL) 16.9", 16)]
     [InlineData("pg_restore (PostgreSQL) 18.4 (Homebrew)", 18)]
