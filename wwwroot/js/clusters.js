@@ -265,13 +265,13 @@
     return { path: kind === "drain" ? "drain-worker" : "retire-worker", body: node };
   };
 
-  root.addEventListener("click", event => {
+  document.addEventListener("click", event => {
     const trigger = event.target.closest("[data-open-operation]");
-    if (trigger) { event.preventDefault(); trigger.closest("details")?.removeAttribute("open"); openDialog(trigger); return; }
+    if (trigger && (root.contains(trigger) || trigger.hasAttribute("data-cluster-header-operation"))) { event.preventDefault(); trigger.closest("details")?.removeAttribute("open"); openDialog(trigger); return; }
     const refresh = event.target.closest("[data-refresh-preview]");
-    if (refresh) { event.preventDefault(); loadPreview(refresh.closest("form")); }
+    if (refresh && root.contains(refresh)) { event.preventDefault(); loadPreview(refresh.closest("form")); }
     const testConnection = event.target.closest("[data-test-worker-connection]");
-    if (testConnection) { event.preventDefault(); testWorkerConnection(testConnection.closest("form")); }
+    if (testConnection && root.contains(testConnection)) { event.preventDefault(); testWorkerConnection(testConnection.closest("form")); }
   });
 
   root.querySelectorAll("[data-operation-dialog]").forEach(dialog => {
@@ -387,7 +387,7 @@
     if (progress.percent == null) bar.removeAttribute("value"); else bar.value = percent;
     live.querySelector("[data-live-percent]").textContent = progress.percent == null ? "…" : `${Math.round(percent)}%`;
     live.querySelector("[data-live-link]").href = operationUrl.replace("{id}", encodeURIComponent(active.id || active.operationId));
-    root.querySelectorAll("[data-open-operation]").forEach(button => { button.disabled = true; button.title = t("ActiveConflict", "Another topology operation is active."); });
+    document.querySelectorAll("[data-cluster-header-operation],#cluster-operations [data-open-operation]").forEach(button => { button.disabled = true; button.title = t("ActiveConflict", "Another topology operation is active."); });
     root.querySelectorAll("[data-node-card]").forEach(card => card.classList.toggle("has-active-operation", !progress.host || card.dataset.nodeHost === progress.host));
     return terminal.has(active.status);
   };
