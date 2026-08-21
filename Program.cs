@@ -189,6 +189,7 @@ else
 
 app.UseHttpsRedirection();
 app.UseMiddleware<SecurityHeadersMiddleware>(app.Environment.IsDevelopment());
+app.UseMiddleware<StaticAssetCacheMiddleware>();
 app.UseRouting();
 app.UseAuthentication();
 app.UseRequestLocalization();
