@@ -247,12 +247,13 @@ public sealed class OperationExecutor(
             !coordinator.IsActive || !coordinator.HasMetadata || !coordinator.MetadataSynced)
             throw new InvalidOperationException("Fresh control-profile validation did not find the promoted target as active synchronized coordinator group 0.");
 
-        if (!HasStep(operation, "source-database-purged"))
+        if (!HasStep(operation, "source-schemas-purged") &&
+            !HasStep(operation, "source-database-purged"))
         {
-            await logicalCoordinatorMigration.PurgeSourceDatabaseAsync(
+            await logicalCoordinatorMigration.PurgeSourceSchemasAsync(
                 sourceProfile, targetProfile, cancellationToken);
-            await SaveStepAsync(operation, "source-database-purged", "Succeeded",
-                $"Database {plan.Database} permanently removed from old coordinator {plan.SourceHost}:{plan.SourcePort} after target validation.",
+            await SaveStepAsync(operation, "source-schemas-purged", "Succeeded",
+                $"User schemas and Citus metadata removed from database {plan.Database} on old coordinator {plan.SourceHost}:{plan.SourcePort}; the empty database was retained.",
                 cancellationToken);
         }
 
@@ -263,7 +264,7 @@ public sealed class OperationExecutor(
             migrationMode = "coordinator-state-transfer",
             plan.SystemIdentifier,
             current.Capability.CitusVersion,
-            note = "Coordinator state transferred without copying distributed shard rows; old coordinator database permanently removed."
+            note = "Coordinator state transferred without copying distributed shard rows; old coordinator database retained with user schemas and Citus metadata removed."
         }, cancellationToken);
     }
 

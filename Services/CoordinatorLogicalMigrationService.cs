@@ -12,7 +12,7 @@ public interface ICoordinatorLogicalMigrationService
         CancellationToken cancellationToken);
     Task MigrateAsync(ClusterProfile source, ClusterProfile target,
         Func<string, string, Task> checkpoint, CancellationToken cancellationToken);
-    Task PurgeSourceDatabaseAsync(ClusterProfile source, ClusterProfile target,
+    Task PurgeSourceSchemasAsync(ClusterProfile source, ClusterProfile target,
         CancellationToken cancellationToken);
 }
 
@@ -178,7 +178,7 @@ public sealed class CoordinatorLogicalMigrationService(
         }
     }
 
-    public async Task PurgeSourceDatabaseAsync(ClusterProfile source, ClusterProfile target,
+    public async Task PurgeSourceSchemasAsync(ClusterProfile source, ClusterProfile target,
         CancellationToken cancellationToken)
     {
         if (source.Database.Equals("template0", StringComparison.OrdinalIgnoreCase) ||
@@ -207,10 +207,6 @@ public sealed class CoordinatorLogicalMigrationService(
         NpgsqlConnection.ClearPool(sourcePrototype);
         await using var maintenance = new NpgsqlConnection(maintenanceBuilder.ConnectionString);
         await maintenance.OpenAsync(cancellationToken);
-        await using (var localOnly = new NpgsqlCommand(
-                         "SET citus.enable_ddl_propagation=off", maintenance))
-            await localOnly.ExecuteNonQueryAsync(cancellationToken);
-
         await using (var sourceIdentityCommand = new NpgsqlCommand(
                          "SELECT (pg_control_system()).system_identifier::text", maintenance))
         {
@@ -222,19 +218,78 @@ public sealed class CoordinatorLogicalMigrationService(
                     "Source cleanup refused because source and target PostgreSQL server identities are not distinct.");
         }
 
-        var database = new NpgsqlCommandBuilder().QuoteIdentifier(source.Database);
-        await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS {database} WITH (FORCE)", maintenance)
+        await using (var terminate = new NpgsqlCommand("""
+                         SELECT pg_terminate_backend(pid)
+                         FROM pg_stat_activity
+                         WHERE datname=$1 AND pid<>pg_backend_pid()
+                         """, maintenance) { CommandTimeout = 300 })
         {
-            CommandTimeout = 300
-        };
-        await drop.ExecuteNonQueryAsync(cancellationToken);
+            terminate.Parameters.AddWithValue(source.Database);
+            await terminate.ExecuteNonQueryAsync(cancellationToken);
+        }
 
-        await using var verify = new NpgsqlCommand(
-            "SELECT NOT EXISTS (SELECT 1 FROM pg_database WHERE datname=$1)", maintenance);
-        verify.Parameters.AddWithValue(source.Database);
+        var cleanupBuilder = new NpgsqlConnectionStringBuilder(sourcePrototype.ConnectionString)
+        {
+            Pooling = false
+        };
+        await using var cleanup = new NpgsqlConnection(cleanupBuilder.ConnectionString);
+        await cleanup.OpenAsync(cancellationToken);
+        var database = new NpgsqlCommandBuilder().QuoteIdentifier(source.Database);
+        await using (var purge = new NpgsqlCommand(BuildSourceSchemaPurgeSql(database), cleanup)
+                     { CommandTimeout = 600 })
+            await purge.ExecuteNonQueryAsync(cancellationToken);
+
+        await using var verify = new NpgsqlCommand("""
+            SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='public')
+               AND NOT EXISTS (
+                 SELECT 1 FROM pg_namespace
+                 WHERE nspname NOT IN ('public','information_schema')
+                   AND nspname !~ '^pg_')
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                 WHERE n.nspname='public')
+               AND NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname<>'plpgsql')
+            """, cleanup);
         if (!Convert.ToBoolean(await verify.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture))
-            throw new InvalidOperationException("Old coordinator database still exists after cleanup.");
+            throw new InvalidOperationException(
+                "Old coordinator database still contains user schemas, public objects, or non-core extensions after cleanup.");
     }
+
+    internal static string BuildSourceSchemaPurgeSql(string quotedDatabase) => $"""
+        SET default_transaction_read_only=off;
+        SET transaction_read_only=off;
+        SET citus.enable_ddl_propagation=off;
+        SET citus.enable_metadata_sync=off;
+        DO $citus_manager_cleanup$
+        DECLARE extension_name text;
+        DECLARE schema_name text;
+        BEGIN
+          FOR extension_name IN
+            SELECT extname FROM pg_extension WHERE extname<>'plpgsql' ORDER BY extname
+          LOOP
+            EXECUTE format('DROP EXTENSION IF EXISTS %I CASCADE', extension_name);
+          END LOOP;
+
+          FOR schema_name IN
+            SELECT nspname FROM pg_namespace
+            WHERE nspname NOT IN ('public','information_schema')
+              AND nspname !~ '^pg_'
+            ORDER BY nspname
+          LOOP
+            EXECUTE format('DROP SCHEMA %I CASCADE', schema_name);
+          END LOOP;
+
+          DROP SCHEMA IF EXISTS public CASCADE;
+          CREATE SCHEMA public AUTHORIZATION pg_database_owner;
+          GRANT USAGE ON SCHEMA public TO PUBLIC;
+        END
+        $citus_manager_cleanup$;
+        ALTER DATABASE {quotedDatabase} RESET default_transaction_read_only;
+        ALTER DATABASE {quotedDatabase} RESET citus.enable_ddl_propagation;
+        ALTER DATABASE {quotedDatabase} RESET citus.enable_metadata_sync;
+        ALTER DATABASE {quotedDatabase} RESET citus.use_citus_managed_tables;
+        """;
 
     private async Task CreateSourceMetadataStageAsync(
         ClusterProfile source, CancellationToken cancellationToken)

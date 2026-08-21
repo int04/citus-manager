@@ -44,4 +44,16 @@ public sealed class CoordinatorMigrationServiceTests
         Assert.Contains("groupid=0", sql, StringComparison.Ordinal);
         Assert.Contains("count(*)", sql, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Source_cleanup_keeps_database_and_recreates_empty_public_schema()
+    {
+        var sql = CoordinatorLogicalMigrationService.BuildSourceSchemaPurgeSql("\"app\"");
+
+        Assert.DoesNotContain("DROP DATABASE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DROP SCHEMA IF EXISTS public CASCADE", sql, StringComparison.Ordinal);
+        Assert.Contains("CREATE SCHEMA public AUTHORIZATION pg_database_owner", sql, StringComparison.Ordinal);
+        Assert.Contains("DROP EXTENSION IF EXISTS %I CASCADE", sql, StringComparison.Ordinal);
+        Assert.Contains("ALTER DATABASE \"app\" RESET default_transaction_read_only", sql, StringComparison.Ordinal);
+    }
 }
