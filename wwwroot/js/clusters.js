@@ -34,6 +34,11 @@
     const port = Number(form.elements.port?.value || 0);
     return host && Number.isInteger(port) && port > 0 ? `${host}:${port}` : "";
   };
+  const coordinatorEndpointKey = form => {
+    const host = form.elements.targetHost?.value.trim().toLowerCase() || "";
+    const port = Number(form.elements.targetPort?.value || 0);
+    return host && Number.isInteger(port) && port > 0 ? `${host}:${port}` : "";
+  };
 
   const syncWorkerSubmit = form => {
     const submit = form.querySelector("[data-worker-submit]");
@@ -76,6 +81,7 @@
       button.disabled = busy;
     });
     syncWorkerSubmit(form);
+    syncCoordinatorSubmit(form);
   };
 
   const testWorkerConnection = async form => {
@@ -114,6 +120,76 @@
         button.disabled = false;
         button.removeAttribute("aria-busy");
         if (label) label.textContent = t("TestWorkerConnection", "Test connection");
+      }
+    }
+  };
+
+  const syncCoordinatorSubmit = form => {
+    const submit = form.querySelector("[data-coordinator-submit]");
+    if (!submit) return;
+    const validTarget = form.dataset.coordinatorTargetState === "success" &&
+      form.dataset.testedCoordinatorEndpoint === coordinatorEndpointKey(form);
+    submit.disabled = form.getAttribute("aria-busy") === "true" || !validTarget;
+  };
+
+  const setCoordinatorTargetState = (form, state, message) => {
+    const status = form.querySelector("[data-coordinator-target-status]");
+    form.dataset.coordinatorTargetState = state;
+    if (state !== "success") delete form.dataset.testedCoordinatorEndpoint;
+    if (status) {
+      status.className = `worker-connection-status ${state}`;
+      status.textContent = message;
+      status.setAttribute("role", state === "error" ? "alert" : "status");
+    }
+    syncCoordinatorSubmit(form);
+  };
+
+  const invalidateCoordinatorTarget = (form, changed = false) => {
+    form._coordinatorTargetController?.abort();
+    setCoordinatorTargetState(form, "pending", changed
+      ? t("CoordinatorTargetChanged", "Host or port changed. Check the target again.")
+      : t("CoordinatorTargetCheckRequired", "Check the target successfully before creating the migration plan."));
+  };
+
+  const testCoordinatorTarget = async form => {
+    const hostInput = form.elements.targetHost, portInput = form.elements.targetPort;
+    if (!hostInput.reportValidity() || !portInput.reportValidity()) return;
+    const endpoint = coordinatorEndpointKey(form);
+    const button = form.querySelector("[data-test-coordinator-target]");
+    const label = button?.querySelector("span");
+    const controller = new AbortController();
+    form._coordinatorTargetController?.abort();
+    form._coordinatorTargetController = controller;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    if (label) label.textContent = t("TestingCoordinatorTarget", "Checking target…");
+    setCoordinatorTargetState(form, "checking", t("TestingCoordinatorTarget", "Checking target…"));
+    try {
+      const response = await fetch(`${apiRoot}/test-coordinator-migration-target`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", RequestVerificationToken: token, "X-CSRF-TOKEN": token },
+        body: JSON.stringify({ targetHost: hostInput.value.trim(), targetPort: Number(portInput.value) }),
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(await problemText(response));
+      const result = await response.json();
+      if (!result.success) throw new Error(result.message || t("CoordinatorTargetFailed", "Target check failed."));
+      if (endpoint !== coordinatorEndpointKey(form)) return;
+      form.dataset.testedCoordinatorEndpoint = endpoint;
+      const detail = `${result.targetHost}:${result.targetPort} · PostgreSQL ${result.postgreSqlMajorVersion} · Citus ${result.citusVersion}`;
+      const registration = result.sourceCoordinatorRegisteredNow
+        ? ` ${t("CoordinatorSourceRegistered", "Current coordinator metadata was registered automatically.")}`
+        : "";
+      setCoordinatorTargetState(form, "success", `${t("CoordinatorTargetReady", "Target is ready for migration planning.")} ${detail}${registration}`);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      setCoordinatorTargetState(form, "error", `${t("CoordinatorTargetFailed", "Target check failed.")} ${error.message}`);
+    } finally {
+      if (form._coordinatorTargetController === controller) {
+        form._coordinatorTargetController = null;
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        if (label) label.textContent = t("TestCoordinatorTarget", "Check target readiness");
       }
     }
   };
@@ -206,6 +282,7 @@
       dialog.querySelectorAll("[data-confirm-label]").forEach(node => node.textContent = "");
       configureCoordinatorRecovery(form);
       updateCoordinatorTarget(form);
+      invalidateCoordinatorTarget(form);
     }
     dialog.querySelectorAll("[data-target-node]").forEach(node => node.textContent = `${host}:${port}`);
     if (form.dataset.operation !== "change-coordinator") {
@@ -253,10 +330,10 @@
     };
     if (kind === "change-coordinator") return {
       path: "coordinator-migrations", body: {
-        ...common,
+        ...common, externalCapacityAndBackupChecksAcknowledged: true,
         targetHost: form.elements.targetHost.value.trim(),
         targetPort: Number(form.elements.targetPort.value),
-        typedConfirmation: form.elements.typedConfirmation.value
+        typedConfirmation: endpointText(form.elements.targetHost.value.trim(), form.elements.targetPort.value)
       }
     };
     if (kind === "rebalance") return { path: "rebalance", body: common };
@@ -272,6 +349,8 @@
     if (refresh && root.contains(refresh)) { event.preventDefault(); loadPreview(refresh.closest("form")); }
     const testConnection = event.target.closest("[data-test-worker-connection]");
     if (testConnection && root.contains(testConnection)) { event.preventDefault(); testWorkerConnection(testConnection.closest("form")); }
+    const testCoordinator = event.target.closest("[data-test-coordinator-target]");
+    if (testCoordinator && root.contains(testCoordinator)) { event.preventDefault(); testCoordinatorTarget(testCoordinator.closest("form")); }
   });
 
   root.querySelectorAll("[data-operation-dialog]").forEach(dialog => {
@@ -282,6 +361,7 @@
       const form = dialog.querySelector("form");
       form?._previewController?.abort();
       form?._workerConnectionController?.abort();
+      form?._coordinatorTargetController?.abort();
       dialog._trigger?.focus();
     });
   });
@@ -296,6 +376,14 @@
       setWorkerConnectionState(form, "pending",
         t("WorkerConnectionRequired", "Test this endpoint successfully before adding the worker."));
       form.querySelector("[data-test-worker-connection]")?.focus();
+      return;
+    }
+    if (form.dataset.operation === "change-coordinator" &&
+        (form.dataset.coordinatorTargetState !== "success" ||
+         form.dataset.testedCoordinatorEndpoint !== coordinatorEndpointKey(form))) {
+      setCoordinatorTargetState(form, "pending",
+        t("CoordinatorTargetCheckRequired", "Check the target successfully before creating the migration plan."));
+      form.querySelector("[data-test-coordinator-target]")?.focus();
       return;
     }
     const dialog = form.closest("dialog");
@@ -356,8 +444,8 @@
 
   root.querySelectorAll('[data-operation-form][data-operation="change-coordinator"]').forEach(form => {
     [form.elements.targetHost, form.elements.targetPort].forEach(input => input?.addEventListener("input", () => {
-      form.elements.typedConfirmation.value = "";
       updateCoordinatorTarget(form);
+      invalidateCoordinatorTarget(form, true);
     }));
   });
 

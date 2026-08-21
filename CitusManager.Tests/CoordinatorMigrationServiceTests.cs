@@ -32,4 +32,28 @@ public sealed class CoordinatorMigrationServiceTests
         Assert.Equal(source.ProtectedPrometheusToken, target.ProtectedPrometheusToken);
         Assert.Equal(7, target.Version);
     }
+
+    [Fact]
+    public void Local_coordinator_relocation_is_metadata_local_and_quotes_host()
+    {
+        var sql = CoordinatorLogicalMigrationService.BuildLocalCoordinatorRelocationCommand(
+            "new'coordinator", 12002);
+
+        Assert.Contains("citus.enable_metadata_sync','off',true", sql, StringComparison.Ordinal);
+        Assert.Contains("citus_set_coordinator_host('new''coordinator',12002)", sql, StringComparison.Ordinal);
+        Assert.Contains("groupid=0", sql, StringComparison.Ordinal);
+        Assert.Contains("count(*)", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Source_cleanup_keeps_database_and_recreates_empty_public_schema()
+    {
+        var sql = CoordinatorLogicalMigrationService.BuildSourceSchemaPurgeSql("\"app\"");
+
+        Assert.DoesNotContain("DROP DATABASE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DROP SCHEMA IF EXISTS public CASCADE", sql, StringComparison.Ordinal);
+        Assert.Contains("CREATE SCHEMA public AUTHORIZATION pg_database_owner", sql, StringComparison.Ordinal);
+        Assert.Contains("DROP EXTENSION IF EXISTS %I CASCADE", sql, StringComparison.Ordinal);
+        Assert.Contains("ALTER DATABASE \"app\" RESET default_transaction_read_only", sql, StringComparison.Ordinal);
+    }
 }

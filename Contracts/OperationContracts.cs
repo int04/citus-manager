@@ -79,6 +79,24 @@ public sealed record PlanCoordinatorMigrationRequest
     [Required, MaxLength(128)] public required string IdempotencyKey { get; init; }
 }
 
+/// <summary>Payload for coordinator migration preflight; missing source coordinator metadata may be registered.</summary>
+public sealed record TestCoordinatorMigrationTargetRequest
+{
+    [Required, MaxLength(255)] public required string TargetHost { get; init; }
+    [Range(1, 65535)] public int TargetPort { get; init; } = 5432;
+}
+
+/// <summary>Sanitized result proving the target is ready for migration planning.</summary>
+public sealed record CoordinatorMigrationTargetTestResponse(
+    bool Success,
+    string TargetHost,
+    int TargetPort,
+    int PostgreSqlMajorVersion,
+    string CitusVersion,
+    bool SourceCoordinatorRegisteredNow,
+    DateTimeOffset CheckedAt,
+    string Message);
+
 /// <summary>Attests that external fencing and physical-standby promotion completed.</summary>
 public sealed record ApproveCoordinatorMigrationRequest
 {

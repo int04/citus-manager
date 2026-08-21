@@ -110,7 +110,17 @@ public static class OperationEndpoints
             })
             .RequireAuthorization("Admin")
             .WithName("PlanControlCoordinatorMigration")
-            .WithSummary("Plan a manually approved cutover to a BYO physical standby");
+            .WithSummary("Queue an automatic coordinator-state transfer while retaining existing worker shards");
+
+        group.MapPost("/clusters/{clusterId:guid}/test-coordinator-migration-target",
+                async Task<Ok<CoordinatorMigrationTargetTestResponse>> (
+                    Guid clusterId, TestCoordinatorMigrationTargetRequest request,
+                    ClaimsPrincipal user, IOperationService service, CancellationToken cancellationToken) =>
+                    TypedResults.Ok(await service.TestCoordinatorMigrationTargetAsync(
+                        clusterId, request, EndpointUser.Id(user), cancellationToken)))
+            .RequireAuthorization("Admin")
+            .WithName("TestControlCoordinatorMigrationTarget")
+            .WithSummary("Preflight a physical coordinator standby and register missing source coordinator metadata");
 
         group.MapGet("/clusters/{clusterId:guid}/previews/rebalance", async Task<Ok<RebalancePreviewResponse>> (
                 Guid clusterId, bool? drainOnly, string? workerHost, int? workerPort,

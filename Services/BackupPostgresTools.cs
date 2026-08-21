@@ -24,6 +24,12 @@ public interface IPostgresToolRunner
     Task<PostgresToolResult> DumpAsync(
         ClusterProfile source, int postgresMajor, Stream destination, Func<long, ValueTask>? progress,
         CancellationToken cancellationToken);
+    Task<PostgresToolResult> DumpSchemaAsync(
+        ClusterProfile source, int postgresMajor, Stream destination, Func<long, ValueTask>? progress,
+        CancellationToken cancellationToken);
+    Task<PostgresToolResult> DumpDataExcludingTablesAsync(
+        ClusterProfile source, int postgresMajor, IReadOnlyList<string> excludedTableData,
+        Stream destination, Func<long, ValueTask>? progress, CancellationToken cancellationToken);
     Task<PostgresToolResult> RestoreFileAsync(
         ClusterProfile target, int postgresMajor, string archivePath, string section, bool clean, int jobs,
         string? restoreListPath, Func<long, ValueTask>? progress, CancellationToken cancellationToken);
@@ -141,6 +147,28 @@ public sealed class PostgresToolRunner(
             RunAsync(toolchain.PgDumpPath, args, environment, destination, progress, token), cancellationToken);
     }
 
+    public async Task<PostgresToolResult> DumpSchemaAsync(
+        ClusterProfile source, int postgresMajor, Stream destination, Func<long, ValueTask>? progress,
+        CancellationToken cancellationToken)
+    {
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
+        var args = BuildSchemaDumpArguments(source, _options.Compression);
+        return await WithCredentialsAsync(source, (environment, token) =>
+            RunAsync(toolchain.PgDumpPath, args, BuildCoordinatorDumpEnvironment(environment),
+                destination, progress, token), cancellationToken);
+    }
+
+    public async Task<PostgresToolResult> DumpDataExcludingTablesAsync(
+        ClusterProfile source, int postgresMajor, IReadOnlyList<string> excludedTableData,
+        Stream destination, Func<long, ValueTask>? progress, CancellationToken cancellationToken)
+    {
+        var toolchain = await ResolveToolchainAsync(postgresMajor, cancellationToken);
+        var args = BuildDataDumpArguments(source, _options.Compression, excludedTableData);
+        return await WithCredentialsAsync(source, (environment, token) =>
+            RunAsync(toolchain.PgDumpPath, args, BuildCoordinatorDumpEnvironment(environment),
+                destination, progress, token), cancellationToken);
+    }
+
     internal static List<string> BuildDumpArguments(ClusterProfile source, string? compression)
     {
         var selectedCompression = string.IsNullOrWhiteSpace(compression) ? "gzip:5" : compression.Trim();
@@ -153,6 +181,37 @@ public sealed class PostgresToolRunner(
         };
         if (!string.IsNullOrWhiteSpace(source.Username)) args.AddRange(["--username", source.Username]);
         return args;
+    }
+
+    internal static List<string> BuildSchemaDumpArguments(
+        ClusterProfile source, string? compression)
+    {
+        var args = BuildDumpArguments(source, compression);
+        args.Insert(3, "--schema-only");
+        return args;
+    }
+
+    internal static List<string> BuildDataDumpArguments(
+        ClusterProfile source, string? compression, IReadOnlyList<string> excludedTableData)
+    {
+        var args = BuildDumpArguments(source, compression);
+        args.Insert(3, "--data-only");
+        foreach (var table in excludedTableData.Distinct(StringComparer.Ordinal).Reverse())
+            args.Insert(4, $"--exclude-table-data={table}");
+        return args;
+    }
+
+    internal static IReadOnlyDictionary<string, string> BuildCoordinatorDumpEnvironment(
+        IReadOnlyDictionary<string, string> environment)
+    {
+        var result = new Dictionary<string, string>(environment, StringComparer.Ordinal)
+        {
+            // pg_dump locks every selected relation. Without this session option Citus
+            // propagates those locks to metadata nodes, which makes a coordinator-only
+            // metadata transfer depend on remote connections that it must not use.
+            ["PGOPTIONS"] = "-c citus.enable_ddl_propagation=off"
+        };
+        return result;
     }
 
     public async Task<PostgresToolResult> RestoreFileAsync(
@@ -449,9 +508,26 @@ public sealed class PostgresToolRunner(
         try { if (!process.HasExited) process.Kill(true); } catch { }
     }
     private static string Escape(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace(":", "\\:", StringComparison.Ordinal);
-    private static string SafeDiagnostic(string value)
+    internal static string SafeDiagnostic(string value)
     {
-        var line = string.Join(' ', value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
-        return line.Length <= 2000 ? line : line[^2000..];
+        var lines = value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0)
+            .ToList();
+        var important = lines.Where(line =>
+                line.Contains("error:", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("fatal:", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("detail:", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("hint:", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var diagnostic = string.Join(' ', important.Count > 0 ? important : lines);
+        const int limit = 2000;
+        if (diagnostic.Length <= limit) return diagnostic;
+
+        const string omitted = " ... [diagnostic truncated] ... ";
+        var available = limit - omitted.Length;
+        var head = (available + 1) / 2;
+        var tail = available - head;
+        return diagnostic[..head] + omitted + diagnostic[^tail..];
     }
 }

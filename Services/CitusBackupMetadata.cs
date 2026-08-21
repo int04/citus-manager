@@ -38,6 +38,8 @@ public interface ICitusBackupMetadataCollector
         CitusBackupTopology source, ClusterProfile target, bool recoverSameTargetNodes,
         CancellationToken cancellationToken);
     Task ValidateRestoredTopologyAsync(CitusBackupTopology source, ClusterProfile target, CancellationToken cancellationToken);
+    Task ValidateCoordinatorRelocationTargetAsync(
+        CitusBackupTopology source, ClusterProfile target, CancellationToken cancellationToken);
 }
 
 public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connections) : ICitusBackupMetadataCollector
@@ -272,6 +274,10 @@ public sealed class CitusBackupMetadataCollector(ICitusConnectionFactory connect
             if (!actual.Extensions.Any(x => x.Name == expected.Name && x.Version == expected.Version))
                 throw new InvalidOperationException($"Restored extension mismatch: {expected.Name} {expected.Version}.");
     }
+
+    public Task ValidateCoordinatorRelocationTargetAsync(
+        CitusBackupTopology source, ClusterProfile target, CancellationToken cancellationToken) =>
+        ValidateCompatibleTargetAsync(source with { Nodes = [] }, target, false, cancellationToken);
 
     internal static bool CanRecoverSameTargetNodes(CitusBackupTopology source, ClusterProfile target) =>
         ResolveSourceCoordinator(source, target) is not null &&

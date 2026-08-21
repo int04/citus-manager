@@ -21,8 +21,8 @@
   <data name="Cluster.ChangeCoordinatorShort" xml:space="preserve"><value>Lập plan physical failover có kiểm soát</value></data>
   <data name="Cluster.ChangeCoordinatorKicker" xml:space="preserve"><value>Cần failover bên ngoài</value></data>
   <data name="Cluster.ChangeCoordinatorHelp" xml:space="preserve"><value>Tạo plan được review để chuyển control coordinator có thẩm quyền sang PostgreSQL/Citus server khác.</value></data>
-  <data name="Cluster.ChangeCoordinatorPlanOnlyTitle" xml:space="preserve"><value>Chỉ tạo plan.</value></data>
-  <data name="Cluster.ChangeCoordinatorPlanOnly" xml:space="preserve"><value>Bước này chưa thay đổi cluster. Operation sẽ chờ fence bên ngoài, promote standby và phê duyệt rõ ràng.</value></data>
+  <data name="Cluster.ChangeCoordinatorPlanOnlyTitle" xml:space="preserve"><value>Preflight trước, cutover sau.</value></data>
+  <data name="Cluster.ChangeCoordinatorPlanOnly" xml:space="preserve"><value>Bước kiểm tra xác minh server đích trống và tương thích. Migration plan sẽ tự khóa write nguồn, dump/restore coordinator, tái tạo topology, validate rồi chuyển profile sang đích.</value></data>
   <data name="Cluster.ChangeCoordinatorRiskTitle" xml:space="preserve"><value>Cutover này ảnh hưởng availability.</value></data>
   <data name="Cluster.ChangeCoordinatorRisk" xml:space="preserve"><value>CitusManager không promote PostgreSQL, không đổi DNS/load balancer, không dừng server cũ và không fence receiving endpoint. Failover ngoài hệ thống sai hoặc chưa hoàn tất có thể gây split brain hoặc mất dữ liệu.</value></data>
   <data name="Cluster.CurrentCoordinator" xml:space="preserve"><value>Coordinator hiện tại</value></data>
@@ -49,4 +49,22 @@
   <data name="Cluster.WorkerConnectionChanged" xml:space="preserve"><value>Host hoặc port đã thay đổi. Hãy kiểm tra kết nối lại.</value></data>
   <data name="Cluster.WorkerConnectionSucceeded" xml:space="preserve"><value>Kết nối và kiểm tra tương thích thành công.</value></data>
   <data name="Cluster.WorkerConnectionFailed" xml:space="preserve"><value>Kiểm tra kết nối thất bại.</value></data>
+  <data name="Cluster.TestCoordinatorTarget" xml:space="preserve"><value>Kiểm tra &amp; tự chuẩn bị</value></data>
+  <data name="Cluster.TestingCoordinatorTarget" xml:space="preserve"><value>Đang kiểm tra và tự chuẩn bị host đích…</value></data>
+  <data name="Cluster.CoordinatorTargetCheckRequired" xml:space="preserve"><value>Phải kiểm tra host đích thành công trước khi tạo migration plan.</value></data>
+  <data name="Cluster.CoordinatorTargetChanged" xml:space="preserve"><value>Host hoặc port đích đã thay đổi. Hãy kiểm tra lại.</value></data>
+  <data name="Cluster.CoordinatorTargetReady" xml:space="preserve"><value>Host đích đã reset, tương thích và sẵn sàng nhận metadata coordinator mà không copy lại dữ liệu shard trên worker.</value></data>
+  <data name="Cluster.CoordinatorTargetFailed" xml:space="preserve"><value>Kiểm tra host đích thất bại.</value></data>
+  <data name="Cluster.CoordinatorSourceRegistered" xml:space="preserve"><value>Đã tự đăng ký metadata cho coordinator hiện tại.</value></data>
+  <data name="Cluster.DeleteConfirmTitle" xml:space="preserve"><value>Xóa profile cluster local?</value></data>
+  <data name="Cluster.DeleteConfirmIntro" xml:space="preserve"><value>Hãy xem toàn bộ phạm vi dữ liệu trước khi tiếp tục.</value></data>
+  <data name="Cluster.DeleteConfirmWarning" xml:space="preserve"><value>Nếu xác nhận, toàn bộ dữ liệu control-plane local liên quan tới profile cluster này sẽ bị xóa vĩnh viễn.</value></data>
+  <data name="Cluster.DeleteScopeProfile" xml:space="preserve"><value>Profile local và credential kết nối đã lưu.</value></data>
+  <data name="Cluster.DeleteScopeOperations" xml:space="preserve"><value>Toàn bộ operation, operation step và query endpoint của cluster này.</value></data>
+  <data name="Cluster.DeleteScopeMonitoring" xml:space="preserve"><value>Inventory monitoring, metric sample và alert của cluster này.</value></data>
+  <data name="Cluster.DeleteScopeBackups" xml:space="preserve"><value>Backup policy của cluster và record các lần backup local.</value></data>
+  <data name="Cluster.DeleteScopeRestores" xml:space="preserve"><value>Record các lần restore liên kết với cluster này.</value></data>
+  <data name="Cluster.DeletePreservedTitle" xml:space="preserve"><value>Không bị xóa:</value></data>
+  <data name="Cluster.DeletePreserved" xml:space="preserve"><value>database Citus và dữ liệu của nó, object backup ngoài storage, cùng audit record xóa.</value></data>
+  <data name="Cluster.CoordinatorTargetResetWarning" xml:space="preserve"><value>Kiểm tra host đích sẽ xóa vĩnh viễn rồi tạo lại database đã cấu hình trước khi khởi tạo Citus.</value></data>
 </root>

@@ -59,6 +59,9 @@ public interface IOperationService
     Task<OperationResponse> RetireWorkerAsync(Guid clusterId, RetireWorkerRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<OperationResponse> PlanCoordinatorMigrationAsync(
         Guid clusterId, PlanCoordinatorMigrationRequest request, Guid actorId, CancellationToken cancellationToken);
+    Task<CoordinatorMigrationTargetTestResponse> TestCoordinatorMigrationTargetAsync(
+        Guid clusterId, TestCoordinatorMigrationTargetRequest request, Guid actorId,
+        CancellationToken cancellationToken);
     Task<OperationResponse> ApproveCoordinatorMigrationAsync(
         Guid id, ApproveCoordinatorMigrationRequest request, Guid actorId, CancellationToken cancellationToken);
     Task<RebalancePreviewResponse> PreviewRebalanceAsync(
@@ -82,7 +85,8 @@ public sealed class OperationService(
     ICitusInspector inspector,
     ICitusMutator mutator,
     IDatabaseMaintenanceService maintenance,
-    ICoordinatorMigrationService coordinatorMigrations) : IOperationService
+    ICoordinatorMigrationService coordinatorMigrations,
+    ICoordinatorLogicalMigrationService logicalCoordinatorMigration) : IOperationService
 {
     public async Task<IReadOnlyList<OperationResponse>> GetAllAsync(
         Guid? clusterId, CancellationToken cancellationToken)
@@ -406,6 +410,8 @@ public sealed class OperationService(
         CoordinatorMigrationPlan migration;
         try
         {
+            await logicalCoordinatorMigration.ValidateTargetAsync(
+                cluster, targetHost, request.TargetPort, cancellationToken);
             migration = await coordinatorMigrations.PlanAsync(
                 cluster, targetHost, request.TargetPort, cancellationToken);
         }
@@ -415,16 +421,52 @@ public sealed class OperationService(
         }
         var warnings = new List<string>
         {
-            "This plan does not fence or promote PostgreSQL. Fence the source and promote the verified physical standby outside this application before approval.",
-            "Coordinator failover is not a backup. Verify tested backup/PITR and a named recovery owner.",
-            "After external promotion is approved, cancellation and automatic rollback are unsafe."
+            "Execution temporarily fences source writes and transfers coordinator schema, local data, sequences, and exact Citus routing metadata; distributed shard rows remain on the existing workers.",
+            "After target validation and profile cutover, the former coordinator database is permanently deleted.",
+            "External application connection strings or DNS are outside CitusManager and are not changed."
         };
         var plan = new OperationPlan(OperationKind.MigrateControlCoordinator, null, null,
             migration.CitusVersion, [], "[]", null, warnings, DateTimeOffset.UtcNow,
-            PlanVersion: 4, IdempotencyKey: request.IdempotencyKey,
+            PlanVersion: 7, IdempotencyKey: request.IdempotencyKey,
             TopologyFingerprint: migration.TopologyFingerprint,
             CoordinatorMigration: migration);
         return await SaveCoordinatorMigrationPlanAsync(clusterId, actorId, plan, cancellationToken);
+    }
+
+    public async Task<CoordinatorMigrationTargetTestResponse> TestCoordinatorMigrationTargetAsync(
+        Guid clusterId, TestCoordinatorMigrationTargetRequest request, Guid actorId,
+        CancellationToken cancellationToken)
+    {
+        var cluster = await db.Clusters.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == clusterId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cluster not found.");
+        try
+        {
+            var registeredNow = await coordinatorMigrations.EnsureSourceCoordinatorRegisteredAsync(
+                cluster, cancellationToken);
+            if (registeredNow)
+            {
+                db.AuditEvents.Add(ClusterService.Audit(actorId,
+                    "coordinator-migration.source-registered", "cluster", clusterId,
+                    new { cluster.Host, cluster.Port }));
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            await logicalCoordinatorMigration.PrepareTargetAsync(
+                cluster, request.TargetHost, request.TargetPort, cancellationToken);
+            db.AuditEvents.Add(ClusterService.Audit(actorId,
+                "coordinator-migration.target-reset", "cluster", clusterId,
+                new { TargetHost = request.TargetHost.Trim(), request.TargetPort, cluster.Database }));
+            await db.SaveChangesAsync(cancellationToken);
+            var plan = await coordinatorMigrations.PlanAsync(
+                cluster, request.TargetHost, request.TargetPort, cancellationToken);
+            return new(true, plan.TargetHost, plan.TargetPort, plan.PostgreSqlMajorVersion,
+                plan.CitusVersion, registeredNow, DateTimeOffset.UtcNow,
+                "Target database was reset, Citus metadata-transfer capabilities passed, and the target is ready to receive coordinator state without copying worker shard rows.");
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new CoordinatorMigrationRejectedException(exception.Message, exception);
+        }
     }
 
     public async Task<OperationResponse> ApproveCoordinatorMigrationAsync(
@@ -790,11 +832,13 @@ public sealed class OperationService(
             ClusterId = clusterId,
             Kind = OperationKind.MigrateControlCoordinator,
             Risk = OperationRisk.Destructive,
-            Status = OperationStatus.AwaitingApproval,
+            Status = OperationStatus.Approved,
             PlanJson = planJson,
             PlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson))),
             IdempotencyKey = plan.IdempotencyKey,
-            RequestedBy = actorId
+            RequestedBy = actorId,
+            ApprovedBy = actorId,
+            ApprovedAt = DateTimeOffset.UtcNow
         };
         db.Operations.Add(operation);
         db.AuditEvents.Add(ClusterService.Audit(actorId, "coordinator-migration.plan", "operation", operation.Id,
