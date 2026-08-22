@@ -5,6 +5,24 @@ namespace CitusManager.Tests;
 
 public sealed class RebalanceStatusParserTests
 {
+    [Theory]
+    [InlineData("localhost")]
+    [InlineData("127.0.0.1")]
+    [InlineData("::1")]
+    public void Windows_loopback_coordinator_can_use_verified_docker_host_candidate(string host)
+    {
+        var candidate = CitusMutator.TryGetCoordinatorRecoveryCandidate(host, true);
+
+        Assert.Equal("host.docker.internal", candidate);
+    }
+
+    [Fact]
+    public void Non_loopback_coordinator_has_no_implicit_recovery_candidate()
+    {
+        Assert.Null(CitusMutator.TryGetCoordinatorRecoveryCandidate("db.internal", true));
+        Assert.Null(CitusMutator.TryGetCoordinatorRecoveryCandidate("127.0.0.1", false));
+    }
+
     [Fact]
     public void Parser_correlates_requested_job_and_reads_typed_progress()
     {

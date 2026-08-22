@@ -1,6 +1,8 @@
 using CitusManager.Contracts;
 using CitusManager.Domain;
 using Npgsql;
+using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Options;
@@ -13,6 +15,8 @@ public interface ICitusMutator
     Task AddQueryNodeAsync(ClusterProfile cluster, OperationPlan plan, CancellationToken cancellationToken);
     Task<long> CountDistributedPlacementsAsync(ClusterProfile cluster, string host, int port, CancellationToken cancellationToken);
     Task<long?> StartRebalanceAsync(ClusterProfile cluster, bool drainOnly, CancellationToken cancellationToken);
+    Task<RebalancePreparationResult> PrepareRebalanceAsync(
+        ClusterProfile cluster, CancellationToken cancellationToken);
     Task SetShardEligibilityAsync(ClusterProfile cluster, string host, int port, bool eligible, CancellationToken cancellationToken);
     Task<RebalanceStatusSnapshot> ReadRebalanceStatusAsync(ClusterProfile cluster, long? jobId, CancellationToken cancellationToken);
     Task<bool> StopRebalanceAsync(ClusterProfile cluster, long? jobId, CancellationToken cancellationToken);
@@ -34,6 +38,16 @@ public sealed record RebalanceStatusSnapshot(
                               State.Equals("complete", StringComparison.OrdinalIgnoreCase) ||
                               State.Equals("completed", StringComparison.OrdinalIgnoreCase) || RawJson == "[]";
 }
+
+public sealed record RebalancePreparationResult(
+    bool CleanupRequired,
+    bool CoordinatorEndpointChanged,
+    int CleanedResourceCount,
+    string? CoordinatorHost,
+    int? CoordinatorPort,
+    int ResyncedMetadataNodeCount);
+
+internal sealed record CitusNodeEndpoint(string Host, int Port, bool HasMetadata);
 
 public sealed record TableConversionState(
     DatabaseTableMode Mode,
@@ -179,6 +193,100 @@ public sealed class CitusMutator(
             drainOnly ? "SELECT citus_rebalance_start(drain_only => true)" : "SELECT citus_rebalance_start()", connection);
         var result = await command.ExecuteScalarAsync(cancellationToken);
         return result is null or DBNull ? null : Convert.ToInt64(result);
+    }
+
+    public async Task<RebalancePreparationResult> PrepareRebalanceAsync(
+        ClusterProfile cluster, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create(cluster);
+        await connection.OpenAsync(cancellationToken);
+
+        if (!await HasCleanupCatalogAsync(connection, cancellationToken))
+            return await CompleteRebalancePreparationAsync(
+                connection, cluster, false, false, 0, null, null, cancellationToken);
+
+        var initialCount = await CountCleanupRecordsAsync(connection, cancellationToken);
+        if (initialCount == 0)
+            return await CompleteRebalancePreparationAsync(
+                connection, cluster, false, false, 0, null, null, cancellationToken);
+
+        await RequireRebalanceRecoveryCapabilitiesAsync(connection, cancellationToken);
+        await CleanupOrphanedResourcesAsync(connection, cancellationToken);
+        var remainingCount = await CountCleanupRecordsAsync(connection, cancellationToken);
+        if (remainingCount == 0)
+            return await CompleteRebalancePreparationAsync(
+                connection, cluster, true, false, initialCount, null, null, cancellationToken);
+
+        if (!await CleanupTargetsOnlyCoordinatorAsync(connection, cancellationToken))
+            throw new InvalidOperationException(
+                $"Citus still has {remainingCount} orphaned cleanup record(s) on worker nodes; " +
+                "automatic coordinator endpoint recovery is not applicable.");
+
+        var currentCoordinator = await ReadCoordinatorEndpointAsync(connection, cancellationToken);
+        var candidateHost = TryGetCoordinatorRecoveryCandidate(
+                                currentCoordinator.Host, OperatingSystem.IsWindows())
+            ?? throw new InvalidOperationException(
+                $"Citus has {remainingCount} orphaned cleanup record(s), and automatic coordinator endpoint recovery " +
+                "cannot derive a safe node-to-node address from the current coordinator metadata.");
+        var candidatePort = currentCoordinator.Port;
+
+        var sourceSystemIdentifier = await ReadSystemIdentifierAsync(connection, cancellationToken);
+        await using (var candidate = connections.Create(cluster, candidateHost, candidatePort))
+        {
+            await candidate.OpenAsync(cancellationToken);
+            var candidateSystemIdentifier = await ReadSystemIdentifierAsync(candidate, cancellationToken);
+            if (!string.Equals(sourceSystemIdentifier, candidateSystemIdentifier, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "Automatic coordinator endpoint recovery resolved to a different PostgreSQL system.");
+        }
+
+        var workerEndpoints = await ReadActiveNodeEndpointsAsync(connection, cancellationToken);
+        foreach (var endpoint in workerEndpoints)
+        {
+            await using var worker = connections.Create(cluster, endpoint.Host, endpoint.Port);
+            await worker.OpenAsync(cancellationToken);
+            await using var connectivity = new NpgsqlCommand(
+                "SELECT pg_catalog.citus_check_connection_to_node($1,$2)", worker);
+            connectivity.Parameters.AddWithValue(candidateHost);
+            connectivity.Parameters.AddWithValue(candidatePort);
+            if (!Convert.ToBoolean(await connectivity.ExecuteScalarAsync(cancellationToken),
+                    CultureInfo.InvariantCulture))
+                throw new InvalidOperationException(
+                    $"Node {endpoint.Host}:{endpoint.Port} cannot reach the recovered coordinator endpoint.");
+        }
+
+        await using (var relocate = new NpgsqlCommand(
+                         "SELECT pg_catalog.citus_set_coordinator_host($1,$2)", connection))
+        {
+            relocate.Parameters.AddWithValue(candidateHost);
+            relocate.Parameters.AddWithValue(candidatePort);
+            await relocate.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var verify = new NpgsqlCommand("""
+                         SELECT count(*) = 1
+                         FROM pg_catalog.pg_dist_node
+                         WHERE groupid=0 AND noderole='primary'::noderole
+                           AND lower(nodename)=lower($1) AND nodeport=$2
+                         """, connection))
+        {
+            verify.Parameters.AddWithValue(candidateHost);
+            verify.Parameters.AddWithValue(candidatePort);
+            if (!Convert.ToBoolean(await verify.ExecuteScalarAsync(cancellationToken),
+                    CultureInfo.InvariantCulture))
+                throw new InvalidOperationException(
+                    "Coordinator endpoint verification failed after automatic recovery.");
+        }
+
+        await CleanupOrphanedResourcesAsync(connection, cancellationToken);
+        remainingCount = await CountCleanupRecordsAsync(connection, cancellationToken);
+        if (remainingCount != 0)
+            throw new InvalidOperationException(
+                $"Citus still has {remainingCount} orphaned cleanup record(s) after endpoint recovery.");
+
+        return await CompleteRebalancePreparationAsync(
+            connection, cluster, true, true, initialCount, candidateHost, candidatePort,
+            cancellationToken);
     }
 
     public Task SetShardEligibilityAsync(
@@ -361,6 +469,226 @@ public sealed class CitusMutator(
         if (!match.Success)
             throw new InvalidOperationException("Citus version format is not recognized.");
         return match.Groups[1].Value;
+    }
+
+    internal static string? TryGetCoordinatorRecoveryCandidate(string profileHost, bool isWindows)
+    {
+        if (!isWindows) return null;
+        if (profileHost.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+            return "host.docker.internal";
+        return IPAddress.TryParse(profileHost, out var address) && IPAddress.IsLoopback(address)
+            ? "host.docker.internal" : null;
+    }
+
+    private static async Task<bool> HasCleanupCatalogAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT to_regclass('pg_catalog.pg_dist_cleanup') IS NOT NULL", connection);
+        return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken),
+            CultureInfo.InvariantCulture);
+    }
+
+    private static async Task RequireRebalanceRecoveryCapabilitiesAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT to_regprocedure('pg_catalog.citus_cleanup_orphaned_resources()') IS NOT NULL
+               AND to_regprocedure('pg_catalog.citus_set_coordinator_host(text,integer,noderole,name)') IS NOT NULL
+               AND to_regprocedure('pg_catalog.citus_check_connection_to_node(text,integer)') IS NOT NULL
+            """, connection);
+        if (!Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken),
+                CultureInfo.InvariantCulture))
+            throw new InvalidOperationException(
+                "Installed Citus lacks a supported orphan-cleanup or coordinator-recovery capability.");
+    }
+
+    private static async Task<int> CountCleanupRecordsAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT count(*)::int FROM pg_catalog.pg_dist_cleanup", connection);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken),
+            CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<bool> CleanupTargetsOnlyCoordinatorAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT COALESCE(bool_and(node_group_id=0),false) FROM pg_catalog.pg_dist_cleanup",
+            connection);
+        return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken),
+            CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<(string Host, int Port)> ReadCoordinatorEndpointAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT nodename, nodeport
+            FROM pg_catalog.pg_dist_node
+            WHERE groupid=0 AND isactive AND noderole='primary'::noderole
+            """, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("Citus has no active primary coordinator metadata row.");
+        var endpoint = (reader.GetString(0), reader.GetInt32(1));
+        if (await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("Citus has multiple active primary coordinator metadata rows.");
+        return endpoint;
+    }
+
+    private static async Task CleanupOrphanedResourcesAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "CALL pg_catalog.citus_cleanup_orphaned_resources()", connection) { CommandTimeout = 300 };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<string> ReadSystemIdentifierAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT system_identifier::text FROM pg_catalog.pg_control_system()", connection);
+        return Convert.ToString(await command.ExecuteScalarAsync(cancellationToken),
+                   CultureInfo.InvariantCulture)
+               ?? throw new InvalidOperationException("PostgreSQL system identifier is unavailable.");
+    }
+
+    private static async Task<IReadOnlyList<CitusNodeEndpoint>> ReadActiveNodeEndpointsAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        var endpoints = new List<CitusNodeEndpoint>();
+        await using var command = new NpgsqlCommand("""
+            SELECT nodename, nodeport, hasmetadata
+            FROM pg_catalog.pg_dist_node
+            WHERE groupid <> 0 AND isactive AND noderole='primary'::noderole
+            ORDER BY nodeid
+            """, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            endpoints.Add(new(reader.GetString(0), reader.GetInt32(1), reader.GetBoolean(2)));
+        return endpoints;
+    }
+
+    private async Task<RebalancePreparationResult> CompleteRebalancePreparationAsync(
+        NpgsqlConnection coordinator,
+        ClusterProfile cluster,
+        bool cleanupRequired,
+        bool coordinatorEndpointChanged,
+        int cleanedResourceCount,
+        string? coordinatorHost,
+        int? coordinatorPort,
+        CancellationToken cancellationToken)
+    {
+        var resyncedMetadataNodeCount = await RepairMetadataDriftAsync(
+            coordinator, cluster, cancellationToken);
+        return new(cleanupRequired, coordinatorEndpointChanged, cleanedResourceCount,
+            coordinatorHost, coordinatorPort, resyncedMetadataNodeCount);
+    }
+
+    private async Task<int> RepairMetadataDriftAsync(
+        NpgsqlConnection coordinator, ClusterProfile cluster, CancellationToken cancellationToken)
+    {
+        var nodes = (await ReadActiveNodeEndpointsAsync(coordinator, cancellationToken))
+            .Where(x => x.HasMetadata).ToList();
+        if (nodes.Count == 0) return 0;
+
+        await RequireMetadataResyncCapabilitiesAsync(coordinator, cancellationToken);
+        var expectedFingerprint = await ReadMetadataFingerprintAsync(coordinator, cancellationToken);
+        var resynced = 0;
+        foreach (var node in nodes)
+        {
+            await using var worker = connections.Create(cluster, node.Host, node.Port);
+            await worker.OpenAsync(cancellationToken);
+            if (string.Equals(await ReadMetadataFingerprintAsync(worker, cancellationToken),
+                    expectedFingerprint, StringComparison.Ordinal))
+                continue;
+
+            await ExecuteMetadataSyncCommandAsync(coordinator,
+                "SELECT pg_catalog.stop_metadata_sync_to_node($1,$2,true)", node,
+                cancellationToken);
+            await ExecuteMetadataSyncCommandAsync(coordinator,
+                "SELECT pg_catalog.start_metadata_sync_to_node($1,$2)", node,
+                cancellationToken);
+
+            var actualFingerprint = await ReadMetadataFingerprintAsync(worker, cancellationToken);
+            if (!string.Equals(actualFingerprint, expectedFingerprint, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"Citus metadata verification still differs on node {node.Host}:{node.Port} after resync.");
+
+            await using var verify = new NpgsqlCommand("""
+                SELECT hasmetadata AND metadatasynced
+                FROM pg_catalog.pg_dist_node
+                WHERE lower(nodename)=lower($1) AND nodeport=$2
+                """, coordinator);
+            verify.Parameters.AddWithValue(node.Host);
+            verify.Parameters.AddWithValue(node.Port);
+            if (!Convert.ToBoolean(await verify.ExecuteScalarAsync(cancellationToken),
+                    CultureInfo.InvariantCulture))
+                throw new InvalidOperationException(
+                    $"Citus did not mark metadata synchronized on node {node.Host}:{node.Port}.");
+            resynced++;
+        }
+        return resynced;
+    }
+
+    private static async Task RequireMetadataResyncCapabilitiesAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT to_regprocedure('pg_catalog.stop_metadata_sync_to_node(text,integer,boolean)') IS NOT NULL
+               AND to_regprocedure('pg_catalog.start_metadata_sync_to_node(text,integer)') IS NOT NULL
+            """, connection);
+        if (!Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken),
+                CultureInfo.InvariantCulture))
+            throw new InvalidOperationException(
+                "Installed Citus lacks supported metadata resynchronization capabilities.");
+    }
+
+    private static async Task ExecuteMetadataSyncCommandAsync(
+        NpgsqlConnection connection, string sql, CitusNodeEndpoint node,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 600 };
+        command.Parameters.AddWithValue(node.Host);
+        command.Parameters.AddWithValue(node.Port);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<string> ReadMetadataFingerprintAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            WITH metadata_rows(value) AS (
+              SELECT format('partition|%s|%s|%s|%s', logicalrelid::regclass::text,
+                            partmethod, colocationid, repmodel)
+              FROM pg_catalog.pg_dist_partition
+              UNION ALL
+              SELECT format('shard|%s|%s|%s|%s|%s', p.logicalrelid::regclass::text,
+                            s.shardid, s.shardstorage, s.shardminvalue, s.shardmaxvalue)
+              FROM pg_catalog.pg_dist_shard s
+              JOIN pg_catalog.pg_dist_partition p ON p.logicalrelid=s.logicalrelid
+              UNION ALL
+              SELECT format('placement|%s|%s|%s|%s', shardid, placementid, shardstate, groupid)
+              FROM pg_catalog.pg_dist_placement
+              UNION ALL
+              SELECT format('node|%s|%s|%s|%s|%s|%s|%s', groupid, lower(nodename), nodeport,
+                            noderole, isactive, shouldhaveshards, nodecluster)
+              FROM pg_catalog.pg_dist_node
+              UNION ALL
+              SELECT format('colocation|%s|%s|%s|%s|%s', colocationid, shardcount,
+                            replicationfactor, distributioncolumntype, distributioncolumncollation)
+              FROM pg_catalog.pg_dist_colocation
+            )
+            SELECT md5(COALESCE(string_agg(value, E'\n' ORDER BY value),''))
+            FROM metadata_rows
+            """, connection) { CommandTimeout = 120 };
+        return Convert.ToString(await command.ExecuteScalarAsync(cancellationToken),
+                   CultureInfo.InvariantCulture)
+               ?? throw new InvalidOperationException("Citus metadata fingerprint is unavailable.");
     }
 
     internal static RebalanceStatusSnapshot ParseRebalanceStatus(string raw, long? requestedJobId)

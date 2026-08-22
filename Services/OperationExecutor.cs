@@ -385,6 +385,16 @@ public sealed class OperationExecutor(
     {
         if (!HasStep(operation, "rebalance-started"))
         {
+            var preparation = await mutator.PrepareRebalanceAsync(cluster, cancellationToken);
+            await SaveStepAsync(operation, "rebalance-recovery", "Succeeded",
+                (preparation.CleanupRequired
+                    ? preparation.CoordinatorEndpointChanged
+                        ? $"Cleaned {preparation.CleanedResourceCount} orphaned resource(s) after safely recovering coordinator endpoint {preparation.CoordinatorHost}:{preparation.CoordinatorPort}."
+                        : $"Cleaned {preparation.CleanedResourceCount} orphaned resource(s) before rebalance."
+                    : "No orphaned Citus resources require cleanup.") +
+                (preparation.ResyncedMetadataNodeCount > 0
+                    ? $" Resynchronized metadata on {preparation.ResyncedMetadataNodeCount} node(s)."
+                    : " Metadata fingerprints match on all metadata nodes."), cancellationToken);
             var jobId = await mutator.StartRebalanceAsync(cluster, drainOnly, cancellationToken);
             await SaveStepAsync(operation, "rebalance-started", "Succeeded", $"Background rebalance started; job_id={jobId?.ToString() ?? "unavailable"}.", cancellationToken);
             operation.ResultJson = JsonSerializer.Serialize(new { jobId });
@@ -804,6 +814,28 @@ public sealed class OperationExecutor(
                 var stopped = await mutator.StopRebalanceAsync(cluster, jobId, hostStoppingToken);
                 if (drainTarget is not null)
                     await mutator.SetShardEligibilityAsync(cluster, drainTarget.Host, drainTarget.Port, true, hostStoppingToken);
+                var finalPostgreSqlProgress = ReadPostgreSqlProgressJson(operation.ResultJson);
+                if (stopped)
+                {
+                    try
+                    {
+                        finalPostgreSqlProgress = (await mutator.ReadRebalanceStatusAsync(
+                            cluster, jobId, hostStoppingToken)).RawJson;
+                    }
+                    catch (NpgsqlException)
+                    {
+                        // Cancellation already succeeded; retain the last durable snapshot if final status cannot be read.
+                    }
+                    catch (TimeoutException)
+                    {
+                        // Cancellation already succeeded; retain the last durable snapshot if final status cannot be read.
+                    }
+                }
+                operation.ResultJson = JsonSerializer.Serialize(new
+                {
+                    state = stopped ? "cancelled" : "recovery-required",
+                    postgreSqlProgressJson = finalPostgreSqlProgress
+                });
                 operation.Status = stopped ? OperationStatus.Cancelled : OperationStatus.RecoveryRequired;
                 operation.SafeError = stopped ? null : "Installed Citus cannot confirm rebalance stop; inspect cluster job state.";
                 operation.CompletedAt = DateTimeOffset.UtcNow;
